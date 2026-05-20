@@ -10,4 +10,4 @@ wheels/
 .venv
 
 # Local analysis outputs
-reports/
+/reports/
