@@ -1,4 +1,4 @@
-"""Phase 1 analysis pipeline orchestration."""
+"""Analysis pipeline orchestration for file and project targets."""
 
 from __future__ import annotations
 
@@ -6,45 +6,96 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from project_nurilab import __version__
+from project_nurilab.aggregation.result_aggregator import ResultAggregator
 from project_nurilab.analyzers.python_static import PythonStaticAnalyzer
+from project_nurilab.analyzers.tools import RuffToolCollector
 from project_nurilab.config import DEFAULT_REPORT_DIR
+from project_nurilab.input.collector import InputCollector
 from project_nurilab.input.manager import PythonFileLoader
-from project_nurilab.llm.review import MockLLMReviewClient
+from project_nurilab.llm.review import MockReviewClient, ReviewClient
 from project_nurilab.reports.generator import ReportGenerator
-from project_nurilab.schemas import AnalysisReport
+from project_nurilab.schemas import AnalysisReport, ProjectReport
 
 
 class Phase1Pipeline:
-    """Run the Python-only code review MVP from input file to reports."""
+    """Run Python code review analysis for one file or a project directory."""
 
     def __init__(
         self,
         loader: PythonFileLoader | None = None,
+        collector: InputCollector | None = None,
         analyzer: PythonStaticAnalyzer | None = None,
-        review_client: MockLLMReviewClient | None = None,
+        ruff_collector: RuffToolCollector | None = None,
+        aggregator: ResultAggregator | None = None,
+        review_client: ReviewClient | None = None,
         report_generator: ReportGenerator | None = None,
+        use_ruff: bool = True,
     ) -> None:
         self.loader = loader or PythonFileLoader()
+        self.collector = collector or InputCollector()
         self.analyzer = analyzer or PythonStaticAnalyzer()
-        self.review_client = review_client or MockLLMReviewClient()
+        self.ruff_collector = ruff_collector or RuffToolCollector()
+        self.aggregator = aggregator or ResultAggregator()
+        self.review_client = review_client or MockReviewClient()
         self.report_generator = report_generator or ReportGenerator()
+        self.use_ruff = use_ruff
 
     def run(
         self,
         input_path: str | Path,
         output_dir: str | Path = DEFAULT_REPORT_DIR,
-    ) -> tuple[AnalysisReport, Path, Path]:
+        formats: list[str] | tuple[str, ...] | None = None,
+    ) -> tuple[AnalysisReport | ProjectReport, dict[str, Path]]:
         """Execute the pipeline and return report payload plus output paths."""
 
-        loaded_file = self.loader.load(input_path)
-        analysis = self.analyzer.analyze(loaded_file)
-        review = self.review_client.review(analysis)
+        target = Path(input_path).expanduser().resolve()
+        collected_input = self.collector.collect(target)
+        file_results = [
+            self.analyzer.analyze(self.loader.load(path))
+            for path in collected_input.python_files
+        ]
 
-        report = AnalysisReport(
+        if target.is_file():
+            analysis = file_results[0] if file_results else self._skipped_file(target)
+            if self.use_ruff:
+                analysis.ruff_findings = self.ruff_collector.collect(target)
+            review = self.review_client.review(analysis)
+            report = AnalysisReport(
+                generated_at=datetime.now(UTC).isoformat(),
+                analyzer_version=__version__,
+                analysis=analysis,
+                review=review,
+            )
+            output_paths = self.report_generator.write(
+                report,
+                output_dir,
+                formats=formats,
+            )
+            return report, output_paths
+
+        ruff_findings = self.ruff_collector.collect(target) if self.use_ruff else []
+        project_analysis = self.aggregator.aggregate(
+            collected_input=collected_input,
+            file_results=file_results,
+            ruff_findings=ruff_findings,
+        )
+        review = self.review_client.review(project_analysis)
+
+        report = ProjectReport(
             generated_at=datetime.now(UTC).isoformat(),
             analyzer_version=__version__,
-            analysis=analysis,
+            analysis=project_analysis,
             review=review,
         )
-        markdown_path, json_path = self.report_generator.write(report, output_dir)
-        return report, markdown_path, json_path
+        output_paths = self.report_generator.write(report, output_dir, formats=formats)
+        return report, output_paths
+
+    def _skipped_file(self, target: Path):
+        from project_nurilab.schemas import PythonAnalysis
+
+        return PythonAnalysis(
+            path=str(target),
+            line_count=0,
+            skipped=True,
+            skip_reason="No analyzable Python file was collected from the input.",
+        )

@@ -66,6 +66,7 @@ class PythonAnalysis:
     classes: list[CodeSymbol] = field(default_factory=list)
     suspicious_calls: list[SuspiciousCall] = field(default_factory=list)
     secrets: list[SecretFinding] = field(default_factory=list)
+    ruff_findings: list[RuffFinding] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation."""
@@ -82,6 +83,10 @@ class ReviewFinding:
     line: int | None
     reason: str
     recommendation: str
+    file: str | None = None
+    source: str = "review"
+    column: int | None = None
+    rule_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -105,6 +110,65 @@ class AnalysisReport:
     generated_at: str
     analyzer_version: str
     analysis: PythonAnalysis
+    review: ReviewResult
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable representation."""
+
+        return {
+            "generated_at": self.generated_at,
+            "analyzer_version": self.analyzer_version,
+            "analysis": self.analysis.to_dict(),
+            "review": self.review.to_dict(),
+        }
+
+
+@dataclass(slots=True)
+class RuffFinding:
+    """A Ruff issue normalized into the project analysis schema."""
+
+    file: str
+    line: int
+    column: int
+    rule_id: str
+    message: str
+    severity: str = "low"
+    source: str = "ruff"
+
+
+@dataclass(slots=True)
+class ProjectSummary:
+    """Aggregated counts and risk for a project-level analysis."""
+
+    total_files: int
+    analyzed_files: int
+    skipped_files: int
+    severity_counts: dict[str, int] = field(default_factory=dict)
+    risk_level: str = "low"
+
+
+@dataclass(slots=True)
+class ProjectAnalysis:
+    """Normalized static analysis result for a Python project or directory."""
+
+    root_path: str
+    file_results: list[PythonAnalysis] = field(default_factory=list)
+    ruff_findings: list[RuffFinding] = field(default_factory=list)
+    summary: ProjectSummary | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable representation."""
+
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class ProjectReport:
+    """Top-level project report payload persisted as JSON and HTML."""
+
+    generated_at: str
+    analyzer_version: str
+    analysis: ProjectAnalysis
     review: ReviewResult
 
     def to_dict(self) -> dict[str, Any]:

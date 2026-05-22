@@ -1,4 +1,4 @@
-"""Command-line interface for the phase 1 MVP."""
+"""Command-line interface for Python static review analysis."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from pathlib import Path
 
 from project_nurilab.config import DEFAULT_MAX_LINES, DEFAULT_REPORT_DIR
 from project_nurilab.input.manager import PythonFileLoader
+from project_nurilab.llm.review import LocalLLMReviewClient, MockReviewClient
 from project_nurilab.pipeline import Phase1Pipeline
 
 
@@ -15,15 +16,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="project-nurilab",
-        description="Phase 1 Python code review and security review MVP.",
+        description="Python code review and static security analysis.",
     )
     subparsers = parser.add_subparsers(dest="command")
 
     analyze = subparsers.add_parser(
         "analyze",
-        help="Analyze one Python file and generate Markdown/JSON reports.",
+        help="Analyze one Python file or project directory and generate reports.",
     )
-    analyze.add_argument("path", help="Path to a .py file with 200 lines or fewer.")
+    analyze.add_argument("path", help="Path to a .py file or project directory.")
     analyze.add_argument(
         "--out",
         default=DEFAULT_REPORT_DIR,
@@ -34,6 +35,31 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_MAX_LINES,
         help=f"Maximum allowed source lines. Defaults to {DEFAULT_MAX_LINES}.",
+    )
+    analyze.add_argument(
+        "--format",
+        nargs="+",
+        choices=["html", "json", "md"],
+        default=None,
+        metavar="FORMAT",
+        help=(
+            "Report output formats in any order. Supported: html json md. "
+            "Defaults to html json."
+        ),
+    )
+    analyze.add_argument(
+        "--review-client",
+        choices=["mock", "local"],
+        default="mock",
+        help=(
+            "Review backend. 'mock' is deterministic and offline; 'local' calls "
+            "a vLLM OpenAI-compatible server."
+        ),
+    )
+    analyze.add_argument(
+        "--no-ruff",
+        action="store_true",
+        help="Disable Ruff JSON result collection.",
     )
 
     return parser
@@ -49,14 +75,29 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
 
-    pipeline = Phase1Pipeline(loader=PythonFileLoader(max_lines=args.max_lines))
-    report, markdown_path, json_path = pipeline.run(
+    review_client = (
+        LocalLLMReviewClient()
+        if args.review_client == "local"
+        else MockReviewClient()
+    )
+    pipeline = Phase1Pipeline(
+        loader=PythonFileLoader(max_lines=args.max_lines),
+        review_client=review_client,
+        use_ruff=not args.no_ruff,
+    )
+    report, output_paths = pipeline.run(
         input_path=Path(args.path),
         output_dir=Path(args.out),
+        formats=args.format,
     )
 
-    print(f"Analyzed: {report.analysis.path}")
+    target_path = getattr(report.analysis, "path", None) or getattr(
+        report.analysis,
+        "root_path",
+        "",
+    )
+    print(f"Analyzed: {target_path}")
     print(f"Risk Level: {report.review.risk_level}")
-    print(f"Markdown Report: {markdown_path}")
-    print(f"JSON Report: {json_path}")
+    for output_format, output_path in output_paths.items():
+        print(f"{output_format.upper()} Report: {output_path}")
     return 0
