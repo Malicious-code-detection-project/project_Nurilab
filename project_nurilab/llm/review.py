@@ -311,10 +311,17 @@ def _build_llm_prompt(analysis: PythonAnalysis | ProjectAnalysis) -> str:
 
 
 def _parse_llm_review(content: str) -> ReviewResult:
+    normalized_content = _extract_json_payload(content)
     try:
-        payload = json.loads(content)
+        payload = json.loads(normalized_content)
     except json.JSONDecodeError as exc:
         raise ValueError(f"LLM returned invalid JSON: {content}") from exc
+
+    summary_value = payload.get("summary", "")
+    if isinstance(summary_value, str):
+        summary = summary_value
+    else:
+        summary = json.dumps(summary_value, ensure_ascii=False)
 
     findings = [
         ReviewFinding(
@@ -329,10 +336,33 @@ def _parse_llm_review(content: str) -> ReviewResult:
         for item in payload.get("findings", [])
     ]
     return ReviewResult(
-        summary=str(payload.get("summary", "")),
+        summary=summary,
         risk_level=str(payload.get("risk_level", _derive_risk_level([f.severity for f in findings]))),
         findings=findings,
     )
+
+
+def _extract_json_payload(content: str) -> str:
+    """Extract a JSON object from raw LLM content.
+
+    Local models often wrap JSON in markdown fences or add a short preamble.
+    Accept those variants before failing the parse.
+    """
+
+    stripped = content.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines:
+            lines = lines[1:]
+        while lines and lines[-1].strip() == "```":
+            lines.pop()
+        stripped = "\n".join(lines).strip()
+
+    json_start = stripped.find("{")
+    json_end = stripped.rfind("}")
+    if json_start != -1 and json_end != -1 and json_end >= json_start:
+        return stripped[json_start : json_end + 1]
+    return stripped
 
 
 def _resolve_timeout(timeout: float | None) -> float:

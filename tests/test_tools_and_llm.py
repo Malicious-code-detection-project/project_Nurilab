@@ -61,3 +61,53 @@ def test_local_llm_review_client_parses_vllm_response(monkeypatch) -> None:
 
     assert review.summary == "ok"
     assert review.risk_level == "low"
+
+
+def test_local_llm_review_client_parses_fenced_json_response(monkeypatch) -> None:
+    class ResponseStub:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                "```json\n"
+                                '{\n'
+                                '  "summary": {\n'
+                                '    "total_files": 2,\n'
+                                '    "risk_level": "high"\n'
+                                "  },\n"
+                                '  "risk_level": "high",\n'
+                                '  "findings": [\n'
+                                '    {\n'
+                                '      "title": "Dynamic Execution Risk",\n'
+                                '      "severity": "high",\n'
+                                '      "file": "sample.py",\n'
+                                '      "line": 10,\n'
+                                '      "reason": "os.system executes shell commands.",\n'
+                                '      "recommendation": "Avoid passing untrusted input."\n'
+                                "    }\n"
+                                "  ]\n"
+                                "}\n"
+                                "```"
+                            )
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(*args: Any, **kwargs: Any) -> ResponseStub:
+        return ResponseStub()
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    review = LocalLLMReviewClient(base_url="http://localhost:8000/v1").review(
+        PythonAnalysis(path="sample.py", line_count=10)
+    )
+
+    assert review.risk_level == "high"
+    assert review.findings[0].title == "Dynamic Execution Risk"
+    assert '"total_files": 2' in review.summary
