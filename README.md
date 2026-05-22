@@ -14,7 +14,7 @@
 
 ## 1. Reference Architecture
 
-이 프로젝트는 [A2A-MCP / Code_Vulnerability](https://github.com/jeongminllee/A2A-MCP-/tree/main/Code_Vulnerability)의 역할 분리를 벤치마크합니다.
+이 프로젝트는 [A2A-MCP / Code_Vulnerability](https://github.com/gilbutITbook/080493/tree/main/Code_Vulnerability)의 역할 분리를 벤치마크합니다.
 
 참고 프로젝트는 MCP/gRPC 기반 agent server를 사용하지만, 이 프로젝트는 초기 개발 속도를 위해 단일 프로세스 내부 모듈로 단순화합니다.
 
