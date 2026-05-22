@@ -1,8 +1,6 @@
-import numpy as np
+from __future__ import annotations
 
-def main():
-    print("Hello from project-nurilab!")
-    print(np.array([1,2,3]))
+from project_nurilab.cli import main
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

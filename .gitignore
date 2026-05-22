@@ -1,6 +1,7 @@
 # Python-generated files
 __pycache__/
 *.py[oc]
+.DS_Store
 build/
 dist/
 wheels/
@@ -8,3 +9,10 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local analysis outputs
+/reports/
+
+# Local planning and agent instructions
+AGENTS.md
+plan.md
