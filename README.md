@@ -1,73 +1,43 @@
-# Local-based LLM Static Code Review and Future Malware Analysis
+# Local LLM Malware and Suspicious File Analysis Automation
 
 ![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
 ![uv](https://img.shields.io/badge/Package%20Manager-uv-654FF0)
-![Status](https://img.shields.io/badge/Status-Phase%202%20Prototype-orange)
+![Status](https://img.shields.io/badge/Status-Phase%203%20Prototype-orange)
 ![Runtime](https://img.shields.io/badge/Runtime-Local%20First-2E7D32)
 ![LLM Serving](https://img.shields.io/badge/Serving-vLLM%20%7C%20SGLang-0A66C2)
 
-외부 LLM API 기반 코드 리뷰와 보안 분석은 분석 단계가 고도화될수록 토큰 사용량과 호출 비용이 빠르게 증가합니다. 이 프로젝트는 반복적인 코드 리뷰/보안 분석 워크로드를 로컬 환경에서 처리하기 위한 프로토타입입니다.
+이 프로젝트는 로컬 환경에서 동작하는 LLM 기반 악성코드/의심 파일 분석 자동화 시스템입니다.
 
-이 프로젝트의 **최종 목표**는 폐쇄망 로컬 환경에서 동작하는 **LLM 기반 악성코드/의심 파일 분석 자동화 시스템**입니다. 다만 현재는 악성코드 학습 데이터와 검증 데이터가 충분하지 않기 때문에, **Phase 2: Python 프로젝트 단위 정적 분석 자동화**를 먼저 개발하고 있습니다.
+현재 **Phase 3: Local LLM 리뷰 품질 개선 및 분석 대상 확장** 단계입니다.
 
-현재 프로토타입은 단일 `.py` 파일 또는 Python 프로젝트 디렉터리를 입력받아 AST 분석, secret 탐지, 선택적 Ruff 결과 수집, Mock/Local LLM 리뷰, HTML/JSON 보고서를 생성합니다.
+현재 프로토타입은 단일 `.py` 파일 또는 Python 프로젝트 디렉터리를 입력받아 AST 분석, secret 탐지, Mock/Local LLM 리뷰, HTML/JSON 보고서를 생성합니다.
 
-## 1. Reference Architecture
+## 1. Current Scope
 
-이 프로젝트는 [A2A-MCP / Code_Vulnerability](https://github.com/gilbutITbook/080493/tree/main/Code_Vulnerability)의 역할 분리를 벤치마크합니다.
-
-참고 프로젝트는 MCP/gRPC 기반 agent server를 사용하지만, 이 프로젝트는 초기 개발 속도를 위해 단일 프로세스 내부 모듈로 단순화합니다.
-
-| Reference Project | This Project |
-| --- | --- |
-| Quick Agent | `analyzers/patterns.py` |
-| Secrets Agent | `analyzers/secrets.py` |
-| Static Agent | `analyzers/python_static.py`, `analyzers/tools.py` |
-| Summary Agent | `reports/generator.py` |
-| Remediation Agent | `pipeline.py` |
-| MCP/gRPC | 현재 제외 |
-
-## 2. Current Scope
-
-현재 단계와 장기 방향을 다음처럼 구분합니다.
-
-- 현재 개발 목표: Python 코드 리뷰 및 프로젝트 단위 정적 분석 자동화
-- 최종 목표: 악성코드/의심 파일 분석 자동화
-
-지원 범위:
+현재 지원 범위는 다음과 같습니다.
 
 - 단일 `.py` 파일 분석
-- Python 프로젝트 디렉터리 재귀 분석
-- `.py` 파일 수집 및 제외 경로 필터링
-- 200줄 초과 파일 skip
-- AST 기반 import/function/class 추출
-- 위험 호출 후보 탐지
-- hard-coded secret 후보 탐지
-- 선택적 Ruff JSON 결과 수집
-- Mock Review Client 또는 vLLM 기반 Local LLM Review Client
-- HTML/JSON 기본 보고서 생성
-- Markdown 선택 출력
+- Python 프로젝트 디렉터리 분석
+- Mock / Local LLM 리뷰 지원
+- HTML + JSON 보고서 출력
 
-제외 범위:
+## 2. Current Development Goals
 
-- 악성코드 샘플 분석
-- PE/ELF/문서형 파일 분석
-- 동적 분석 sandbox
-- 모델 파인튜닝
-- MCP/gRPC agent server
-- 웹 대시보드
-- 자동 코드 수정
+현재 Phase 3에서 집중하는 개발 목표는 다음과 같습니다.
+
+- Local LLM 리뷰 품질 개선
+- 외부 실제 Python 프로젝트 대상 분석 안정성 검증
+- 파일 길이 제한 제거에 따른 대용량 소스 분석 흐름 정리
+- 프로젝트 단위 결과 집계 및 보고서 가독성 개선
+- 실제 운영 환경 기준의 로컬 LLM 연동 안정성 개선
 
 ## 3. Pipeline
 
 ```text
-Python File / Project Directory
--> Input Collector
--> Python File Loader
--> Python Static Analyzer
--> Ruff Tool Collector
--> Result Aggregator
--> Mock or Local LLM Review Client
+Input
+-> Loader
+-> Static Analyzer
+-> Review Client
 -> Report Generator
 -> HTML / JSON Report
 ```
@@ -80,7 +50,7 @@ Python File / Project Directory
                                  │
                                  ▼
 ┌────────────────────────────────────────────────────────┐
-│ Input Collector                                        │
+│ Input                                                  │
 │ - 단일 파일 또는 디렉터리 입력                         │
 │ - Python 파일 재귀 탐색                                │
 │ - .git/.venv/__pycache__/reports 제외                  │
@@ -88,7 +58,15 @@ Python File / Project Directory
                          │
                          ▼
 ┌────────────────────────────────────────────────────────┐
-│ Python Static Analyzer                                 │
+│ Loader                                                 │
+│ - 분석 대상 파일 수집 및 로드                          │
+│ - UTF-8 기준 코드 읽기                                 │
+│ - 외부 실제 프로젝트 폴더 입력 지원                    │
+└────────────────────────┬───────────────────────────────┘
+                         │
+                         ▼
+┌────────────────────────────────────────────────────────┐
+│ Static Analyzer                                        │
 │ - AST parse                                            │
 │ - import/function/class 추출                           │
 │ - 위험 호출 후보 탐지                                  │
@@ -97,16 +75,10 @@ Python File / Project Directory
                          │
                          ▼
 ┌────────────────────────────────────────────────────────┐
-│ Ruff Tool Collector                                    │
-│ - uv run ruff check <target> --output-format json      │
-│ - Ruff finding을 분석 결과로 정규화                    │
-└────────────────────────┬───────────────────────────────┘
-                         │
-                         ▼
-┌────────────────────────────────────────────────────────┐
 │ Review Client                                          │
 │ - MockReviewClient: 오프라인/테스트용                  │
 │ - LocalLLMReviewClient: vLLM OpenAI-compatible API     │
+│ - 프로젝트 단위 요약 및 리뷰 품질 개선 대상            │
 └────────────────────────┬───────────────────────────────┘
                          │
                          ▼
@@ -114,7 +86,7 @@ Python File / Project Directory
 │ Report Generator                                       │
 │ - HTML 작업자용 보고서                                 │
 │ - JSON 에이전트/자동화용 결과                          │
-│ - Markdown 선택 출력                                   │
+│ - 프로젝트 요약 가독성 개선 대상                       │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -182,14 +154,13 @@ Ruff 수집 비활성화:
 uv run python main.py analyze tests --no-ruff
 ```
 
-## 6. Air-Gapped Deployment Note
+## 6. Local Environment Note
 
-이 프로젝트는 폐쇄망 또는 컨테이너 기반 배포를 염두에 두고 설계합니다.
+이 프로젝트는 로컬 환경에서 실행되는 분석 흐름을 기준으로 설계합니다.
 
-- 핵심 분석 경로는 외부 네트워크 없이 동작해야 합니다.
-- `ruff`는 선택적 외부 도구입니다.
-- 컨테이너 이미지나 내부 패키지 저장소에 `ruff`가 포함된 경우에만 활성화하는 구성이 현실적입니다.
-- `ruff`를 포함하지 않는 환경에서는 `--no-ruff`로 내부 AST 분석 경로만 사용하면 됩니다.
+- 핵심 분석 경로는 단일 파일과 프로젝트 디렉터리 입력을 모두 처리해야 합니다.
+- Python AST 기반 정적 분석과 Local LLM 리뷰 경로를 함께 유지합니다.
+- `ruff`는 현재 구현에 남아 있지만, 핵심 파이프라인 설명에서는 선택 도구로 취급합니다.
 
 ## 7. Local LLM Serving
 
@@ -221,9 +192,17 @@ uv run pytest
 uv run ruff check .
 ```
 
-## 8. Output Model
+## 8. Recommended Models
+
+- `Qwen/Qwen2.5-Coder-3B-Instruct`: 기본 코드 리뷰 및 Python 정적 분석용
+- `gpt-oss-20b`: reasoning 중심 대안 모델
+- `Gemma 4 26B MoE`: 향후 멀티모달 분석 확장을 위한 후보 모델
+
+## 9. Output
 
 기본 보고서는 `HTML + JSON`입니다. JSON은 기계/에이전트용 canonical output이고, HTML은 작업자용 보고서입니다.
+
+Phase 3에서는 출력 포맷 자체를 바꾸기보다, 실제 프로젝트 단위 분석에 맞춰 리뷰 품질과 프로젝트 요약 가독성을 개선하는 데 집중합니다.
 
 파일 단위 결과:
 
@@ -274,7 +253,7 @@ ReviewResult
   - recommendation
 ```
 
-## 9. Why the LLM Server Runs Separately
+## 10. Why the LLM Server Runs Separately
 
 이 프로젝트는 vLLM 서버를 애플리케이션 내부에서 자동 실행하지 않습니다. vLLM은 별도 터미널 또는 별도 GPU 서버에서 먼저 실행하고, 분석 애플리케이션은 이미 떠 있는 vLLM API에 HTTP 요청만 보냅니다.
 
@@ -307,7 +286,7 @@ LLM 서버가 없어도 기본 MockReviewClient로 분석은 가능해야 한다
 
 LLM 응답은 JSON으로 파싱하며, 파싱 실패나 서버 오류는 pipeline 실패가 아니라 보고서 finding으로 남깁니다.
 
-## 10. Roadmap
+## 11. Roadmap
 
 - Phase 1: 단일 `.py` 파일 기반 코드 리뷰 MVP
 - Phase 2: Python 프로젝트 단위 정적 분석 자동화
@@ -315,12 +294,26 @@ LLM 응답은 JSON으로 파싱하며, 파싱 실패나 서버 오류는 pipelin
 - Phase 4: RAG 기반 보안 기준 문서/룰 검색 연동
 - Phase 5: 악성코드 데이터 확보 후 보안 특화 학습/파인튜닝 검토
 
-## 11. Security Notice
+## 12. Security Notice
 
 이 저장소에는 실제 악성코드 샘플이나 민감한 내부 데이터를 커밋하지 않습니다. `data/samples/`에는 교육과 테스트를 위한 무해한 샘플만 둡니다.
 
 향후 실제 악성 파일을 다루는 단계에서는 격리된 분석 환경, 네트워크 통제, 샘플 저장 정책, 접근 권한 관리가 선행되어야 합니다.
 
-## 12. Related Documents
+## 13. Reference
+
+이 프로젝트는 `<A2A × MCP 멀티에이전트 오케스트레이션 실전>` 도서의 예제 프로젝트 중 하나인 `Code_Vulnerability` 구성을 참고했습니다.
+
+다만 현재 구현은 MCP/gRPC 기반 멀티에이전트 구조를 직접 사용하지 않고, 단일 프로세스 기반 파이프라인으로 단순화해 확장하고 있습니다.
+
+- [A2A-MCP / Code_Vulnerability](https://github.com/gilbutITbook/080493/tree/main/Code_Vulnerability)
+
+## 14. Phase Next
 
 - [SGLANG_VLLM_COMPARISON.md](./SGLANG_VLLM_COMPARISON.md): SGLang과 vLLM 비교 분석 리포트
+- 코드 수정 제안 및 remediation snippet 출력 방식 설계
+- 파일 전체 patched code 생성 여부 검토
+- 파인튜닝 전략 및 학습 데이터셋 구성 검토
+- 멀티모달 입력 확장 방식 검토
+- Python 외 언어 지원 여부 및 구조 일반화 검토
+- 선택적 정적 분석 도구 확장 여부 검토
