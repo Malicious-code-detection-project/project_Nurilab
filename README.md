@@ -311,7 +311,7 @@ LLM 응답은 JSON으로 파싱하며, 파싱 실패나 서버 오류는 pipelin
 
 - Phase 1: 단일 `.py` 파일 기반 코드 리뷰 MVP
 - Phase 2: Python 프로젝트 단위 정적 분석 자동화
-- Phase 3: Local LLM 리뷰 품질 개선 및 vLLM/SGLang 병렬 처리 실험
+- Phase 3: Local LLM 리뷰 품질 개선 및 분석 대상 확장
 - Phase 4: RAG 기반 보안 기준 문서/룰 검색 연동
 - Phase 5: 악성코드 데이터 확보 후 보안 특화 학습/파인튜닝 검토
 
