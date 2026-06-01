@@ -13,6 +13,5 @@ wheels/
 # Local analysis outputs
 /reports/
 
-# Local planning and agent instructions
-AGENTS.md
+# Local planning notes
 plan.md
