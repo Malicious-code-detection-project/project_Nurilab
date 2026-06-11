@@ -286,7 +286,36 @@ LLM 서버가 없어도 기본 MockReviewClient로 분석은 가능해야 한다
 
 LLM 응답은 JSON으로 파싱하며, 파싱 실패나 서버 오류는 pipeline 실패가 아니라 보고서 finding으로 남깁니다.
 
-## 11. Roadmap
+## 11. Prompt Contract (LLM의 역할 및 입출력 명세)
+ 
+시스템과 LLM 간의 역할과 입출력 규격을 명확히 하기 위해 프롬프트 계약(Prompt Contract)을 정의하여 코드와 문서에 반영하고 있습니다.
+
+### LLM의 역할 제한
+- **최종 판단자가 아님**: LLM은 코드가 악성인지 아닌지를 최종적으로 판결하는 판사가 아닙니다. 악성 여부의 판단 기준은 Rule Engine과 정적 분석 결과에 있습니다.
+- **정적 신호 해석자**: LLM은 정적 분석 파이프라인에서 추출된 객관적인 분석 결과를 입력받아 요약, 해석, 우선순위화, 권고안을 생성하는 보조적인 역할만 수행합니다.
+- **CoT(Chain of Thought) 적용**: LLM은 발견된 정적 신호와 코드 컨텍스트를 분석하여, 단순히 정적 룰 설명을 출력하는 것이 아니라 맥락과 신호를 결합한 객관적인 해석을 생성합니다.
+
+### 입출력 명세 (I/O Specification)
+- **Input**: AST 파서, 패턴 탐지 등을 거친 정규화된 정적 분석 결과.
+- **Output**: 반드시 다음 JSON 스키마 구조를 준수하여 응답해야 합니다.
+  ```json
+  {
+    "summary": "전체 분석 결과 요약",
+    "risk_level": "low|medium|high",
+    "findings": [
+      {
+        "title": "발견 항목 제목",
+        "severity": "low|medium|high",
+        "file": "대상 파일 경로",
+        "line": 42,
+        "reason": "정적 신호와 컨텍스트를 종합한 객관적인 설명",
+        "recommendation": "수정 및 완화 조치 권고안"
+      }
+    ]
+  }
+  ```
+
+## 12. Roadmap
 
 - Phase 1: 단일 `.py` 파일 기반 코드 리뷰 MVP
 - Phase 2: Python 프로젝트 단위 정적 분석 자동화
@@ -294,13 +323,13 @@ LLM 응답은 JSON으로 파싱하며, 파싱 실패나 서버 오류는 pipelin
 - Phase 4: RAG 기반 보안 기준 문서/룰 검색 연동
 - Phase 5: 악성코드 데이터 확보 후 보안 특화 학습/파인튜닝 검토
 
-## 12. Security Notice
+## 13. Security Notice
 
 이 저장소에는 실제 악성코드 샘플이나 민감한 내부 데이터를 커밋하지 않습니다. `data/samples/`에는 교육과 테스트를 위한 무해한 샘플만 둡니다.
 
 향후 실제 악성 파일을 다루는 단계에서는 격리된 분석 환경, 네트워크 통제, 샘플 저장 정책, 접근 권한 관리가 선행되어야 합니다.
 
-## 13. Reference
+## 14. Reference
 
 이 프로젝트는 `<A2A × MCP 멀티에이전트 오케스트레이션 실전>` 도서의 예제 프로젝트 중 하나인 `Code_Vulnerability` 구성을 참고했습니다.
 
@@ -308,7 +337,7 @@ LLM 응답은 JSON으로 파싱하며, 파싱 실패나 서버 오류는 pipelin
 
 - [A2A-MCP / Code_Vulnerability](https://github.com/gilbutITbook/080493/tree/main/Code_Vulnerability)
 
-## 14. Phase Next
+## 15. Phase Next
 
 - [SGLANG_VLLM_COMPARISON.md](./SGLANG_VLLM_COMPARISON.md): SGLang과 vLLM 비교 분석 리포트
 - 코드 수정 제안 및 remediation snippet 출력 방식 설계
@@ -318,7 +347,7 @@ LLM 응답은 JSON으로 파싱하며, 파싱 실패나 서버 오류는 pipelin
 - Python 외 언어 지원 여부 및 구조 일반화 검토
 - 선택적 정적 분석 도구 확장 여부 검토
 
-## 15. 중간 발표 때 들어온 질문들
+## 16. 중간 발표 때 들어온 질문들
 
 ### Q1. 새로운 악성코드가 생성되어 공격이 들어오면, 바로 파인튜닝할 것인가?
 
