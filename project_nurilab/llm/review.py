@@ -122,9 +122,7 @@ class LocalLLMReviewClient:
         temperature: float = DEFAULT_LLM_TEMPERATURE,
     ) -> None:
         self.base_url = (
-            base_url
-            or os.getenv("NURILAB_LLM_BASE_URL")
-            or DEFAULT_LLM_BASE_URL
+            base_url or os.getenv("NURILAB_LLM_BASE_URL") or DEFAULT_LLM_BASE_URL
         ).rstrip("/")
         self.model = model or os.getenv("NURILAB_LLM_MODEL") or DEFAULT_LLM_MODEL
         self.timeout = _resolve_timeout(timeout)
@@ -317,27 +315,74 @@ def _parse_llm_review(content: str) -> ReviewResult:
     except json.JSONDecodeError as exc:
         raise ValueError(f"LLM returned invalid JSON: {content}") from exc
 
-    summary_value = payload.get("summary", "")
-    if isinstance(summary_value, str):
+    if not isinstance(payload, dict):
+        payload = {}
+
+    summary_value = payload.get("summary")
+    if summary_value is None:
+        summary = ""
+    elif isinstance(summary_value, str):
         summary = summary_value
     else:
         summary = json.dumps(summary_value, ensure_ascii=False)
 
-    findings = [
-        ReviewFinding(
-            title=str(item.get("title", "LLM finding")),
-            severity=str(item.get("severity", "medium")),
-            file=item.get("file"),
-            line=item.get("line"),
-            source="local_llm",
-            reason=str(item.get("reason", "")),
-            recommendation=str(item.get("recommendation", "")),
+    findings_raw = payload.get("findings")
+    if not isinstance(findings_raw, list):
+        findings_raw = []
+
+    findings: list[ReviewFinding] = []
+    for item in findings_raw:
+        if not isinstance(item, dict):
+            continue
+
+        title_val = item.get("title")
+        title = str(title_val) if title_val is not None else ""
+
+        severity_val = item.get("severity")
+        severity = str(severity_val) if severity_val is not None else ""
+
+        reason_val = item.get("reason")
+        reason = str(reason_val) if reason_val is not None else ""
+
+        rec_val = item.get("recommendation")
+        recommendation = str(rec_val) if rec_val is not None else ""
+
+        file_val = item.get("file")
+        file_path = str(file_val) if file_val is not None else None
+
+        line_val = item.get("line")
+        line: int | None = None
+        if line_val is not None:
+            try:
+                line = int(line_val)
+            except (ValueError, TypeError):
+                line = None
+
+        findings.append(
+            ReviewFinding(
+                title=title,
+                severity=severity,
+                file=file_path,
+                line=line,
+                source="local_llm",
+                reason=reason,
+                recommendation=recommendation,
+            )
         )
-        for item in payload.get("findings", [])
-    ]
+
+    risk_level_value = payload.get("risk_level")
+    if risk_level_value is not None and str(risk_level_value).strip().lower() in {
+        "low",
+        "medium",
+        "high",
+    }:
+        risk_level = str(risk_level_value).strip().lower()
+    else:
+        risk_level = _derive_risk_level([f.severity for f in findings])
+
     return ReviewResult(
         summary=summary,
-        risk_level=str(payload.get("risk_level", _derive_risk_level([f.severity for f in findings]))),
+        risk_level=risk_level,
         findings=findings,
     )
 
