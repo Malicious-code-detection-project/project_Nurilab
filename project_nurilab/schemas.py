@@ -11,6 +11,9 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
+ALLOWED_SEVERITIES = {"info", "low", "medium", "high", "critical", "unknown"}
+
+
 @dataclass(slots=True)
 class ImportFinding:
     """A Python import discovered by the AST analyzer."""
@@ -87,6 +90,67 @@ class ReviewFinding:
     source: str = "review"
     column: int | None = None
     rule_id: str | None = None
+
+    def __post_init__(self) -> None:
+        # title
+        if self.title is None or str(self.title).strip() == "":
+            self.title = "LLM finding"
+        else:
+            self.title = str(self.title).strip()
+
+        # severity
+        if self.severity is None:
+            self.severity = "unknown"
+        else:
+            sev = str(self.severity).strip().lower()
+            if sev in ALLOWED_SEVERITIES:
+                self.severity = sev
+            else:
+                self.severity = "unknown"
+
+        # line
+        if self.line is not None:
+            try:
+                self.line = int(self.line)
+            except (ValueError, TypeError):
+                self.line = None
+
+        # reason
+        if self.reason is None:
+            self.reason = ""
+        else:
+            self.reason = str(self.reason).strip()
+
+        # recommendation
+        if self.recommendation is None:
+            self.recommendation = ""
+        else:
+            self.recommendation = str(self.recommendation).strip()
+
+        # file
+        if self.file is not None:
+            self.file = str(self.file).strip()
+            if not self.file:
+                self.file = None
+
+        # source
+        if self.source is None:
+            self.source = "review"
+        else:
+            self.source = str(self.source).strip()
+
+        # column
+        if self.column is not None:
+            try:
+                self.column = int(self.column)
+            except (ValueError, TypeError):
+                self.column = None
+
+        # rule_id
+        if self.rule_id is not None:
+            self.rule_id = str(self.rule_id).strip()
+            if not self.rule_id:
+                self.rule_id = None
 
 
 @dataclass(slots=True)
