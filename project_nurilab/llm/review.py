@@ -301,9 +301,37 @@ def _recommend_for_category(category: str) -> str:
 def _build_llm_prompt(analysis: PythonAnalysis | ProjectAnalysis) -> str:
     payload = analysis.to_dict()
     return (
-        "Review the following normalized Python static analysis result. "
-        "Return JSON with keys: summary, risk_level, findings. Each finding "
-        "must include title, severity, file, line, reason, recommendation.\n\n"
+        """Review the following normalized Python static analysis result.
+        Return JSON with keys: summary, risk_level, findings.
+        Each finding must include title, severity, file, line, reason, recommendation.
+        For 'risk_level' and 'severity', strictly use only one of the following values: "low", "medium", or "high".
+
+        IMPORTANT: You are a static signal interpreter, not a definitive malware judge.
+        Your role is to explain what the payload indicates objectively.
+        
+        Step-by-step Analysis (Chain of Thought):
+        1. Identify the static signals and their locations in the payload.
+        2. Analyze the specific context (e.g., function names, arguments) for each signal.
+        3. Synthesize how the context interacts with the static signal to explain the code's behavior objectively.
+        4. Formulate the final JSON. For the 'reason' field, output your synthesized explanation rather than just the static rule description.
+
+        Example Response:
+        {
+        "summary": "Found high severity issue with dynamic execution.",
+        "risk_level": "high",
+        "findings": [
+            {
+            "title": "Dynamic execution via eval",
+            "severity": "high",
+            "file": "main.py",
+            "line": 42,
+            "reason": "The eval() function is used with user-provided input, which indicates a risk of arbitrary code execution.",
+            "recommendation": "Use ast.literal_eval() for safe evaluation of strings."
+            }
+        ]
+        }
+        
+        """
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
