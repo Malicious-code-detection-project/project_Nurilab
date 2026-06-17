@@ -8,9 +8,11 @@ OpenAI-compatible API.
 
 from __future__ import annotations
 
+from collections import defaultdict
 import json
 import os
-from typing import Protocol
+from pathlib import Path
+from typing import Protocol, Any
 
 import requests
 
@@ -173,7 +175,29 @@ class LocalLLMReviewClient:
             )
 
         try:
-            return _parse_llm_review(content)
+            result = _parse_llm_review(content)
+            # Normalize finding paths back to absolute paths
+            if isinstance(analysis, ProjectAnalysis):
+                for finding in result.findings:
+                    if finding.file:
+                        p = Path(finding.file)
+                        if not p.is_absolute():
+                            try:
+                                finding.file = str((Path(analysis.root_path) / p).resolve())
+                            except Exception:
+                                pass
+            else:
+                for finding in result.findings:
+                    if not finding.file:
+                        finding.file = analysis.path
+                    else:
+                        p = Path(finding.file)
+                        if not p.is_absolute():
+                            try:
+                                finding.file = str((Path(analysis.path).parent / p).resolve())
+                            except Exception:
+                                pass
+            return result
         except Exception as exc:  # noqa: BLE001 - preserve failures as report data.
             return ReviewResult(
                 summary="Local LLM review failed. Static analysis results are still available.",
@@ -318,8 +342,190 @@ def _recommend_for_category(category: str) -> str:
     return recommendations.get(category, "Review the call path and validate inputs.")
 
 
+def get_relative_path(file_path: str, root_path: str) -> str:
+    try:
+        p = Path(file_path)
+        r = Path(root_path)
+        if p.is_absolute() and r.is_absolute():
+            return str(p.relative_to(r))
+    except Exception:
+        pass
+    return file_path
+
+
+def _build_project_payload_summary(analysis: ProjectAnalysis) -> dict[str, Any]:
+    # 1. Resolve all file results paths
+    file_results_resolved = {}
+    for r in analysis.file_results:
+        try:
+            res_path = str(Path(r.path).resolve())
+        except Exception:
+            res_path = r.path
+        file_results_resolved[res_path] = r
+
+    # 2. Group ruff findings by resolved path
+    ruff_by_file = defaultdict(list)
+    for ruff in analysis.ruff_findings:
+        try:
+            res_path = str(Path(ruff.file).resolve())
+        except Exception:
+            res_path = ruff.file
+        ruff_by_file[res_path].append(ruff)
+
+    # 3. Build file summaries for all resolved paths in file results
+    file_analyses = []
+    processed_paths = set()
+
+    for res_path, file_result in file_results_resolved.items():
+        processed_paths.add(res_path)
+        file_ruff = ruff_by_file.get(res_path, [])
+
+        has_signal = (
+            file_result.skipped
+            or file_result.syntax_error
+            or len(file_result.suspicious_calls) > 0
+            or len(file_result.secrets) > 0
+            or len(file_ruff) > 0
+        )
+
+        if not has_signal:
+            continue
+
+        file_summary = {
+            "file": get_relative_path(file_result.path, analysis.root_path),
+            "line_count": file_result.line_count,
+        }
+        if file_result.skipped:
+            file_summary["skipped"] = True
+            file_summary["skip_reason"] = file_result.skip_reason
+        if file_result.syntax_error:
+            file_summary["syntax_error"] = file_result.syntax_error
+        if file_result.suspicious_calls:
+            file_summary["suspicious_calls"] = [
+                {
+                    "name": call.name,
+                    "line": call.line,
+                    "category": call.category,
+                    "severity": call.severity,
+                    "reason": call.reason,
+                }
+                for call in file_result.suspicious_calls
+            ]
+        if file_result.secrets:
+            file_summary["secrets"] = [
+                {
+                    "kind": secret.kind,
+                    "line": secret.line,
+                    "preview": secret.preview,
+                    "severity": secret.severity,
+                    "reason": secret.reason,
+                }
+                for secret in file_result.secrets
+            ]
+        if file_ruff:
+            file_summary["ruff_findings"] = [
+                {
+                    "line": ruff.line,
+                    "column": ruff.column,
+                    "rule_id": ruff.rule_id,
+                    "message": ruff.message,
+                    "severity": ruff.severity,
+                }
+                for ruff in file_ruff
+            ]
+        file_analyses.append(file_summary)
+
+    # 4. Handle any ruff findings for paths not in file_results
+    for res_path, file_ruff in ruff_by_file.items():
+        if res_path in processed_paths:
+            continue
+
+        raw_path = file_ruff[0].file
+        file_summary = {
+            "file": get_relative_path(raw_path, analysis.root_path),
+            "line_count": 0,
+            "ruff_findings": [
+                {
+                    "line": ruff.line,
+                    "column": ruff.column,
+                    "rule_id": ruff.rule_id,
+                    "message": ruff.message,
+                    "severity": ruff.severity,
+                }
+                for ruff in file_ruff
+            ]
+        }
+        file_analyses.append(file_summary)
+
+    summary_dict = {}
+    if analysis.summary:
+        summary_dict = {
+            "total_files": analysis.summary.total_files,
+            "analyzed_files": analysis.summary.analyzed_files,
+            "skipped_files": analysis.summary.skipped_files,
+            "severity_counts": analysis.summary.severity_counts,
+            "risk_level": analysis.summary.risk_level,
+        }
+
+    return {
+        "root_path": analysis.root_path,
+        "summary": summary_dict,
+        "file_analyses": file_analyses,
+    }
+
+
+def _build_file_payload_summary(analysis: PythonAnalysis) -> dict[str, Any]:
+    payload = {
+        "file": analysis.path,
+        "line_count": analysis.line_count,
+    }
+    if analysis.skipped:
+        payload["skipped"] = True
+        payload["skip_reason"] = analysis.skip_reason
+    if analysis.syntax_error:
+        payload["syntax_error"] = analysis.syntax_error
+    if analysis.suspicious_calls:
+        payload["suspicious_calls"] = [
+            {
+                "name": call.name,
+                "line": call.line,
+                "category": call.category,
+                "severity": call.severity,
+                "reason": call.reason,
+            }
+            for call in analysis.suspicious_calls
+        ]
+    if analysis.secrets:
+        payload["secrets"] = [
+            {
+                "kind": secret.kind,
+                "line": secret.line,
+                "preview": secret.preview,
+                "severity": secret.severity,
+                "reason": secret.reason,
+            }
+            for secret in analysis.secrets
+        ]
+    if analysis.ruff_findings:
+        payload["ruff_findings"] = [
+            {
+                "line": ruff.line,
+                "column": ruff.column,
+                "rule_id": ruff.rule_id,
+                "message": ruff.message,
+                "severity": ruff.severity,
+            }
+            for ruff in analysis.ruff_findings
+        ]
+    return payload
+
+
 def _build_llm_prompt(analysis: PythonAnalysis | ProjectAnalysis) -> str:
-    payload = analysis.to_dict()
+    if isinstance(analysis, ProjectAnalysis):
+        payload = _build_project_payload_summary(analysis)
+    else:
+        payload = _build_file_payload_summary(analysis)
+
     return (
         """Review the following normalized Python static analysis result.
         Return JSON with keys: summary, risk_level, findings.
