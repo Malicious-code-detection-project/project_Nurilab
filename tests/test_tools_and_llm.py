@@ -304,3 +304,175 @@ def test_local_llm_review_client_parsing_error(monkeypatch) -> None:
     assert "invalid-json" in finding.reason
     assert "Ensure the LLM prompt or parameters encourage valid JSON formatting." in finding.recommendation
 
+
+def test_build_llm_prompt_summarizes_project() -> None:
+    from project_nurilab.llm.review import _build_llm_prompt
+    from project_nurilab.schemas import (
+        ProjectAnalysis,
+        ProjectSummary,
+        PythonAnalysis,
+        RuffFinding,
+        SuspiciousCall,
+        SecretFinding,
+    )
+
+    project_dir = Path("D:/dummy_project")
+    file1 = project_dir / "safe.py"
+    file2 = project_dir / "subdir" / "risky.py"
+    file3 = project_dir / "ignored.py"
+
+    analysis = ProjectAnalysis(
+        root_path=str(project_dir),
+        file_results=[
+            PythonAnalysis(
+                path=str(file1),
+                line_count=5,
+                imports=[],
+                classes=[],
+                functions=[],
+                suspicious_calls=[],
+                secrets=[],
+            ),
+            PythonAnalysis(
+                path=str(file2),
+                line_count=20,
+                suspicious_calls=[
+                    SuspiciousCall(
+                        name="eval",
+                        line=10,
+                        category="dynamic_execution",
+                        severity="high",
+                        reason="calls eval",
+                    )
+                ],
+                secrets=[
+                    SecretFinding(
+                        kind="api_key",
+                        line=15,
+                        preview="sk-...",
+                        severity="high",
+                        reason="hardcoded api key",
+                    )
+                ],
+            ),
+            PythonAnalysis(
+                path=str(file3),
+                line_count=0,
+                skipped=True,
+                skip_reason="exceeds limit",
+            ),
+        ],
+        ruff_findings=[
+            RuffFinding(
+                file=str(file2),
+                line=12,
+                column=5,
+                rule_id="F401",
+                message="unused import",
+                severity="low",
+            )
+        ],
+        summary=ProjectSummary(
+            total_files=3,
+            analyzed_files=2,
+            skipped_files=1,
+            severity_counts={"high": 2, "low": 1},
+            risk_level="high",
+        ),
+    )
+
+    prompt = _build_llm_prompt(analysis)
+
+    # Verify prompt contains clean summary payload
+    assert "dummy_project" in prompt
+    assert '"total_files": 3' in prompt
+    assert '"analyzed_files": 2' in prompt
+    assert '"skipped_files": 1' in prompt
+    assert '"risk_level": "high"' in prompt
+
+    # Verify we excluded the safe file (safe.py) from file_analyses because it has no signals
+    assert "safe.py" not in prompt
+
+    # Verify file2 is present and has suspicious_calls, secrets, and ruff findings
+    assert "risky.py" in prompt
+    assert "eval" in prompt
+    assert "api_key" in prompt
+    assert "F401" in prompt
+    assert "unused import" in prompt
+
+    # Verify skipped file (ignored.py) is present and has skip reason
+    assert "ignored.py" in prompt
+    assert "exceeds limit" in prompt
+
+
+def test_local_llm_review_client_resolves_project_finding_paths(monkeypatch) -> None:
+    import json
+    from project_nurilab.schemas import (
+        ProjectAnalysis,
+        ProjectSummary,
+        PythonAnalysis,
+    )
+    from project_nurilab.llm.review import LocalLLMReviewClient
+
+    project_dir = Path("D:/dummy_project").resolve()
+
+    class ResponseStub:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps({
+                                "summary": "found issues",
+                                "risk_level": "high",
+                                "findings": [
+                                    {
+                                        "title": "Dynamic execution",
+                                        "severity": "high",
+                                        "file": "subdir/risky.py",
+                                        "line": 10,
+                                        "reason": "uses eval",
+                                        "recommendation": "do not use eval"
+                                    }
+                                ]
+                            })
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(*args: Any, **kwargs: Any) -> ResponseStub:
+        return ResponseStub()
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    analysis = ProjectAnalysis(
+        root_path=str(project_dir),
+        file_results=[
+            PythonAnalysis(
+                path=str(project_dir / "subdir" / "risky.py"),
+                line_count=20,
+            )
+        ],
+        summary=ProjectSummary(
+            total_files=1,
+            analyzed_files=1,
+            skipped_files=0,
+            risk_level="high",
+        ),
+    )
+
+    review = LocalLLMReviewClient(base_url="http://localhost:8000/v1").review(analysis)
+
+    assert review.summary == "found issues"
+    assert review.risk_level == "high"
+    assert len(review.findings) == 1
+
+    # The relative path "subdir/risky.py" should be resolved to absolute path
+    expected_absolute_path = str((project_dir / "subdir" / "risky.py").resolve())
+    assert review.findings[0].file == expected_absolute_path
+
+
