@@ -153,6 +153,26 @@ class LocalLLMReviewClient:
             )
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
+        except Exception as exc:  # noqa: BLE001 - preserve failures as report data.
+            return ReviewResult(
+                summary="Local LLM review failed. Static analysis results are still available.",
+                risk_level="unknown",
+                findings=[
+                    ReviewFinding(
+                        title="Local LLM connection failed",
+                        severity="medium",
+                        line=None,
+                        source="local_llm",
+                        reason=f"Local LLM server or API error: {exc}",
+                        recommendation=(
+                            "Check that vLLM is running, the network is accessible, "
+                            "and the model is loaded."
+                        ),
+                    )
+                ],
+            )
+
+        try:
             return _parse_llm_review(content)
         except Exception as exc:  # noqa: BLE001 - preserve failures as report data.
             return ReviewResult(
@@ -160,14 +180,14 @@ class LocalLLMReviewClient:
                 risk_level="unknown",
                 findings=[
                     ReviewFinding(
-                        title="Local LLM review failed",
+                        title="Local LLM JSON parsing failed",
                         severity="medium",
                         line=None,
                         source="local_llm",
                         reason=str(exc),
                         recommendation=(
-                            "Check that vLLM is running, the model is loaded, "
-                            "and the response is valid JSON."
+                            "Ensure the LLM prompt or parameters encourage valid JSON formatting. "
+                            "The response content could not be parsed."
                         ),
                     )
                 ],
@@ -341,7 +361,11 @@ def _parse_llm_review(content: str) -> ReviewResult:
     try:
         payload = json.loads(normalized_content)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"LLM returned invalid JSON: {content}") from exc
+        preview = content[:200] + "..." if len(content) > 200 else content
+        raise ValueError(
+            f"Failed to parse LLM response as JSON. Error: {exc.msg} at line {exc.lineno} col {exc.colno}. "
+            f"Raw response preview: {repr(preview)}"
+        ) from exc
 
     if not isinstance(payload, dict):
         payload = {}

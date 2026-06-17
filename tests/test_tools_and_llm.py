@@ -217,3 +217,90 @@ def test_local_llm_review_client_handles_non_dict_payload(monkeypatch) -> None:
     assert review.summary == ""
     assert review.risk_level == "low"
     assert len(review.findings) == 0
+
+
+def test_extract_json_payload() -> None:
+    from project_nurilab.llm.review import _extract_json_payload
+
+    # 1. Clean JSON
+    assert _extract_json_payload('{"foo": "bar"}') == '{"foo": "bar"}'
+
+    # 2. Fenced JSON (plain ``` markdown fences)
+    assert _extract_json_payload('```\n{"foo": "bar"}\n```') == '{"foo": "bar"}'
+
+    # 3. Fenced JSON (with ```json markdown fences)
+    assert _extract_json_payload('```json\n{"foo": "bar"}\n```') == '{"foo": "bar"}'
+
+    # 4. JSON with preamble
+    assert _extract_json_payload('Here is the json content:\n{"foo": "bar"}') == '{"foo": "bar"}'
+
+    # 5. Fenced JSON with preamble
+    assert _extract_json_payload('Response:\n```json\n{"foo": "bar"}\n```') == '{"foo": "bar"}'
+
+    # 6. Invalid JSON (no braces)
+    assert _extract_json_payload('no json content') == 'no json content'
+
+    # 7. Partial/invalid JSON (missing closing brace)
+    assert _extract_json_payload('{"foo": "bar"') == '{"foo": "bar"'
+
+
+def test_local_llm_review_client_connection_error(monkeypatch) -> None:
+    def fake_post(*args: Any, **kwargs: Any) -> None:
+        raise ConnectionError("Failed to connect to LLM server")
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    review = LocalLLMReviewClient(base_url="http://localhost:8000/v1").review(
+        PythonAnalysis(path="sample.py", line_count=10)
+    )
+
+    assert review.summary == "Local LLM review failed. Static analysis results are still available."
+    assert review.risk_level == "unknown"
+    assert len(review.findings) == 1
+
+    finding = review.findings[0]
+    assert finding.title == "Local LLM connection failed"
+    assert finding.source == "local_llm"
+    assert "Failed to connect to LLM server" in finding.reason
+    assert "Check that vLLM is running, the network is accessible" in finding.recommendation
+
+
+def test_local_llm_review_client_parsing_error(monkeypatch) -> None:
+    class ResponseStub:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                "invalid-json"
+                            )
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(*args: Any, **kwargs: Any) -> ResponseStub:
+        return ResponseStub()
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    review = LocalLLMReviewClient(base_url="http://localhost:8000/v1").review(
+        PythonAnalysis(path="sample.py", line_count=10)
+    )
+
+    assert review.summary == "Local LLM review failed. Static analysis results are still available."
+    assert review.risk_level == "unknown"
+    assert len(review.findings) == 1
+
+    finding = review.findings[0]
+    assert finding.title == "Local LLM JSON parsing failed"
+    assert finding.source == "local_llm"
+    assert "Failed to parse LLM response as JSON." in finding.reason
+    assert "Raw response preview:" in finding.reason
+    assert "invalid-json" in finding.reason
+    assert "Ensure the LLM prompt or parameters encourage valid JSON formatting." in finding.recommendation
+
