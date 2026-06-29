@@ -11,6 +11,18 @@ from project_nurilab.schemas import AnalysisReport, ProjectReport, RuffFinding
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+def _write_large_risky_python_file(path: Path) -> int:
+    source_lines = [
+        "import os",
+        *("value = 1" for _ in range(205)),
+        "",
+        "def run(command):",
+        "    return os.system(command)",
+    ]
+    path.write_text("\n".join(source_lines), encoding="utf-8")
+    return len(source_lines)
+
+
 def test_phase1_pipeline_generates_reports(tmp_path: Path) -> None:
     report, output_paths = Phase1Pipeline().run(
         input_path=FIXTURES / "clean_sample.py",
@@ -26,6 +38,43 @@ def test_phase1_pipeline_generates_reports(tmp_path: Path) -> None:
     assert output_paths["json"].name == "clean_sample.analysis.json"
     assert output_paths["html"].exists()
     assert output_paths["json"].exists()
+
+
+def test_pipeline_generates_reports_for_large_python_file(tmp_path: Path) -> None:
+    target_file = tmp_path / "large_risky.py"
+    suspicious_line = _write_large_risky_python_file(target_file)
+    output_dir = tmp_path / "reports"
+
+    report, output_paths = Phase1Pipeline(use_ruff=False).run(
+        input_path=target_file,
+        output_dir=output_dir,
+        formats=["html", "json"],
+    )
+
+    assert isinstance(report, AnalysisReport)
+    assert report.analysis.skipped is False
+    assert report.analysis.skip_reason is None
+    assert report.analysis.line_count > 200
+    assert [call.name for call in report.analysis.suspicious_calls] == ["os.system"]
+    assert report.analysis.suspicious_calls[0].line == suspicious_line
+    assert report.review.risk_level == "high"
+    assert report.review.findings[0].title == "Review suspicious call: os.system"
+    assert report.review.findings[0].line == suspicious_line
+
+    assert output_paths["html"].name == "large_risky.analysis.html"
+    assert output_paths["json"].name == "large_risky.analysis.json"
+    assert output_paths["html"].exists()
+    assert output_paths["json"].exists()
+
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload["analysis"]["skipped"] is False
+    assert payload["analysis"]["line_count"] > 200
+    assert payload["analysis"]["suspicious_calls"][0]["name"] == "os.system"
+    assert payload["analysis"]["suspicious_calls"][0]["line"] == suspicious_line
+    assert payload["review"]["findings"][0]["title"] == (
+        "Review suspicious call: os.system"
+    )
+    assert payload["review"]["findings"][0]["line"] == suspicious_line
 
 
 def test_pipeline_generates_project_reports(tmp_path: Path) -> None:
@@ -56,6 +105,72 @@ def test_pipeline_generates_project_reports(tmp_path: Path) -> None:
     assert report.review.risk_level == "high"
     assert output_paths["html"].name == "target_project.analysis.html"
     assert output_paths["json"].name == "target_project.analysis.json"
+
+
+def test_pipeline_generates_project_reports_with_large_python_file(
+    tmp_path: Path,
+) -> None:
+    target_project = tmp_path / "large_project"
+    target_project.mkdir()
+    large_file = target_project / "large_risky.py"
+    suspicious_line = _write_large_risky_python_file(large_file)
+    (target_project / "safe.py").write_text(
+        "def ok():\n    return 1\n",
+        encoding="utf-8",
+    )
+
+    report, output_paths = Phase1Pipeline(use_ruff=False).run(
+        input_path=target_project,
+        output_dir=tmp_path,
+        formats=["html", "json"],
+    )
+
+    assert isinstance(report, ProjectReport)
+    assert report.analysis.summary is not None
+    assert report.analysis.summary.total_files == 2
+    assert report.analysis.summary.analyzed_files == 2
+    assert report.analysis.summary.skipped_files == 0
+    assert report.review.risk_level == "high"
+
+    large_results = [
+        result
+        for result in report.analysis.file_results
+        if result.path == str(large_file.resolve())
+    ]
+    assert len(large_results) == 1
+    assert large_results[0].skipped is False
+    assert large_results[0].line_count > 200
+    assert large_results[0].suspicious_calls[0].name == "os.system"
+    assert large_results[0].suspicious_calls[0].line == suspicious_line
+
+    matching_findings = [
+        finding
+        for finding in report.review.findings
+        if finding.title == "Review suspicious call: os.system"
+    ]
+    assert len(matching_findings) == 1
+    assert matching_findings[0].file == str(large_file.resolve())
+    assert matching_findings[0].line == suspicious_line
+
+    assert output_paths["html"].name == "large_project.analysis.html"
+    assert output_paths["json"].name == "large_project.analysis.json"
+    assert output_paths["html"].exists()
+    assert output_paths["json"].exists()
+
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload["analysis"]["summary"]["total_files"] == 2
+    assert payload["analysis"]["summary"]["analyzed_files"] == 2
+    assert payload["analysis"]["summary"]["skipped_files"] == 0
+    json_large_results = [
+        result
+        for result in payload["analysis"]["file_results"]
+        if result["path"] == str(large_file.resolve())
+    ]
+    assert len(json_large_results) == 1
+    assert json_large_results[0]["skipped"] is False
+    assert json_large_results[0]["line_count"] > 200
+    assert json_large_results[0]["suspicious_calls"][0]["name"] == "os.system"
+    assert json_large_results[0]["suspicious_calls"][0]["line"] == suspicious_line
 
 
 def test_pipeline_includes_project_ruff_findings_in_report(
