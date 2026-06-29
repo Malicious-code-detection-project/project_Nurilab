@@ -201,6 +201,20 @@ class RuffFinding:
 
 
 @dataclass(slots=True)
+class ProjectFileSummary:
+    """Aggregated finding counts and risk for one project file."""
+
+    path: str
+    risk_level: str
+    finding_count: int
+    suspicious_call_count: int = 0
+    secret_count: int = 0
+    syntax_error: bool = False
+    ruff_finding_count: int = 0
+    skipped: bool = False
+
+
+@dataclass(slots=True)
 class ProjectSummary:
     """Aggregated counts and risk for a project-level analysis."""
 
@@ -209,6 +223,7 @@ class ProjectSummary:
     skipped_files: int
     severity_counts: dict[str, int] = field(default_factory=dict)
     risk_level: str = "low"
+    file_summaries: list[ProjectFileSummary] = field(default_factory=list)
 
 
 @dataclass(slots=True)

@@ -315,17 +315,45 @@ def test_pipeline_project_summary_aggregates_all_signal_severities(
     assert len(syntax_results) == 1
     assert syntax_results[0].path == str(syntax_file.resolve())
 
+    file_summaries = report.analysis.summary.file_summaries
+    assert [summary.path for summary in file_summaries] == [
+        "secret.py",
+        "command.py",
+        "network.py",
+        "syntax_error.py",
+        "invalid_utf8.py",
+    ]
+    assert file_summaries[0].risk_level == "high"
+    assert file_summaries[0].finding_count == 2
+    assert file_summaries[0].secret_count == 1
+    assert file_summaries[0].ruff_finding_count == 1
+    assert file_summaries[1].suspicious_call_count == 1
+    assert file_summaries[2].risk_level == "medium"
+    assert file_summaries[2].suspicious_call_count == 1
+    assert file_summaries[2].ruff_finding_count == 1
+    assert file_summaries[3].syntax_error is True
+    assert file_summaries[4].risk_level == "unknown"
+    assert file_summaries[4].skipped is True
+
     payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
-    assert payload["analysis"]["summary"] == {
-        "total_files": 5,
-        "analyzed_files": 4,
-        "skipped_files": 1,
-        "severity_counts": {
-            "high": 2,
-            "low": 2,
-            "medium": 2,
-        },
+    assert payload["analysis"]["summary"]["total_files"] == 5
+    assert payload["analysis"]["summary"]["analyzed_files"] == 4
+    assert payload["analysis"]["summary"]["skipped_files"] == 1
+    assert payload["analysis"]["summary"]["severity_counts"] == {
+        "high": 2,
+        "low": 2,
+        "medium": 2,
+    }
+    assert payload["analysis"]["summary"]["risk_level"] == "high"
+    assert payload["analysis"]["summary"]["file_summaries"][0] == {
+        "path": "secret.py",
         "risk_level": "high",
+        "finding_count": 2,
+        "suspicious_call_count": 0,
+        "secret_count": 1,
+        "syntax_error": False,
+        "ruff_finding_count": 1,
+        "skipped": False,
     }
 
 
