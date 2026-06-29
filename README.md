@@ -18,6 +18,7 @@
 
 - 단일 `.py` 파일 분석
 - Python 프로젝트 디렉터리 분석
+- 줄 수 기준 skip 없이 Python 파일 분석
 - Mock / Local LLM 리뷰 지원
 - HTML + JSON 보고서 출력
 
@@ -189,6 +190,7 @@ export NURILAB_LLM_TIMEOUT=120
 
 - `MockReviewClient`: 기본 경로입니다. 외부 서버 없이 deterministic analyzer 결과를 report finding으로 변환하므로 테스트와 PR 검증의 기준으로 사용합니다.
 - `LocalLLMReviewClient`: `--review-client local`을 명시했을 때만 사용합니다. 이미 실행 중인 vLLM OpenAI-compatible API에 HTTP 요청을 보내 요약, 해석, 우선순위화, 권고안을 생성합니다.
+- Local LLM에는 원본 source 전문이 아니라 AST, rule, secret 탐지를 거친 정규화된 정적 분석 결과를 전달합니다.
 - Local LLM 서버 오류, timeout, JSON 파싱 실패는 pipeline 실패가 아닙니다. 분석 결과와 HTML/JSON report는 유지하고, 실패 원인은 `source="local_llm"` report finding으로 남깁니다.
 
 Local LLM 관련 변경을 검증할 때는 실제 vLLM 서버가 없어도 통과하는 mock 기반 테스트를 먼저 유지합니다.
