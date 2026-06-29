@@ -31,6 +31,8 @@
 - 프로젝트 단위 결과 집계 및 보고서 가독성 개선
 - 실제 운영 환경 기준의 로컬 LLM 연동 안정성 개선
 
+외부 프로젝트 검증 후보와 로컬 clone/분석 절차는 [External Python Project Validation Targets](./docs/external_project_validation.md)에 정리합니다.
+
 ## 3. Pipeline
 
 ```text
