@@ -183,6 +183,18 @@ export NURILAB_LLM_MODEL=Qwen/Qwen2.5-Coder-3B-Instruct
 export NURILAB_LLM_TIMEOUT=120
 ```
 
+리뷰 경로는 다음 기준으로 선택합니다.
+
+- `MockReviewClient`: 기본 경로입니다. 외부 서버 없이 deterministic analyzer 결과를 report finding으로 변환하므로 테스트와 PR 검증의 기준으로 사용합니다.
+- `LocalLLMReviewClient`: `--review-client local`을 명시했을 때만 사용합니다. 이미 실행 중인 vLLM OpenAI-compatible API에 HTTP 요청을 보내 요약, 해석, 우선순위화, 권고안을 생성합니다.
+- Local LLM 서버 오류, timeout, JSON 파싱 실패는 pipeline 실패가 아닙니다. 분석 결과와 HTML/JSON report는 유지하고, 실패 원인은 `source="local_llm"` report finding으로 남깁니다.
+
+Local LLM 관련 변경을 검증할 때는 실제 vLLM 서버가 없어도 통과하는 mock 기반 테스트를 먼저 유지합니다.
+
+```bash
+uv run pytest tests/test_tools_and_llm.py tests/test_pipeline.py tests/test_review_and_report.py
+```
+
 SGLang도 비교 대상이지만, 현재 코드 경로는 vLLM 호환 API를 우선 기준으로 두고 있습니다. 두 프레임워크 모두 멀티 GPU 구성을 지원하므로, 이후 처리량과 운영 복잡도를 비교해 선택 범위를 좁힙니다.
 
 테스트와 린트:
@@ -190,6 +202,8 @@ SGLang도 비교 대상이지만, 현재 코드 경로는 vLLM 호환 API를 우
 ```bash
 uv run pytest
 uv run ruff check .
+uv run ruff format --check .
+uv run mypy .
 ```
 
 ## 8. Recommended Models

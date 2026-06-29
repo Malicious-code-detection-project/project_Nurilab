@@ -143,6 +143,12 @@ Issue 정리
 - LLM은 요약, 해석, 우선순위화, 권고안 생성을 담당한다.
 - LLM 서버 오류나 JSON 파싱 실패는 pipeline 실패가 아니라 report finding으로 남긴다.
 
+**Local LLM 작업 기준**
+
+- Mock review는 기본 회귀 검증 경로이며 Local LLM 서버 없이 동작해야 한다.
+- Local LLM review는 `--review-client local`을 명시한 경우에만 이미 실행 중인 vLLM OpenAI-compatible API를 호출한다.
+- Local LLM 관련 변경은 `tests/test_tools_and_llm.py`, `tests/test_pipeline.py`, `tests/test_review_and_report.py` 중 영향 범위에 맞는 테스트로 검증한다.
+
 ---
 
 ## 6. 코드 구조와 책임
