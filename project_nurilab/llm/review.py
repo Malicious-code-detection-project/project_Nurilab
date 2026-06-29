@@ -73,7 +73,7 @@ class MockReviewClient:
     def _review_file(self, analysis: PythonAnalysis) -> ReviewResult:
         if analysis.skipped:
             return ReviewResult(
-                summary="Analysis was skipped because the file exceeded phase 1 limits.",
+                summary="Analysis was skipped because the file could not be loaded.",
                 risk_level="unknown",
                 findings=[
                     ReviewFinding(
@@ -82,7 +82,7 @@ class MockReviewClient:
                         file=analysis.path,
                         line=None,
                         reason=analysis.skip_reason or "The file was skipped.",
-                        recommendation="Reduce the file to 200 lines or analyze a smaller unit.",
+                        recommendation="Review the skip reason and fix the input so it can be read and analyzed.",
                     )
                 ],
             )
