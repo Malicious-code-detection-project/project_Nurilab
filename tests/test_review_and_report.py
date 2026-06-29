@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from project_nurilab import __version__
 from project_nurilab.analyzers.python_static import PythonStaticAnalyzer
 from project_nurilab.input.manager import PythonFileLoader
@@ -12,6 +14,7 @@ from project_nurilab.schemas import AnalysisReport
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
+REVIEW_QUALITY_FIXTURES = FIXTURES / "review_quality"
 
 
 def test_mock_review_client_turns_static_signals_into_findings() -> None:
@@ -24,6 +27,42 @@ def test_mock_review_client_turns_static_signals_into_findings() -> None:
     assert len(review.findings) == 3
     assert any("os.system" in finding.title for finding in review.findings)
     assert any("hard-coded secret" in finding.title for finding in review.findings)
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "expected_title", "expected_risk"),
+    [
+        ("dynamic_execution_sample.py", "eval", "high"),
+        ("hardcoded_secret_sample.py", "hard-coded secret", "high"),
+        ("unsafe_deserialization_sample.py", "pickle.loads", "high"),
+        ("network_access_sample.py", "requests.get", "low"),
+    ],
+)
+def test_mock_review_client_covers_review_quality_fixtures(
+    fixture_name: str,
+    expected_title: str,
+    expected_risk: str,
+) -> None:
+    loaded = PythonFileLoader().load(REVIEW_QUALITY_FIXTURES / fixture_name)
+    analysis = PythonStaticAnalyzer().analyze(loaded)
+
+    review = MockLLMReviewClient().review(analysis)
+
+    assert review.risk_level == expected_risk
+    assert any(expected_title in finding.title for finding in review.findings)
+
+
+def test_mock_review_client_keeps_clean_baseline_low_risk() -> None:
+    loaded = PythonFileLoader().load(
+        REVIEW_QUALITY_FIXTURES / "clean_baseline_sample.py"
+    )
+    analysis = PythonStaticAnalyzer().analyze(loaded)
+
+    review = MockLLMReviewClient().review(analysis)
+
+    assert review.risk_level == "low"
+    assert review.findings == []
+    assert "clean baseline" in review.summary
 
 
 def test_report_generator_writes_default_html_and_json(tmp_path: Path) -> None:

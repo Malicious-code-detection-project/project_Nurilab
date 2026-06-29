@@ -56,6 +56,45 @@ def test_pipeline_generates_project_reports(tmp_path: Path) -> None:
     assert output_paths["json"].name == "target_project.analysis.json"
 
 
+def test_pipeline_reviews_mixed_risk_project_fixture(tmp_path: Path) -> None:
+    source_project = FIXTURES / "review_quality_project"
+    target_project = tmp_path / "review_quality_project"
+    target_project.mkdir()
+
+    for source_file in source_project.glob("*.py"):
+        (target_project / source_file.name).write_text(
+            source_file.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+
+    (target_project / "syntax_error.py").write_text(
+        (source_project / "syntax_error_source.txt").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    report, output_paths = Phase1Pipeline(use_ruff=False).run(
+        input_path=target_project,
+        output_dir=tmp_path,
+        formats=["html", "json"],
+    )
+
+    assert isinstance(report, ProjectReport)
+    assert report.analysis.summary is not None
+    assert report.analysis.summary.total_files == 5
+    assert report.analysis.summary.analyzed_files == 5
+    assert report.review.risk_level == "high"
+
+    titles = {finding.title for finding in report.review.findings}
+    assert "Review suspicious call: exec" in titles
+    assert "Review suspicious call: requests.post" in titles
+    assert "Potential hard-coded secret: token" in titles
+    assert "Python syntax error" in titles
+
+    assert set(output_paths) == {"html", "json"}
+    assert output_paths["html"].exists()
+    assert output_paths["json"].exists()
+
+
 def test_pipeline_with_local_llm_for_project(tmp_path: Path, monkeypatch) -> None:
     import json
     from typing import Any

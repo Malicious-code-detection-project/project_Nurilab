@@ -4,9 +4,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from project_nurilab.analyzers.python_static import PythonStaticAnalyzer
+from project_nurilab.input.manager import PythonFileLoader
 from project_nurilab.analyzers.tools import RuffToolCollector
 from project_nurilab.llm.review import LocalLLMReviewClient
 from project_nurilab.schemas import PythonAnalysis
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 @dataclass
@@ -61,6 +66,66 @@ def test_local_llm_review_client_parses_vllm_response(monkeypatch) -> None:
 
     assert review.summary == "ok"
     assert review.risk_level == "low"
+
+
+def test_local_llm_review_client_parses_fixture_based_review(monkeypatch) -> None:
+    import json
+
+    loaded = PythonFileLoader().load(
+        FIXTURES / "review_quality" / "dynamic_execution_sample.py"
+    )
+    analysis = PythonStaticAnalyzer().analyze(loaded)
+    sent_prompt = ""
+
+    class ResponseStub:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "summary": "Dynamic execution signal found.",
+                                    "risk_level": "high",
+                                    "findings": [
+                                        {
+                                            "title": "Dynamic execution via eval",
+                                            "severity": "high",
+                                            "line": 2,
+                                            "reason": (
+                                                "The static signal identifies eval "
+                                                "executing a supplied expression."
+                                            ),
+                                            "recommendation": (
+                                                "Avoid eval for untrusted input."
+                                            ),
+                                        }
+                                    ],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(*args: Any, **kwargs: Any) -> ResponseStub:
+        nonlocal sent_prompt
+        sent_prompt = kwargs["json"]["messages"][1]["content"]
+        return ResponseStub()
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    review = LocalLLMReviewClient(base_url="http://localhost:8000/v1").review(analysis)
+
+    assert "eval" in sent_prompt
+    assert review.summary == "Dynamic execution signal found."
+    assert review.risk_level == "high"
+    assert len(review.findings) == 1
+    assert review.findings[0].title == "Dynamic execution via eval"
+    assert review.findings[0].file == analysis.path
 
 
 def test_local_llm_review_client_parses_fenced_json_response(monkeypatch) -> None:

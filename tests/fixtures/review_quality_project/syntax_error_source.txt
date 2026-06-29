@@ -1,0 +1,2 @@
+def broken_function(
+    return "missing closing parenthesis"
