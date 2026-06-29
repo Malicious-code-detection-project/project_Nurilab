@@ -467,7 +467,7 @@ class ReportGenerator:
     </section>
     <section>
       <h2>Findings</h2>
-      {_render_html_findings(report, sort_by_severity=True)}
+      {_render_html_project_findings(report)}
     </section>
     <section>
       <h2>File Results</h2>
@@ -661,6 +661,56 @@ def _render_html_findings(
             f"{_escape_html(finding.recommendation)}</p>"
             "</article>"
         )
+    return "\n".join(rendered)
+
+
+def _render_html_project_findings(report: ProjectReport) -> str:
+    if not report.review.findings:
+        return '<div class="section-list"><p>No findings for the current rule set.</p></div>'
+
+    grouped: dict[tuple[str, str], list] = {}
+    for finding in sorted(
+        report.review.findings,
+        key=lambda finding: (
+            -SEVERITY_RANK.get(finding.severity, 0),
+            finding.file or "",
+            finding.line if finding.line is not None else 0,
+            finding.source,
+            finding.title,
+        ),
+    ):
+        grouped.setdefault(
+            (finding.severity, finding.file or "Project-level findings"), []
+        ).append(finding)
+
+    rendered: list[str] = []
+    for (severity, file_path), findings in grouped.items():
+        severity_class = _html_class_for_severity(severity)
+        rendered.append(
+            f'<div class="section-list finding-group {severity_class}">'
+            f'<h3><code class="path-text">{_escape_html(file_path)}</code></h3>'
+            f'<p><span class="badge {severity_class}">{_escape_html(severity)}</span></p>'
+            "</div>"
+        )
+        for finding in findings:
+            severity_class = _html_class_for_severity(finding.severity)
+            location = _finding_location(finding)
+            rule = finding.rule_id or "N/A"
+            rendered.append(
+                f'<article class="finding {severity_class}">'
+                f"<h3>{_escape_html(finding.title)}</h3>"
+                f'<p><span class="badge {severity_class}">'
+                f"{_escape_html(finding.severity)}</span></p>"
+                '<div class="detail-grid">'
+                f"{_render_html_meta('Location', location)}"
+                f"{_render_html_meta('Source', finding.source)}"
+                f"{_render_html_meta('Rule', rule)}"
+                "</div>"
+                f"<p><strong>Reason:</strong> {_escape_html(finding.reason)}</p>"
+                f"<p><strong>Recommendation:</strong> "
+                f"{_escape_html(finding.recommendation)}</p>"
+                "</article>"
+            )
     return "\n".join(rendered)
 
 
