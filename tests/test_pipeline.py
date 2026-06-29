@@ -95,6 +95,75 @@ def test_pipeline_reviews_mixed_risk_project_fixture(tmp_path: Path) -> None:
     assert output_paths["json"].exists()
 
 
+def test_pipeline_analyzes_nested_project_inputs_and_generates_reports(
+    tmp_path: Path,
+) -> None:
+    target_project = tmp_path / "nested_project"
+    included_sources = {
+        "src/sample_app/__init__.py": "",
+        "src/sample_app/main.py": (
+            "from sample_app.services.worker import run_worker\n\n"
+            "def main():\n"
+            "    return run_worker()\n"
+        ),
+        "src/sample_app/services/worker.py": (
+            "import requests\n\n"
+            "def run_worker():\n"
+            "    return requests.post('https://example.invalid/api')\n"
+        ),
+        "scripts/admin.py": (
+            "import os\n\ndef run_admin(command):\n    return os.system(command)\n"
+        ),
+    }
+    for relative_path, source in included_sources.items():
+        path = target_project / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+
+    excluded_sources = [
+        ".venv/ignored.py",
+        ".git/hooks/ignored.py",
+        "__pycache__/ignored.py",
+        "reports/generated.py",
+        "build/generated.py",
+    ]
+    for relative_path in excluded_sources:
+        path = target_project / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("eval('ignored')\n", encoding="utf-8")
+
+    (target_project / "README.md").write_text("# nested project\n", encoding="utf-8")
+
+    report, output_paths = Phase1Pipeline(use_ruff=False).run(
+        input_path=target_project,
+        output_dir=tmp_path,
+        formats=["html", "json"],
+    )
+
+    assert isinstance(report, ProjectReport)
+    assert report.analysis.summary is not None
+    assert report.analysis.summary.total_files == 4
+    assert report.analysis.summary.analyzed_files == 4
+    assert report.analysis.summary.skipped_files == 0
+    assert report.review.risk_level == "high"
+
+    analyzed_paths = {
+        Path(result.path).relative_to(target_project).as_posix()
+        for result in report.analysis.file_results
+    }
+    assert analyzed_paths == set(included_sources)
+
+    finding_titles = {finding.title for finding in report.review.findings}
+    assert "Review suspicious call: os.system" in finding_titles
+    assert "Review suspicious call: requests.post" in finding_titles
+
+    assert set(output_paths) == {"html", "json"}
+    assert output_paths["html"].name == "nested_project.analysis.html"
+    assert output_paths["json"].name == "nested_project.analysis.json"
+    assert output_paths["html"].exists()
+    assert output_paths["json"].exists()
+
+
 def test_pipeline_with_local_llm_for_project(tmp_path: Path, monkeypatch) -> None:
     import json
     from typing import Any
