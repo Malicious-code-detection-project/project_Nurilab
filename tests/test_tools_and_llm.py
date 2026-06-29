@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pytest
+import requests
+
 from project_nurilab.analyzers.python_static import PythonStaticAnalyzer
 from project_nurilab.input.manager import PythonFileLoader
 from project_nurilab.analyzers.tools import RuffToolCollector
@@ -421,15 +424,39 @@ def test_extract_json_payload() -> None:
     assert _extract_json_payload('{"foo": "bar"') == '{"foo": "bar"'
 
 
-def test_local_llm_review_client_connection_error(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("request_error", "expected_reason"),
+    [
+        (
+            requests.exceptions.ConnectionError("Connection refused"),
+            "Connection refused",
+        ),
+        (
+            requests.exceptions.InvalidURL("No host supplied"),
+            "No host supplied",
+        ),
+        (
+            requests.exceptions.ConnectionError(
+                "Name or service not known for host local-llm.invalid"
+            ),
+            "local-llm.invalid",
+        ),
+    ],
+)
+def test_local_llm_review_client_connection_failures_become_findings(
+    monkeypatch,
+    request_error: requests.exceptions.RequestException,
+    expected_reason: str,
+) -> None:
     def fake_post(*args: Any, **kwargs: Any) -> None:
-        raise ConnectionError("Failed to connect to LLM server")
+        raise request_error
 
     monkeypatch.setattr("requests.post", fake_post)
 
-    review = LocalLLMReviewClient(base_url="http://localhost:8000/v1").review(
-        PythonAnalysis(path="sample.py", line_count=10)
-    )
+    review = LocalLLMReviewClient(
+        base_url="http://localhost:8000/v1",
+        model="test-model",
+    ).review(PythonAnalysis(path="sample.py", line_count=10))
 
     assert (
         review.summary
@@ -441,7 +468,9 @@ def test_local_llm_review_client_connection_error(monkeypatch) -> None:
     finding = review.findings[0]
     assert finding.title == "Local LLM connection failed"
     assert finding.source == "local_llm"
-    assert "Failed to connect to LLM server" in finding.reason
+    assert "http://localhost:8000/v1/chat/completions" in finding.reason
+    assert "test-model" in finding.reason
+    assert expected_reason in finding.reason
     assert (
         "Check that vLLM is running, the network is accessible"
         in finding.recommendation
