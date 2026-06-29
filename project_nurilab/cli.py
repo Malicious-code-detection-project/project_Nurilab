@@ -76,9 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     review_client = (
-        LocalLLMReviewClient()
-        if args.review_client == "local"
-        else MockReviewClient()
+        LocalLLMReviewClient() if args.review_client == "local" else MockReviewClient()
     )
     pipeline = Phase1Pipeline(
         loader=PythonFileLoader(max_lines=args.max_lines),

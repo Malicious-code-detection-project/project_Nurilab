@@ -339,7 +339,7 @@ LLM 응답은 JSON으로 파싱하며, 파싱 실패나 서버 오류는 pipelin
 
 ## 15. Phase Next
 
-- [SGLANG_VLLM_COMPARISON.md](./SGLANG_VLLM_COMPARISON.md): SGLang과 vLLM 비교 분석 리포트
+- [SGLANG_VLLM_COMPARISON.md](./docs/SGLANG_VLLM_COMPARISON.md): SGLang과 vLLM 비교 분석 리포트
 - 코드 수정 제안 및 remediation snippet 출력 방식 설계
 - 파일 전체 patched code 생성 여부 검토
 - 파인튜닝 전략 및 학습 데이터셋 구성 검토

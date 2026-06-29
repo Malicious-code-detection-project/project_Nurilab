@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Protocol
 
 from project_nurilab.schemas import AnalysisReport, ProjectReport
@@ -473,13 +474,13 @@ def _plain_imports(report: AnalysisReport) -> list[str]:
     return rendered
 
 
-def _render_symbols(label: str, symbols: list[NamedLineSymbol]) -> list[str]:
+def _render_symbols(label: str, symbols: Sequence[NamedLineSymbol]) -> list[str]:
     if not symbols:
         return ["- None"]
     return [f"- Line {symbol.line}: `{label} {symbol.name}`" for symbol in symbols]
 
 
-def _plain_symbols(label: str, symbols: list[NamedLineSymbol]) -> list[str]:
+def _plain_symbols(label: str, symbols: Sequence[NamedLineSymbol]) -> list[str]:
     if not symbols:
         return ["None"]
     return [f"Line {symbol.line}: {label} {symbol.name}" for symbol in symbols]

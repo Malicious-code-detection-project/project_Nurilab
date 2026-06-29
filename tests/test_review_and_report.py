@@ -107,4 +107,3 @@ def test_pipeline_handles_local_llm_failure(monkeypatch, tmp_path: Path) -> None
     assert len(report.review.findings) == 1
     assert report.review.findings[0].source == "local_llm"
     assert report.review.findings[0].title == "Local LLM JSON parsing failed"
-

@@ -58,5 +58,5 @@ This document defines the core architecture, coding standards, and project struc
 
 - **Do not guess imports**: Verify the location of a function/class before importing it.
 - **Run Tests**: Whenever a change is made to the core logic, remind the user to run `pytest` or autonomously run `pytest` if the capability is available.
-- **Linting**: After code generation, ensure the output complies with `ruff check .` and `ruff format .`.
+- **Linting**: After code generation, ensure the output complies with `ruff check .` and `ruff format --check .`.
 - **Atomic Changes**: Keep changes surgical and focused on the user's immediate request. Do not arbitrarily "clean up" unrelated code unless instructed.

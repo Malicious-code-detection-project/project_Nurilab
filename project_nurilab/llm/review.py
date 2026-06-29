@@ -183,7 +183,9 @@ class LocalLLMReviewClient:
                         p = Path(finding.file)
                         if not p.is_absolute():
                             try:
-                                finding.file = str((Path(analysis.root_path) / p).resolve())
+                                finding.file = str(
+                                    (Path(analysis.root_path) / p).resolve()
+                                )
                             except Exception:
                                 pass
             else:
@@ -194,7 +196,9 @@ class LocalLLMReviewClient:
                         p = Path(finding.file)
                         if not p.is_absolute():
                             try:
-                                finding.file = str((Path(analysis.path).parent / p).resolve())
+                                finding.file = str(
+                                    (Path(analysis.path).parent / p).resolve()
+                                )
                             except Exception:
                                 pass
             return result
@@ -453,7 +457,7 @@ def _build_project_payload_summary(analysis: ProjectAnalysis) -> dict[str, Any]:
                     "severity": ruff.severity,
                 }
                 for ruff in file_ruff
-            ]
+            ],
         }
         file_analyses.append(file_summary)
 
