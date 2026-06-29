@@ -29,6 +29,15 @@ from project_nurilab.schemas import (
     ReviewResult,
 )
 
+SEVERITY_RANK = {
+    "critical": 5,
+    "high": 4,
+    "medium": 3,
+    "low": 2,
+    "info": 1,
+    "unknown": 0,
+}
+
 
 class ReviewClient(Protocol):
     """Common review client interface for mock and local LLM implementations."""
@@ -66,6 +75,7 @@ class MockReviewClient:
                 )
             )
 
+        findings = _sort_review_findings(findings)
         risk_level = _derive_risk_level([finding.severity for finding in findings])
         summary = _build_project_summary(analysis, findings, risk_level)
         return ReviewResult(summary=summary, risk_level=risk_level, findings=findings)
@@ -268,6 +278,23 @@ def _file_findings(analysis: PythonAnalysis) -> list[ReviewFinding]:
         )
 
     return findings
+
+
+def _sort_review_findings(findings: list[ReviewFinding]) -> list[ReviewFinding]:
+    return sorted(findings, key=_review_finding_sort_key)
+
+
+def _review_finding_sort_key(
+    finding: ReviewFinding,
+) -> tuple[int, str, int, str, str]:
+    line = finding.line if finding.line is not None else 0
+    return (
+        -SEVERITY_RANK.get(finding.severity, 0),
+        finding.file or "",
+        line,
+        finding.source,
+        finding.title,
+    )
 
 
 def _derive_risk_level(severities: list[str]) -> str:

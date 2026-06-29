@@ -20,6 +20,8 @@ from project_nurilab.schemas import (
     ReviewFinding,
     ReviewResult,
     RuffFinding,
+    SecretFinding,
+    SuspiciousCall,
 )
 
 
@@ -73,6 +75,79 @@ def test_mock_review_client_keeps_clean_baseline_low_risk() -> None:
     assert review.risk_level == "low"
     assert review.findings == []
     assert "clean baseline" in review.summary
+
+
+def test_mock_project_review_sorts_findings_deterministically() -> None:
+    review = MockLLMReviewClient().review(
+        ProjectAnalysis(
+            root_path="/tmp/example_project",
+            file_results=[
+                PythonAnalysis(
+                    path="/tmp/example_project/z_low.py",
+                    line_count=10,
+                    suspicious_calls=[
+                        SuspiciousCall(
+                            name="requests.get",
+                            line=9,
+                            category="network_access",
+                            severity="low",
+                            reason="network call",
+                        )
+                    ],
+                ),
+                PythonAnalysis(
+                    path="/tmp/example_project/a_high.py",
+                    line_count=10,
+                    suspicious_calls=[
+                        SuspiciousCall(
+                            name="eval",
+                            line=8,
+                            category="dynamic_execution",
+                            severity="high",
+                            reason="dynamic execution",
+                        )
+                    ],
+                    secrets=[
+                        SecretFinding(
+                            kind="api_key",
+                            line=2,
+                            preview="sk-...",
+                            severity="high",
+                            reason="hard-coded secret",
+                        )
+                    ],
+                ),
+            ],
+            ruff_findings=[
+                RuffFinding(
+                    file="/tmp/example_project/a_high.py",
+                    line=1,
+                    column=1,
+                    rule_id="F401",
+                    message="unused import",
+                    severity="low",
+                )
+            ],
+            summary=ProjectSummary(
+                total_files=2,
+                analyzed_files=2,
+                skipped_files=0,
+                risk_level="high",
+            ),
+        )
+    )
+
+    finding_order = [
+        (finding.severity, finding.file, finding.line, finding.source, finding.rule_id)
+        for finding in review.findings
+    ]
+
+    assert finding_order == [
+        ("high", "/tmp/example_project/a_high.py", 2, "secret", None),
+        ("high", "/tmp/example_project/a_high.py", 8, "pattern", None),
+        ("low", "/tmp/example_project/a_high.py", 1, "ruff", "F401"),
+        ("low", "/tmp/example_project/z_low.py", 9, "pattern", None),
+    ]
 
 
 def test_report_generator_writes_default_html_and_json(tmp_path: Path) -> None:
@@ -224,6 +299,8 @@ def test_report_generator_renders_readable_project_html() -> None:
                     reason="High risk.",
                     recommendation="Review first.",
                     file=long_path,
+                    source="pattern",
+                    rule_id="DYN001",
                 ),
             ],
         ),
@@ -239,6 +316,11 @@ def test_report_generator_renders_readable_project_html() -> None:
     assert "high: 2" in html
     assert "{&#x27;high&#x27;" not in html
     assert html.index("High priority issue") < html.index("Low priority observation")
+    assert "finding-group severity-high" in html
+    assert "Source" in html
+    assert "pattern" in html
+    assert "Rule" in html
+    assert "DYN001" in html
     assert 'class="path-text"' in html
     assert long_path in html
     assert "F401" in html
