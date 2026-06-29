@@ -11,6 +11,14 @@ from project_nurilab.schemas import AnalysisReport, ProjectFileSummary, ProjectR
 
 
 ReportPayload = AnalysisReport | ProjectReport
+SEVERITY_RANK = {
+    "critical": 5,
+    "high": 4,
+    "medium": 3,
+    "low": 2,
+    "info": 1,
+    "unknown": 0,
+}
 
 
 class NamedLineSymbol(Protocol):
@@ -404,16 +412,10 @@ class ReportGenerator:
         analysis = report.analysis
         summary = analysis.summary
         severity_class = _html_class_for_severity(report.review.risk_level)
-        summary_cards = ""
-        if summary:
-            summary_cards = "".join(
-                [
-                    _render_html_meta("Total Python Files", str(summary.total_files)),
-                    _render_html_meta("Analyzed Files", str(summary.analyzed_files)),
-                    _render_html_meta("Skipped Files", str(summary.skipped_files)),
-                    _render_html_meta("Severity Counts", str(summary.severity_counts)),
-                ]
-            )
+        overview_cards = _render_html_project_overview(report)
+        severity_counts = (
+            _render_html_severity_counts(summary.severity_counts) if summary else ""
+        )
 
         file_summary_rows = ""
         if summary and summary.file_summaries:
@@ -424,13 +426,7 @@ class ReportGenerator:
         file_rows = "".join(
             _render_html_file_result(result) for result in analysis.file_results
         )
-        ruff_values = [
-            (
-                f"{finding.file}:{finding.line}:{finding.column} "
-                f"{finding.rule_id} - {finding.message}"
-            )
-            for finding in analysis.ruff_findings
-        ] or ["None"]
+        ruff_rows = _render_html_ruff_findings(analysis.ruff_findings)
 
         return f"""<!doctype html>
 <html lang="en">
@@ -446,9 +442,15 @@ class ReportGenerator:
       <h1>Python Project Review Report</h1>
       <span class="badge {severity_class}">{_escape_html(report.review.risk_level)}</span>
     </header>
-    <section class="summary">
-      <h2>Summary</h2>
-      <p>{_escape_html(report.review.summary)}</p>
+    <section class="summary project-overview">
+      <div>
+        <h2>Project Summary</h2>
+        <p>{_escape_html(report.review.summary)}</p>
+      </div>
+      <div class="overview-grid">
+        {overview_cards}
+      </div>
+      {severity_counts}
     </section>
     <section>
       <h2>Metadata</h2>
@@ -457,7 +459,6 @@ class ReportGenerator:
         {_render_html_meta("Analyzer Version", report.analyzer_version)}
         {_render_html_meta("Root Path", analysis.root_path)}
         {_render_html_meta("Risk Level", report.review.risk_level)}
-        {summary_cards}
       </div>
     </section>
     <section>
@@ -466,7 +467,7 @@ class ReportGenerator:
     </section>
     <section>
       <h2>Findings</h2>
-      {_render_html_findings(report)}
+      {_render_html_findings(report, sort_by_severity=True)}
     </section>
     <section>
       <h2>File Results</h2>
@@ -474,7 +475,7 @@ class ReportGenerator:
     </section>
     <section>
       <h2>Ruff Findings</h2>
-      {_render_html_list("Ruff", ruff_values)}
+      {ruff_rows}
     </section>
   </main>
 </body>
@@ -632,12 +633,21 @@ def _render_html_list(title: str, values: list[str]) -> str:
     )
 
 
-def _render_html_findings(report: ReportPayload) -> str:
+def _render_html_findings(
+    report: ReportPayload, *, sort_by_severity: bool = False
+) -> str:
     if not report.review.findings:
         return '<div class="section-list"><p>No findings for the current rule set.</p></div>'
 
     rendered: list[str] = []
-    for finding in report.review.findings:
+    findings = report.review.findings
+    if sort_by_severity:
+        findings = sorted(
+            findings,
+            key=lambda finding: -SEVERITY_RANK.get(finding.severity, 0),
+        )
+
+    for finding in findings:
         severity_class = _html_class_for_severity(finding.severity)
         location = _finding_location(finding)
         rendered.append(
@@ -667,6 +677,55 @@ def _finding_location(finding) -> str:
     return f"{file}{line}{column}"
 
 
+def _render_html_project_overview(report: ProjectReport) -> str:
+    summary = report.analysis.summary
+    if summary is None:
+        return "".join(
+            [
+                _render_html_stat_card("Risk Level", report.review.risk_level),
+                _render_html_stat_card("Total Python Files", "0"),
+                _render_html_stat_card("Analyzed Files", "0"),
+                _render_html_stat_card("Skipped Files", "0"),
+            ]
+        )
+
+    return "".join(
+        [
+            _render_html_stat_card("Risk Level", summary.risk_level),
+            _render_html_stat_card("Total Python Files", str(summary.total_files)),
+            _render_html_stat_card("Analyzed Files", str(summary.analyzed_files)),
+            _render_html_stat_card("Skipped Files", str(summary.skipped_files)),
+        ]
+    )
+
+
+def _render_html_stat_card(label: str, value: str) -> str:
+    return (
+        '<div class="stat-card">'
+        f'<span class="label">{_escape_html(label)}</span>'
+        f"<strong>{_escape_html(value)}</strong>"
+        "</div>"
+    )
+
+
+def _render_html_severity_counts(severity_counts: dict[str, int]) -> str:
+    if not severity_counts:
+        return '<div class="severity-strip"><span>No severity findings</span></div>'
+
+    chips = []
+    for severity in sorted(
+        severity_counts,
+        key=lambda value: -SEVERITY_RANK.get(value, 0),
+    ):
+        severity_class = _html_class_for_severity(severity)
+        chips.append(
+            f'<span class="severity-chip {severity_class}">'
+            f"{_escape_html(severity)}: {_escape_html(str(severity_counts[severity]))}"
+            "</span>"
+        )
+    return '<div class="severity-strip">' + "".join(chips) + "</div>"
+
+
 def _render_html_file_result(result) -> str:
     severity = "info" if result.skipped else "low"
     if result.syntax_error:
@@ -676,7 +735,7 @@ def _render_html_file_result(result) -> str:
     severity_class = _html_class_for_severity(severity)
     return (
         f'<article class="finding {severity_class}">'
-        f"<h3>{_escape_html(result.path)}</h3>"
+        f'<h3><code class="path-text">{_escape_html(result.path)}</code></h3>'
         f"<p><strong>Lines:</strong> {_escape_html(str(result.line_count))}</p>"
         f"<p><strong>Skipped:</strong> {_escape_html(str(result.skipped))}</p>"
         f"<p><strong>Syntax Error:</strong> "
@@ -697,7 +756,7 @@ def _render_html_project_file_summaries(
         severity_class = _html_class_for_severity(file_summary.risk_level)
         rendered.append(
             f'<article class="finding {severity_class}">'
-            f"<h3>{_escape_html(file_summary.path)}</h3>"
+            f'<h3><code class="path-text">{_escape_html(file_summary.path)}</code></h3>'
             f'<p><span class="badge {severity_class}">'
             f"{_escape_html(file_summary.risk_level)}</span></p>"
             f"<p><strong>Findings:</strong> "
@@ -711,6 +770,36 @@ def _render_html_project_file_summaries(
             f"<p><strong>Ruff Findings:</strong> "
             f"{_escape_html(str(file_summary.ruff_finding_count))}</p>"
             f"<p><strong>Skipped:</strong> {_escape_html(str(file_summary.skipped))}</p>"
+            "</article>"
+        )
+    return "\n".join(rendered)
+
+
+def _render_html_ruff_findings(ruff_findings) -> str:
+    if not ruff_findings:
+        return '<div class="section-list"><p>No Ruff findings.</p></div>'
+
+    rendered: list[str] = []
+    for finding in sorted(
+        ruff_findings,
+        key=lambda item: (
+            -SEVERITY_RANK.get(item.severity, 0),
+            item.file,
+            item.line,
+            item.column,
+            item.rule_id,
+        ),
+    ):
+        severity_class = _html_class_for_severity(finding.severity)
+        rendered.append(
+            f'<article class="finding {severity_class}">'
+            f'<h3><code class="path-text">{_escape_html(finding.file)}</code></h3>'
+            '<div class="detail-grid">'
+            f"{_render_html_meta('Location', f'{finding.line}:{finding.column}')}"
+            f"{_render_html_meta('Rule', finding.rule_id)}"
+            f"{_render_html_meta('Severity', finding.severity)}"
+            "</div>"
+            f"<p>{_escape_html(finding.message)}</p>"
             "</article>"
         )
     return "\n".join(rendered)
@@ -760,11 +849,49 @@ def _shared_css() -> str:
       padding: 18px;
       margin: 16px 0;
     }
+    .project-overview {
+      display: grid;
+      gap: 16px;
+    }
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+    }
+    .stat-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fbfcfe;
+    }
+    .stat-card strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 20px;
+    }
+    .severity-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .severity-chip {
+      border-radius: 999px;
+      padding: 4px 10px;
+      color: white;
+      font-weight: 700;
+      font-size: 13px;
+    }
     .meta-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       gap: 10px;
       margin: 16px 0;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 8px;
+      margin: 10px 0;
     }
     .meta-item, .finding, .section-list {
       background: var(--panel);
@@ -785,6 +912,11 @@ def _shared_css() -> str:
       background: #eef1f5;
       padding: 2px 5px;
       border-radius: 4px;
+    }
+    .path-text {
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
     ul { margin: 8px 0 0; padding-left: 22px; }
     .badge {
