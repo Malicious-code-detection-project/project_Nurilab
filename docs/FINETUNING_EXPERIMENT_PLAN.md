@@ -1,10 +1,51 @@
 # GPT-OSS-20B Fine-Tuning Experiment Plan
 
-This document defines the Project NuriLab fine-tuning experiment track.
+This document defines the Project NuriLab fine-tuning experiment direction and
+the boundary between the main product repository and the separate fine-tuning
+project.
 
 The Phase 3 Linear issues remain assigned to the team. This experiment track is
 focused on preparing and running a local fine-tuning experiment on a machine
 with NVIDIA GPU resources.
+
+## 0. Project Boundary
+
+Fine-tuning should be managed as a separate project from this repository.
+
+Recommended split:
+
+```text
+project_Nurilab/
+  - main analysis product
+  - Phase 3 team development
+  - deterministic analyzers
+  - Local LLM inference integration
+  - JSON / HTML report generation
+
+nurilab-finetuning/
+  - GPT-OSS-20B fine-tuning experiments
+  - dataset manifests and converters
+  - training scripts
+  - evaluation scripts
+  - adapter / checkpoint handling rules
+  - vLLM serving validation for tuned models
+```
+
+This repository may keep this planning document so the team understands the
+overall direction. Actual fine-tuning code, dataset preparation jobs, experiment
+logs, model adapters, checkpoints, raw datasets, and serving experiments should
+move to the separate fine-tuning project.
+
+Rationale:
+
+- Phase 3 product work and fine-tuning have different owners, risks, and
+  release cycles.
+- Fine-tuning requires GPU-specific environment management that should not
+  constrain normal product development.
+- Raw CTI, malware metadata, model checkpoints, and large generated artifacts
+  should not pollute the main product repository.
+- Project NuriLab must keep deterministic analyzer signals as the source of
+  judgment; the tuned model remains an explanation and reporting component.
 
 ## 1. Goal
 
@@ -52,8 +93,12 @@ steps.
 Datasets will be installed and stored on the NVIDIA GPU machine or approved GPU
 server storage, not in this Git repository.
 
-The repository may contain scripts, schema definitions, prompts, and evaluation
-logic later. It must not contain large downloaded datasets, real malware
+The separate `nurilab-finetuning` project may contain scripts, schema
+definitions, prompts, dataset manifests, and evaluation logic. This repository
+should keep only high-level planning or integration notes unless a specific
+product-facing integration change is needed.
+
+Neither repository should contain large downloaded datasets, real malware
 payloads, API keys, private CTI, or sensitive data.
 
 ### v0: Metadata and Report Data
@@ -216,19 +261,64 @@ output against curated labels, deterministic analyzer signals, and human review.
 - Keep large artifacts, model checkpoints, and raw datasets outside the Git
   repository.
 
-## 10. Initial Experiment Steps
+## 10. Separate Project Skeleton
 
-1. Confirm the NVIDIA GPU machine can load `openai/gpt-oss-20b`.
-2. Verify vLLM inference on the base model.
-3. Create a uv training environment compatible with the selected PoC stack.
-4. Prepare a small JSONL dataset from metadata/report-only sources.
-5. Run Unsloth QLoRA PoC.
-6. Run Hugging Face TRL LoRA PoC on the same small dataset.
-7. Compare JSON validity, output quality, VRAM usage, and training time.
-8. Choose the v0 training stack.
-9. Scale dataset construction only after the PoC path is stable.
+Recommended initial structure for the fine-tuning project:
 
-## 11. Current Reference Links
+```text
+nurilab-finetuning/
+  pyproject.toml
+  uv.lock
+  README.md
+  AGENTS.md
+  configs/
+    train/
+    eval/
+    serving/
+  schemas/
+    malware_behavior_report.schema.json
+  datasets/
+    README.md
+    manifests/
+  scripts/
+    prepare_datasets.py
+    train_unsloth_qlora.py
+    train_trl_lora.py
+    evaluate_json_outputs.py
+    serve_vllm_adapter.py
+  evals/
+    fixtures/
+    expected/
+  experiments/
+    README.md
+  outputs/
+    .gitkeep
+```
+
+Git rules for the separate project:
+
+- Commit code, configs, schemas, small fixtures, and dataset manifests.
+- Do not commit raw datasets, malware samples, API keys, model weights,
+  adapters, checkpoints, or large generated outputs.
+- Keep machine-specific paths in local `.env` files or ignored config overlays.
+- Record reproducible experiment summaries in markdown or JSON logs.
+
+## 11. Initial Experiment Steps
+
+1. Create the separate `nurilab-finetuning` project skeleton.
+2. Confirm the NVIDIA GPU machine can load `openai/gpt-oss-20b`.
+3. Verify vLLM inference on the base model.
+4. Create a uv training environment compatible with the selected PoC stack.
+5. Prepare a small JSONL dataset from metadata/report-only sources.
+6. Run Unsloth QLoRA PoC.
+7. Run Hugging Face TRL LoRA PoC on the same small dataset.
+8. Compare JSON validity, output quality, VRAM usage, and training time.
+9. Choose the v0 training stack.
+10. Scale dataset construction only after the PoC path is stable.
+11. Integrate the selected tuned model back into Project NuriLab only through
+    the existing Local LLM inference boundary.
+
+## 12. Current Reference Links
 
 - OpenAI gpt-oss help:
   https://help.openai.com/en/articles/11870455-openai-open-weight-models-gpt-oss

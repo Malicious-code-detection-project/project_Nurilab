@@ -13,9 +13,10 @@ PR 리뷰와 최종 병합 판단은 Repository Owner가 담당한다.
 | 알고 싶은 것 | 정본 위치 |
 | --- | --- |
 | 프로젝트 소개, 현재 Phase, 실행 방법 | `README.md` |
-| 팀 기여 절차, 브랜치, 커밋, 테스트 규칙 | `CONTRIBUTING.md` |
+| 팀 기여 절차, 브랜치, 커밋, 테스트 규칙 | `docs/CONTRIBUTING.md` |
 | 에이전트/개발자 공통 운영 규칙 | `AGENTS.md` |
-| SGLang과 vLLM 비교 | `SGLANG_VLLM_COMPARISON.md` |
+| SGLang과 vLLM 비교 | `docs/SGLANG_VLLM_COMPARISON.md` |
+| PR 본문 작성 참고 템플릿 | `docs/PR_DESCRIPTION.md` |
 | PR 작성 형식 | `.github/PULL_REQUEST_TEMPLATE.md` |
 | 작업 이슈 작성 형식 | `.github/ISSUE_TEMPLATE/task.md` |
 | 코드 구조 | `project_nurilab/` |
@@ -167,6 +168,8 @@ PR 전 반드시 실행한다.
 ```bash
 uv run pytest
 uv run ruff check .
+uv run ruff format --check .
+uv run mypy .
 ```
 
 테스트 기준:
@@ -190,8 +193,10 @@ PR 생성 전:
 - [ ] PR 제목이 `[Phase 3] <요약>` 형식을 따르는가?
 - [ ] `uv run pytest` 통과
 - [ ] `uv run ruff check .` 통과
+- [ ] `uv run ruff format --check .` 통과
+- [ ] `uv run mypy .` 통과
 - [ ] 기능 변경에 테스트가 포함됐는가?
-- [ ] 문서 변경이 필요한 경우 README 또는 CONTRIBUTING을 갱신했는가?
+- [ ] 문서 변경이 필요한 경우 README 또는 `docs/CONTRIBUTING.md`를 갱신했는가?
 - [ ] 실제 악성 샘플, secrets, 민감 데이터가 포함되지 않았는가?
 - [ ] Local LLM 서버가 없어도 Mock 경로가 동작하는가?
 
@@ -209,7 +214,8 @@ PR 본문에는 다음을 포함한다.
 
 - `README.md`는 프로젝트 소개, 현재 Phase, 실행 방법의 정본이다.
 - `AGENTS.md`는 작업 규칙과 에이전트 행동 기준의 정본이다.
-- `CONTRIBUTING.md`는 팀원이 PR을 올리기 위한 절차 문서다.
+- `docs/CONTRIBUTING.md`는 팀원이 PR을 올리기 위한 절차 문서다.
+- `docs/PR_DESCRIPTION.md`는 PR 본문 작성 참고 템플릿이다.
 - GitHub Issue는 작업 단위와 상태 추적의 정본이다.
 - PR은 코드 리뷰와 변경 이력의 정본이다.
 

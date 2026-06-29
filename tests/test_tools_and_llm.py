@@ -232,13 +232,19 @@ def test_extract_json_payload() -> None:
     assert _extract_json_payload('```json\n{"foo": "bar"}\n```') == '{"foo": "bar"}'
 
     # 4. JSON with preamble
-    assert _extract_json_payload('Here is the json content:\n{"foo": "bar"}') == '{"foo": "bar"}'
+    assert (
+        _extract_json_payload('Here is the json content:\n{"foo": "bar"}')
+        == '{"foo": "bar"}'
+    )
 
     # 5. Fenced JSON with preamble
-    assert _extract_json_payload('Response:\n```json\n{"foo": "bar"}\n```') == '{"foo": "bar"}'
+    assert (
+        _extract_json_payload('Response:\n```json\n{"foo": "bar"}\n```')
+        == '{"foo": "bar"}'
+    )
 
     # 6. Invalid JSON (no braces)
-    assert _extract_json_payload('no json content') == 'no json content'
+    assert _extract_json_payload("no json content") == "no json content"
 
     # 7. Partial/invalid JSON (missing closing brace)
     assert _extract_json_payload('{"foo": "bar"') == '{"foo": "bar"'
@@ -254,7 +260,10 @@ def test_local_llm_review_client_connection_error(monkeypatch) -> None:
         PythonAnalysis(path="sample.py", line_count=10)
     )
 
-    assert review.summary == "Local LLM review failed. Static analysis results are still available."
+    assert (
+        review.summary
+        == "Local LLM review failed. Static analysis results are still available."
+    )
     assert review.risk_level == "unknown"
     assert len(review.findings) == 1
 
@@ -262,7 +271,10 @@ def test_local_llm_review_client_connection_error(monkeypatch) -> None:
     assert finding.title == "Local LLM connection failed"
     assert finding.source == "local_llm"
     assert "Failed to connect to LLM server" in finding.reason
-    assert "Check that vLLM is running, the network is accessible" in finding.recommendation
+    assert (
+        "Check that vLLM is running, the network is accessible"
+        in finding.recommendation
+    )
 
 
 def test_local_llm_review_client_parsing_error(monkeypatch) -> None:
@@ -271,17 +283,7 @@ def test_local_llm_review_client_parsing_error(monkeypatch) -> None:
             return None
 
         def json(self) -> dict[str, Any]:
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": (
-                                "invalid-json"
-                            )
-                        }
-                    }
-                ]
-            }
+            return {"choices": [{"message": {"content": ("invalid-json")}}]}
 
     def fake_post(*args: Any, **kwargs: Any) -> ResponseStub:
         return ResponseStub()
@@ -292,7 +294,10 @@ def test_local_llm_review_client_parsing_error(monkeypatch) -> None:
         PythonAnalysis(path="sample.py", line_count=10)
     )
 
-    assert review.summary == "Local LLM review failed. Static analysis results are still available."
+    assert (
+        review.summary
+        == "Local LLM review failed. Static analysis results are still available."
+    )
     assert review.risk_level == "unknown"
     assert len(review.findings) == 1
 
@@ -302,7 +307,10 @@ def test_local_llm_review_client_parsing_error(monkeypatch) -> None:
     assert "Failed to parse LLM response as JSON." in finding.reason
     assert "Raw response preview:" in finding.reason
     assert "invalid-json" in finding.reason
-    assert "Ensure the LLM prompt or parameters encourage valid JSON formatting." in finding.recommendation
+    assert (
+        "Ensure the LLM prompt or parameters encourage valid JSON formatting."
+        in finding.recommendation
+    )
 
 
 def test_build_llm_prompt_summarizes_project(tmp_path: Path) -> None:
@@ -405,7 +413,9 @@ def test_build_llm_prompt_summarizes_project(tmp_path: Path) -> None:
     assert "exceeds limit" in prompt
 
 
-def test_local_llm_review_client_resolves_project_finding_paths(tmp_path: Path, monkeypatch) -> None:
+def test_local_llm_review_client_resolves_project_finding_paths(
+    tmp_path: Path, monkeypatch
+) -> None:
     import json
     from project_nurilab.schemas import (
         ProjectAnalysis,
@@ -425,20 +435,22 @@ def test_local_llm_review_client_resolves_project_finding_paths(tmp_path: Path, 
                 "choices": [
                     {
                         "message": {
-                            "content": json.dumps({
-                                "summary": "found issues",
-                                "risk_level": "high",
-                                "findings": [
-                                    {
-                                        "title": "Dynamic execution",
-                                        "severity": "high",
-                                        "file": "subdir/risky.py",
-                                        "line": 10,
-                                        "reason": "uses eval",
-                                        "recommendation": "do not use eval"
-                                    }
-                                ]
-                            })
+                            "content": json.dumps(
+                                {
+                                    "summary": "found issues",
+                                    "risk_level": "high",
+                                    "findings": [
+                                        {
+                                            "title": "Dynamic execution",
+                                            "severity": "high",
+                                            "file": "subdir/risky.py",
+                                            "line": 10,
+                                            "reason": "uses eval",
+                                            "recommendation": "do not use eval",
+                                        }
+                                    ],
+                                }
+                            )
                         }
                     }
                 ]
@@ -474,5 +486,3 @@ def test_local_llm_review_client_resolves_project_finding_paths(tmp_path: Path, 
     # The relative path "subdir/risky.py" should be resolved to absolute path
     expected_absolute_path = str((project_dir / "subdir" / "risky.py").resolve())
     assert review.findings[0].file == expected_absolute_path
-
-

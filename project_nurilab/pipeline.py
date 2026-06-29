@@ -14,7 +14,7 @@ from project_nurilab.input.collector import InputCollector
 from project_nurilab.input.manager import PythonFileLoader
 from project_nurilab.llm.review import MockReviewClient, ReviewClient
 from project_nurilab.reports.generator import ReportGenerator
-from project_nurilab.schemas import AnalysisReport, ProjectReport
+from project_nurilab.schemas import AnalysisReport, ProjectReport, PythonAnalysis
 
 
 class Phase1Pipeline:
@@ -60,18 +60,18 @@ class Phase1Pipeline:
             if self.use_ruff:
                 analysis.ruff_findings = self.ruff_collector.collect(target)
             review = self.review_client.review(analysis)
-            report = AnalysisReport(
+            single_file_report = AnalysisReport(
                 generated_at=datetime.now(UTC).isoformat(),
                 analyzer_version=__version__,
                 analysis=analysis,
                 review=review,
             )
             output_paths = self.report_generator.write(
-                report,
+                single_file_report,
                 output_dir,
                 formats=formats,
             )
-            return report, output_paths
+            return single_file_report, output_paths
 
         ruff_findings = self.ruff_collector.collect(target) if self.use_ruff else []
         project_analysis = self.aggregator.aggregate(
@@ -81,18 +81,18 @@ class Phase1Pipeline:
         )
         review = self.review_client.review(project_analysis)
 
-        report = ProjectReport(
+        project_report = ProjectReport(
             generated_at=datetime.now(UTC).isoformat(),
             analyzer_version=__version__,
             analysis=project_analysis,
             review=review,
         )
-        output_paths = self.report_generator.write(report, output_dir, formats=formats)
-        return report, output_paths
+        output_paths = self.report_generator.write(
+            project_report, output_dir, formats=formats
+        )
+        return project_report, output_paths
 
-    def _skipped_file(self, target: Path):
-        from project_nurilab.schemas import PythonAnalysis
-
+    def _skipped_file(self, target: Path) -> PythonAnalysis:
         return PythonAnalysis(
             path=str(target),
             line_count=0,
