@@ -144,9 +144,10 @@ class LocalLLMReviewClient:
         """Generate a structured review by calling the local LLM server."""
 
         prompt = _build_llm_prompt(analysis)
+        endpoint = f"{self.base_url}/chat/completions"
         try:
             response = requests.post(
-                f"{self.base_url}/chat/completions",
+                endpoint,
                 json={
                     "model": self.model,
                     "temperature": self.temperature,
@@ -165,23 +166,27 @@ class LocalLLMReviewClient:
             )
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.InvalidSchema,
+            requests.exceptions.InvalidURL,
+            requests.exceptions.MissingSchema,
+            ConnectionError,
+        ) as exc:
+            return _local_llm_request_failure(
+                title="Local LLM connection failed",
+                reason=(
+                    "Unable to reach Local LLM endpoint "
+                    f"{endpoint} for model {self.model}: {exc}"
+                ),
+            )
         except Exception as exc:  # noqa: BLE001 - preserve failures as report data.
-            return ReviewResult(
-                summary="Local LLM review failed. Static analysis results are still available.",
-                risk_level="unknown",
-                findings=[
-                    ReviewFinding(
-                        title="Local LLM connection failed",
-                        severity="medium",
-                        line=None,
-                        source="local_llm",
-                        reason=f"Local LLM server or API error: {exc}",
-                        recommendation=(
-                            "Check that vLLM is running, the network is accessible, "
-                            "and the model is loaded."
-                        ),
-                    )
-                ],
+            return _local_llm_request_failure(
+                title="Local LLM connection failed",
+                reason=(
+                    "Local LLM server or API error at "
+                    f"{endpoint} for model {self.model}: {exc}"
+                ),
             )
 
         try:
@@ -230,6 +235,26 @@ class LocalLLMReviewClient:
                     )
                 ],
             )
+
+
+def _local_llm_request_failure(title: str, reason: str) -> ReviewResult:
+    return ReviewResult(
+        summary="Local LLM review failed. Static analysis results are still available.",
+        risk_level="unknown",
+        findings=[
+            ReviewFinding(
+                title=title,
+                severity="medium",
+                line=None,
+                source="local_llm",
+                reason=reason,
+                recommendation=(
+                    "Check that vLLM is running, the network is accessible, "
+                    "and the model is loaded."
+                ),
+            )
+        ],
+    )
 
 
 def _file_findings(analysis: PythonAnalysis) -> list[ReviewFinding]:

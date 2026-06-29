@@ -775,3 +775,49 @@ def test_pipeline_with_local_llm_for_project(tmp_path: Path, monkeypatch) -> Non
     assert "safe.py" not in sent_prompt
     assert "risky.py" in sent_prompt
     assert "os.system" in sent_prompt
+
+
+def test_pipeline_preserves_reports_when_local_llm_connection_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import requests
+
+    from project_nurilab.llm.review import LocalLLMReviewClient
+
+    target_file = tmp_path / "sample.py"
+    target_file.write_text("def ok():\n    return 1\n", encoding="utf-8")
+
+    def fake_post(*args: Any, **kwargs: Any) -> None:
+        raise requests.exceptions.ConnectionError("Connection refused")
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    report, output_paths = Phase1Pipeline(
+        use_ruff=False,
+        review_client=LocalLLMReviewClient(
+            base_url="http://localhost:8000/v1",
+            model="test-model",
+        ),
+    ).run(
+        input_path=target_file,
+        output_dir=tmp_path,
+        formats=["html", "json"],
+    )
+
+    assert isinstance(report, AnalysisReport)
+    assert report.review.risk_level == "unknown"
+    assert len(report.review.findings) == 1
+    assert report.review.findings[0].source == "local_llm"
+    assert report.review.findings[0].title == "Local LLM connection failed"
+    assert "Connection refused" in report.review.findings[0].reason
+
+    assert set(output_paths) == {"html", "json"}
+    assert output_paths["html"].exists()
+    assert output_paths["json"].exists()
+
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload["review"]["risk_level"] == "unknown"
+    assert payload["review"]["findings"][0]["source"] == "local_llm"
+    assert payload["review"]["findings"][0]["title"] == ("Local LLM connection failed")
+    assert "Connection refused" in payload["review"]["findings"][0]["reason"]
