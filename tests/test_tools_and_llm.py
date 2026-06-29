@@ -477,6 +477,112 @@ def test_local_llm_review_client_connection_failures_become_findings(
     )
 
 
+def test_local_llm_review_client_timeout_becomes_finding(monkeypatch) -> None:
+    def fake_post(*args: Any, **kwargs: Any) -> None:
+        raise requests.exceptions.Timeout("model response exceeded timeout")
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    review = LocalLLMReviewClient(
+        base_url="http://localhost:8000/v1",
+        model="test-model",
+        timeout=3.5,
+    ).review(PythonAnalysis(path="sample.py", line_count=10))
+
+    assert (
+        review.summary
+        == "Local LLM review failed. Static analysis results are still available."
+    )
+    assert review.risk_level == "unknown"
+    assert len(review.findings) == 1
+
+    finding = review.findings[0]
+    assert finding.title == "Local LLM request timed out"
+    assert finding.source == "local_llm"
+    assert "3.5 second(s)" in finding.reason
+    assert "http://localhost:8000/v1/chat/completions" in finding.reason
+    assert "test-model" in finding.reason
+    assert "model response exceeded timeout" in finding.reason
+    assert "NURILAB_LLM_TIMEOUT" in finding.recommendation
+
+
+def test_local_llm_review_client_uses_timeout_environment_variable(
+    monkeypatch,
+) -> None:
+    sent_timeout = None
+
+    class ResponseStub:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"summary":"ok","risk_level":"low","findings":[]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(*args: Any, **kwargs: Any) -> ResponseStub:
+        nonlocal sent_timeout
+        sent_timeout = kwargs["timeout"]
+        return ResponseStub()
+
+    monkeypatch.setenv("NURILAB_LLM_TIMEOUT", "7.25")
+    monkeypatch.setattr("requests.post", fake_post)
+
+    review = LocalLLMReviewClient(base_url="http://localhost:8000/v1").review(
+        PythonAnalysis(path="sample.py", line_count=10)
+    )
+
+    assert sent_timeout == 7.25
+    assert review.risk_level == "low"
+
+
+def test_local_llm_review_client_explicit_timeout_overrides_environment(
+    monkeypatch,
+) -> None:
+    sent_timeout = None
+
+    class ResponseStub:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"summary":"ok","risk_level":"low","findings":[]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(*args: Any, **kwargs: Any) -> ResponseStub:
+        nonlocal sent_timeout
+        sent_timeout = kwargs["timeout"]
+        return ResponseStub()
+
+    monkeypatch.setenv("NURILAB_LLM_TIMEOUT", "7.25")
+    monkeypatch.setattr("requests.post", fake_post)
+
+    review = LocalLLMReviewClient(
+        base_url="http://localhost:8000/v1",
+        timeout=2.0,
+    ).review(PythonAnalysis(path="sample.py", line_count=10))
+
+    assert sent_timeout == 2.0
+    assert review.risk_level == "low"
+
+
 def test_local_llm_review_client_parsing_error(monkeypatch) -> None:
     class ResponseStub:
         def raise_for_status(self) -> None:
