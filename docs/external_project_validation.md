@@ -213,6 +213,74 @@ uv run python main.py analyze /tmp/nurilab-external-targets/<target> \
 - Follow-up issue:
 ```
 
+## 실행 결과 기록
+
+아래 기록은 외부 프로젝트 원본과 report artifact를 저장소에 커밋하지 않고 요약만 남긴 것이다.
+
+### 2026-06-29 - `pypa/packaging`
+
+환경:
+
+- Project NuriLab commit: `7c23d9c`
+- Python: `3.12.13`
+- Ruff: `0.15.11`
+- External source path: `/tmp/nurilab-external-targets/packaging`
+- Report artifact path: `/tmp/nurilab-external-reports/`
+- External source and generated HTML/JSON reports: not committed
+
+대상:
+
+- Repository: <https://github.com/pypa/packaging>
+- Commit: `fb82782`
+- License: Apache/BSD dual license
+- Local path: `/tmp/nurilab-external-targets/packaging`
+
+Mock review + `--no-ruff`:
+
+```bash
+uv run python main.py analyze /tmp/nurilab-external-targets/packaging \
+  --review-client mock \
+  --no-ruff \
+  --out /tmp/nurilab-external-reports/packaging-mock-no-ruff
+```
+
+- Exit status: 0
+- HTML report generated: yes
+- JSON report generated: yes
+- Total Python files: 74
+- Analyzed files: 35
+- Skipped files: 39
+- Review risk level: `high`
+- Review findings count: 19
+- Ruff findings count: 0
+- Crash or exception: none
+
+Mock review + Ruff collection:
+
+```bash
+uv run python main.py analyze /tmp/nurilab-external-targets/packaging \
+  --review-client mock \
+  --out /tmp/nurilab-external-reports/packaging-mock-ruff
+```
+
+- Exit status: 0
+- HTML report generated: yes
+- JSON report generated: yes
+- Total Python files: 74
+- Analyzed files: 35
+- Skipped files: 39
+- Review risk level: `high`
+- Review findings count: 19
+- Ruff findings count: 0
+- Crash or exception: none
+
+Notes:
+
+- 두 경로 모두 project-level HTML/JSON report 생성까지 완료했다.
+- `--no-ruff`와 Ruff collection 경로의 요약 수치는 동일했다.
+- 39개 파일은 현재 파일 로딩 정책에 따라 skipped result로 report에 남았다.
+- 후속 외부 프로젝트 실행은 `click`, `requests` 순서로 확장한다.
+
 ## 다음 작업 연결
 
 - THE-16: 외부 프로젝트 분석 실행 절차 문서화
