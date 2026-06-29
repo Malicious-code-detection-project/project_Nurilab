@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 from project_nurilab.pipeline import Phase1Pipeline
-from project_nurilab.schemas import AnalysisReport, ProjectReport
+from project_nurilab.schemas import AnalysisReport, ProjectReport, RuffFinding
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -54,6 +56,94 @@ def test_pipeline_generates_project_reports(tmp_path: Path) -> None:
     assert report.review.risk_level == "high"
     assert output_paths["html"].name == "target_project.analysis.html"
     assert output_paths["json"].name == "target_project.analysis.json"
+
+
+def test_pipeline_includes_project_ruff_findings_in_report(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    target_project = tmp_path / "target_project"
+    target_project.mkdir()
+    target_file = target_project / "risky.py"
+    target_file.write_text(
+        "import os\n\n\ndef run(x):\n    os.system(x)\n",
+        encoding="utf-8",
+    )
+
+    def fake_collect(self: Any, target: str | Path) -> list[RuffFinding]:
+        assert Path(target) == target_project.resolve()
+        return [
+            RuffFinding(
+                file=str(target_file.resolve()),
+                line=1,
+                column=1,
+                rule_id="F401",
+                message="unused import",
+                severity="medium",
+            )
+        ]
+
+    monkeypatch.setattr(
+        "project_nurilab.analyzers.tools.RuffToolCollector.collect",
+        fake_collect,
+    )
+
+    report, output_paths = Phase1Pipeline().run(
+        input_path=target_project,
+        output_dir=tmp_path,
+        formats=["html", "json"],
+    )
+
+    assert isinstance(report, ProjectReport)
+    assert len(report.analysis.ruff_findings) == 1
+    assert report.analysis.ruff_findings[0].rule_id == "F401"
+    assert report.analysis.summary is not None
+    assert report.analysis.summary.severity_counts["medium"] == 1
+
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload["analysis"]["ruff_findings"] == [
+        {
+            "file": str(target_file.resolve()),
+            "line": 1,
+            "column": 1,
+            "rule_id": "F401",
+            "message": "unused import",
+            "severity": "medium",
+            "source": "ruff",
+        }
+    ]
+
+
+def test_pipeline_disables_project_ruff_collection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    target_project = tmp_path / "target_project"
+    target_project.mkdir()
+    (target_project / "safe.py").write_text(
+        "def ok():\n    return 1\n",
+        encoding="utf-8",
+    )
+
+    def fail_if_ruff_runs(*args: Any, **kwargs: Any) -> list[RuffFinding]:
+        raise AssertionError("use_ruff=False should disable Ruff collection")
+
+    monkeypatch.setattr(
+        "project_nurilab.analyzers.tools.RuffToolCollector.collect",
+        fail_if_ruff_runs,
+    )
+
+    report, output_paths = Phase1Pipeline(use_ruff=False).run(
+        input_path=target_project,
+        output_dir=tmp_path,
+        formats=["html", "json"],
+    )
+
+    assert isinstance(report, ProjectReport)
+    assert report.analysis.ruff_findings == []
+
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload["analysis"]["ruff_findings"] == []
 
 
 def test_pipeline_reviews_mixed_risk_project_fixture(tmp_path: Path) -> None:
@@ -166,7 +256,6 @@ def test_pipeline_analyzes_nested_project_inputs_and_generates_reports(
 
 def test_pipeline_with_local_llm_for_project(tmp_path: Path, monkeypatch) -> None:
     import json
-    from typing import Any
     from project_nurilab.llm.review import LocalLLMReviewClient
 
     target_project = tmp_path / "target_project"
