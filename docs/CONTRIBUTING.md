@@ -102,6 +102,26 @@ uv run python main.py analyze tests --review-client local
 
 ---
 
+## Local LLM 리뷰 작업 흐름
+
+Local LLM 관련 작업을 시작하기 전에는 Mock 경로와 Local 경로의 책임을 분리해서 확인합니다.
+
+- Mock review는 기본 검증 경로입니다. 외부 서버 없이 deterministic analyzer 결과를 report finding으로 변환하며, Local LLM 서버가 없어도 테스트가 통과해야 합니다.
+- Local LLM review는 `--review-client local`을 명시했을 때만 vLLM OpenAI-compatible API를 호출합니다. 앱 내부에서 vLLM 서버를 시작하거나 종료하지 않습니다.
+- Local LLM 서버 연결 실패, timeout, HTTP 오류, JSON 파싱 실패는 pipeline 실패로 처리하지 않습니다. 실패 원인은 HTML/JSON report의 finding으로 남겨야 합니다.
+- prompt, parsing, 실패 처리, report 표시를 바꾸는 경우 `tests/test_tools_and_llm.py`, `tests/test_pipeline.py`, `tests/test_review_and_report.py` 중 영향 범위에 맞는 테스트를 갱신합니다.
+
+Local LLM 관련 PR은 최소한 아래 검증을 포함합니다.
+
+```bash
+uv run pytest tests/test_tools_and_llm.py tests/test_pipeline.py tests/test_review_and_report.py
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy .
+```
+
+---
+
 ## 브랜치 전략
 
 `main`은 항상 동작 가능한 기준 브랜치로 유지합니다. 모든 작업은 브랜치를 만든 뒤 PR로 병합합니다.
