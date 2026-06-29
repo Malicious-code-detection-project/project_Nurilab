@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from project_nurilab.input.collector import InputCollector
+from project_nurilab.input.manager import PythonFileLoader
 
 
 def test_input_collector_collects_python_files_and_excludes_dirs(
@@ -68,3 +69,29 @@ def test_input_collector_collects_nested_python_files_and_ignores_excluded_dirs(
         "README.md",
         "src/sample_app/settings.toml",
     ]
+
+
+def test_input_collector_keeps_invalid_utf8_python_file_for_loader(
+    tmp_path: Path,
+) -> None:
+    invalid_file = tmp_path / "invalid_utf8.py"
+    invalid_file.write_bytes(b"\xff\xfe\x00")
+
+    collected = InputCollector().collect(tmp_path)
+
+    assert collected.python_files == [invalid_file]
+    assert collected.skipped_paths == []
+
+
+def test_python_file_loader_marks_decode_failures_as_skipped(tmp_path: Path) -> None:
+    invalid_file = tmp_path / "invalid_utf8.py"
+    invalid_file.write_bytes(b"\xff\xfe\x00")
+
+    loaded = PythonFileLoader().load(invalid_file)
+
+    assert loaded.path == invalid_file.resolve()
+    assert loaded.source == ""
+    assert loaded.lines == []
+    assert loaded.skipped is True
+    assert loaded.skip_reason is not None
+    assert "UTF-8 decode failed" in loaded.skip_reason

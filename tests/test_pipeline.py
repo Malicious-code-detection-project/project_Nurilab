@@ -146,6 +146,99 @@ def test_pipeline_disables_project_ruff_collection(
     assert payload["analysis"]["ruff_findings"] == []
 
 
+def test_pipeline_keeps_running_when_project_file_decode_fails(
+    tmp_path: Path,
+) -> None:
+    target_project = tmp_path / "target_project"
+    target_project.mkdir()
+    safe_file = target_project / "safe.py"
+    invalid_file = target_project / "invalid_utf8.py"
+    safe_file.write_text("def ok():\n    return 1\n", encoding="utf-8")
+    invalid_file.write_bytes(b"\xff\xfe\x00")
+
+    report, output_paths = Phase1Pipeline(use_ruff=False).run(
+        input_path=target_project,
+        output_dir=tmp_path,
+        formats=["html", "json"],
+    )
+
+    assert isinstance(report, ProjectReport)
+    assert report.analysis.summary is not None
+    assert report.analysis.summary.total_files == 2
+    assert report.analysis.summary.analyzed_files == 1
+    assert report.analysis.summary.skipped_files == 1
+
+    skipped_results = [
+        result for result in report.analysis.file_results if result.skipped
+    ]
+    assert len(skipped_results) == 1
+    assert skipped_results[0].path == str(invalid_file.resolve())
+    assert skipped_results[0].line_count == 0
+    assert skipped_results[0].skip_reason is not None
+    assert "UTF-8 decode failed" in skipped_results[0].skip_reason
+
+    analyzed_paths = {
+        result.path for result in report.analysis.file_results if not result.skipped
+    }
+    assert analyzed_paths == {str(safe_file.resolve())}
+
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    skipped_payloads = [
+        result for result in payload["analysis"]["file_results"] if result["skipped"]
+    ]
+    assert len(skipped_payloads) == 1
+    assert skipped_payloads[0]["path"] == str(invalid_file.resolve())
+    assert "UTF-8 decode failed" in skipped_payloads[0]["skip_reason"]
+
+
+def test_pipeline_keeps_running_when_project_file_read_raises_os_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    target_project = tmp_path / "target_project"
+    target_project.mkdir()
+    safe_file = target_project / "safe.py"
+    unreadable_file = target_project / "unreadable.py"
+    safe_file.write_text("def ok():\n    return 1\n", encoding="utf-8")
+    unreadable_file.write_text("def blocked():\n    return 2\n", encoding="utf-8")
+    original_read_text = Path.read_text
+
+    def fake_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == unreadable_file.resolve():
+            raise PermissionError("permission denied")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fake_read_text)
+
+    report, output_paths = Phase1Pipeline(use_ruff=False).run(
+        input_path=target_project,
+        output_dir=tmp_path,
+        formats=["html", "json"],
+    )
+
+    assert isinstance(report, ProjectReport)
+    assert report.analysis.summary is not None
+    assert report.analysis.summary.total_files == 2
+    assert report.analysis.summary.analyzed_files == 1
+    assert report.analysis.summary.skipped_files == 1
+
+    skipped_results = [
+        result for result in report.analysis.file_results if result.skipped
+    ]
+    assert len(skipped_results) == 1
+    assert skipped_results[0].path == str(unreadable_file.resolve())
+    assert skipped_results[0].skip_reason is not None
+    assert "Permission denied" in skipped_results[0].skip_reason
+
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    skipped_payloads = [
+        result for result in payload["analysis"]["file_results"] if result["skipped"]
+    ]
+    assert len(skipped_payloads) == 1
+    assert skipped_payloads[0]["path"] == str(unreadable_file.resolve())
+    assert "Permission denied" in skipped_payloads[0]["skip_reason"]
+
+
 def test_pipeline_reviews_mixed_risk_project_fixture(tmp_path: Path) -> None:
     source_project = FIXTURES / "review_quality_project"
     target_project = tmp_path / "review_quality_project"

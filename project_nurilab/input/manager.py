@@ -45,7 +45,24 @@ class PythonFileLoader:
                 f"{file_path}"
             )
 
-        source = file_path.read_text(encoding="utf-8")
+        try:
+            source = file_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            return self._skipped_load(
+                file_path,
+                f"UTF-8 decode failed while reading {file_path}: {exc.reason}.",
+            )
+        except PermissionError as exc:
+            return self._skipped_load(
+                file_path,
+                f"Permission denied while reading {file_path}: {exc}.",
+            )
+        except OSError as exc:
+            return self._skipped_load(
+                file_path,
+                f"File could not be read from {file_path}: {exc}.",
+            )
+
         lines = source.splitlines()
 
         if len(lines) > self.max_lines:
@@ -61,3 +78,12 @@ class PythonFileLoader:
             )
 
         return LoadedPythonFile(path=file_path, source=source, lines=lines)
+
+    def _skipped_load(self, file_path: Path, reason: str) -> LoadedPythonFile:
+        return LoadedPythonFile(
+            path=file_path,
+            source="",
+            lines=[],
+            skipped=True,
+            skip_reason=reason,
+        )
