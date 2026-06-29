@@ -16,7 +16,10 @@ from project_nurilab.schemas import (
     ProjectFileSummary,
     ProjectReport,
     ProjectSummary,
+    PythonAnalysis,
+    ReviewFinding,
     ReviewResult,
+    RuffFinding,
 )
 
 
@@ -165,6 +168,100 @@ def test_report_generator_renders_project_file_summary() -> None:
     assert "<h2>File Summary</h2>" in html
     assert "danger.py" in html
     assert "<strong>Ruff Findings:</strong> 1" in html
+
+
+def test_report_generator_renders_readable_project_html() -> None:
+    long_path = "src/package/with/a/very/long/path/module_with_security_issue.py"
+    report = ProjectReport(
+        generated_at=datetime.now(UTC).isoformat(),
+        analyzer_version=__version__,
+        analysis=ProjectAnalysis(
+            root_path="/tmp/example_project",
+            file_results=[
+                PythonAnalysis(path=long_path, line_count=120),
+            ],
+            ruff_findings=[
+                RuffFinding(
+                    file=long_path,
+                    line=12,
+                    column=4,
+                    rule_id="F401",
+                    message="unused import",
+                    severity="medium",
+                )
+            ],
+            summary=ProjectSummary(
+                total_files=3,
+                analyzed_files=2,
+                skipped_files=1,
+                severity_counts={"low": 1, "high": 2, "medium": 1},
+                risk_level="high",
+                file_summaries=[
+                    ProjectFileSummary(
+                        path=long_path,
+                        risk_level="high",
+                        finding_count=3,
+                    ),
+                ],
+            ),
+        ),
+        review=ReviewResult(
+            summary="Project contains high-risk findings.",
+            risk_level="high",
+            findings=[
+                ReviewFinding(
+                    title="Low priority observation",
+                    severity="low",
+                    line=1,
+                    reason="Low risk.",
+                    recommendation="Review later.",
+                    file="clean.py",
+                ),
+                ReviewFinding(
+                    title="High priority issue",
+                    severity="high",
+                    line=12,
+                    reason="High risk.",
+                    recommendation="Review first.",
+                    file=long_path,
+                ),
+            ],
+        ),
+    )
+
+    html = ReportGenerator().to_html(report)
+
+    assert 'class="summary project-overview"' in html
+    assert "Total Python Files" in html
+    assert "<strong>3</strong>" in html
+    assert "Analyzed Files" in html
+    assert "Skipped Files" in html
+    assert "high: 2" in html
+    assert "{&#x27;high&#x27;" not in html
+    assert html.index("High priority issue") < html.index("Low priority observation")
+    assert 'class="path-text"' in html
+    assert long_path in html
+    assert "F401" in html
+    assert "12:4" in html
+
+
+def test_single_file_html_report_keeps_existing_structure() -> None:
+    loaded = PythonFileLoader().load(FIXTURES / "vulnerable_sample.py")
+    analysis = PythonStaticAnalyzer().analyze(loaded)
+    review = MockLLMReviewClient().review(analysis)
+    report = AnalysisReport(
+        generated_at=datetime.now(UTC).isoformat(),
+        analyzer_version=__version__,
+        analysis=analysis,
+        review=review,
+    )
+
+    html = ReportGenerator().to_html(report)
+
+    assert "Python Code Review Report" in html
+    assert "Python Project Review Report" not in html
+    assert "Project Summary" not in html
+    assert "Static Analysis" in html
 
 
 def test_pipeline_handles_local_llm_failure(monkeypatch, tmp_path: Path) -> None:
