@@ -46,7 +46,7 @@ project_Nurilab/
 │   ├── AI_RULES.md                   # AI 코드 생성 가이드라인
 │   ├── AI_RULES_KOR.md               # AI 코드 생성 가이드라인 한국어판
 │   ├── CONTRIBUTING.md               # 팀원 작업 가이드
-│   ├── external_project_validation.md # 외부 Python 프로젝트 검증 후보
+│   ├── external_project_validation.md # 외부 Python 프로젝트 검증 workflow
 │   ├── FINETUNING_EXPERIMENT_PLAN.md # 파인튜닝 실험 계획
 │   ├── PLAN.md                       # Phase 2 개발 계획 기록
 │   ├── PR_DESCRIPTION.md             # PR 본문 작성 참고 템플릿
@@ -193,7 +193,9 @@ Phase 3에서 우선하는 작업:
 
 이 항목들은 README의 `Phase Next`에 후보로 남기고, 별도 이슈에서 논의합니다.
 
-외부 프로젝트 분석 안정성 검증은 [external_project_validation.md](external_project_validation.md)의 후보와 저장 위치 원칙을 따른다. 외부 프로젝트 원본과 report artifact는 저장소에 커밋하지 않는다.
+외부 프로젝트 분석 안정성 검증은 [external_project_validation.md](external_project_validation.md)의 workflow를 따른다. 외부 프로젝트 원본은 저장소 밖에 clone하고, 기본 검증은 Mock review 경로로 수행한다. Local LLM review는 vLLM 서버가 이미 실행 중일 때만 선택 검증으로 실행한다.
+
+외부 프로젝트 원본, dependency cache, HTML/JSON report artifact는 저장소에 커밋하지 않는다. 분석 결과는 report 파일이 아니라 실행 명령, 대상 commit, 요약 수치, 실패 원인을 이슈 또는 후속 문서에 기록한다.
 
 ---
 
