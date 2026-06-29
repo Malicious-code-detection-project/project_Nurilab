@@ -165,6 +165,75 @@ def test_local_llm_review_client_parses_fixture_based_review(monkeypatch) -> Non
     assert review.findings[0].file == analysis.path
 
 
+def test_local_llm_prompt_for_large_file_uses_normalized_analysis_only(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    import json
+
+    sentinel = "NURILAB_LARGE_SOURCE_SENTINEL_DO_NOT_SEND"
+    target_file = tmp_path / "large_risky.py"
+    source_lines = [
+        "import os",
+        *(f'SOURCE_LINE_{index} = "{sentinel}_{index}"' for index in range(205)),
+        'API_KEY = "demo_key_value_not_real"',
+        "",
+        "def run(command):",
+        "    return os.system(command)",
+    ]
+    target_file.write_text("\n".join(source_lines), encoding="utf-8")
+
+    loaded = PythonFileLoader().load(target_file)
+    analysis = PythonStaticAnalyzer().analyze(loaded)
+    sent_prompt = ""
+
+    class ResponseStub:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "summary": "Large file static signals reviewed.",
+                                    "risk_level": "high",
+                                    "findings": [],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(*args: Any, **kwargs: Any) -> ResponseStub:
+        nonlocal sent_prompt
+        sent_prompt = kwargs["json"]["messages"][1]["content"]
+        return ResponseStub()
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    review = LocalLLMReviewClient(base_url="http://localhost:8000/v1").review(analysis)
+
+    assert analysis.line_count > 200
+    assert [call.name for call in analysis.suspicious_calls] == ["os.system"]
+    assert [secret.kind for secret in analysis.secrets] == ["api_key"]
+    assert review.summary == "Large file static signals reviewed."
+    assert review.risk_level == "high"
+
+    assert str(target_file.resolve()) in sent_prompt
+    assert f'"line_count": {analysis.line_count}' in sent_prompt
+    assert '"suspicious_calls"' in sent_prompt
+    assert '"name": "os.system"' in sent_prompt
+    assert '"secrets"' in sent_prompt
+    assert '"kind": "api_key"' in sent_prompt
+    assert sentinel not in sent_prompt
+    assert "SOURCE_LINE_204" not in sent_prompt
+    assert "demo_key_value_not_real" not in sent_prompt
+
+
 def test_local_llm_review_client_parses_fenced_json_response(monkeypatch) -> None:
     class ResponseStub:
         def raise_for_status(self) -> None:
