@@ -179,6 +179,26 @@ class LocalLLMReviewClient:
                     "NURILAB_LLM_TIMEOUT if the model needs more time to respond."
                 ),
             )
+        except requests.exceptions.HTTPError as exc:
+            response = exc.response
+            status_code = response.status_code if response is not None else "unknown"
+            response_text = response.text if response is not None else ""
+            response_preview = _preview_response_text(response_text)
+            response_detail = (
+                f" Response preview: {response_preview}" if response_preview else ""
+            )
+            return _local_llm_request_failure(
+                title="Local LLM HTTP error",
+                reason=(
+                    "Local LLM endpoint "
+                    f"{endpoint} returned HTTP {status_code} "
+                    f"for model {self.model}: {exc}.{response_detail}"
+                ),
+                recommendation=(
+                    "Check the Local LLM base URL, model name, OpenAI-compatible "
+                    "chat completions route, and vLLM server logs."
+                ),
+            )
         except (
             requests.exceptions.ConnectionError,
             requests.exceptions.InvalidSchema,
@@ -248,6 +268,13 @@ class LocalLLMReviewClient:
                     )
                 ],
             )
+
+
+def _preview_response_text(text: str, limit: int = 300) -> str:
+    compact_text = " ".join(text.split())
+    if len(compact_text) <= limit:
+        return compact_text
+    return f"{compact_text[:limit]}..."
 
 
 def _local_llm_request_failure(
