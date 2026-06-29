@@ -7,7 +7,7 @@ from pathlib import Path
 from collections.abc import Sequence
 from typing import Protocol
 
-from project_nurilab.schemas import AnalysisReport, ProjectReport
+from project_nurilab.schemas import AnalysisReport, ProjectFileSummary, ProjectReport
 
 
 ReportPayload = AnalysisReport | ProjectReport
@@ -352,6 +352,26 @@ class ReportGenerator:
                     "",
                 ]
             )
+            if summary.file_summaries:
+                lines.extend(["## File Summary", ""])
+                for file_summary in summary.file_summaries:
+                    lines.extend(
+                        [
+                            f"### `{file_summary.path}`",
+                            "",
+                            f"- Risk Level: `{file_summary.risk_level}`",
+                            f"- Findings: `{file_summary.finding_count}`",
+                            (
+                                "- Suspicious Calls: "
+                                f"`{file_summary.suspicious_call_count}`"
+                            ),
+                            f"- Potential Secrets: `{file_summary.secret_count}`",
+                            f"- Syntax Error: `{file_summary.syntax_error}`",
+                            f"- Ruff Findings: `{file_summary.ruff_finding_count}`",
+                            f"- Skipped: `{file_summary.skipped}`",
+                            "",
+                        ]
+                    )
 
         lines.extend(["## Findings", "", *_render_review_findings(report), ""])
         lines.extend(["## File Results", ""])
@@ -395,6 +415,12 @@ class ReportGenerator:
                 ]
             )
 
+        file_summary_rows = ""
+        if summary and summary.file_summaries:
+            file_summary_rows = _render_html_project_file_summaries(
+                summary.file_summaries
+            )
+
         file_rows = "".join(
             _render_html_file_result(result) for result in analysis.file_results
         )
@@ -433,6 +459,10 @@ class ReportGenerator:
         {_render_html_meta("Risk Level", report.review.risk_level)}
         {summary_cards}
       </div>
+    </section>
+    <section>
+      <h2>File Summary</h2>
+      {file_summary_rows or '<div class="section-list"><p>No file summaries available.</p></div>'}
     </section>
     <section>
       <h2>Findings</h2>
@@ -657,6 +687,33 @@ def _render_html_file_result(result) -> str:
         f"{_escape_html(str(len(result.secrets)))}</p>"
         "</article>"
     )
+
+
+def _render_html_project_file_summaries(
+    file_summaries: list[ProjectFileSummary],
+) -> str:
+    rendered: list[str] = []
+    for file_summary in file_summaries:
+        severity_class = _html_class_for_severity(file_summary.risk_level)
+        rendered.append(
+            f'<article class="finding {severity_class}">'
+            f"<h3>{_escape_html(file_summary.path)}</h3>"
+            f'<p><span class="badge {severity_class}">'
+            f"{_escape_html(file_summary.risk_level)}</span></p>"
+            f"<p><strong>Findings:</strong> "
+            f"{_escape_html(str(file_summary.finding_count))}</p>"
+            f"<p><strong>Suspicious Calls:</strong> "
+            f"{_escape_html(str(file_summary.suspicious_call_count))}</p>"
+            f"<p><strong>Potential Secrets:</strong> "
+            f"{_escape_html(str(file_summary.secret_count))}</p>"
+            f"<p><strong>Syntax Error:</strong> "
+            f"{_escape_html(str(file_summary.syntax_error))}</p>"
+            f"<p><strong>Ruff Findings:</strong> "
+            f"{_escape_html(str(file_summary.ruff_finding_count))}</p>"
+            f"<p><strong>Skipped:</strong> {_escape_html(str(file_summary.skipped))}</p>"
+            "</article>"
+        )
+    return "\n".join(rendered)
 
 
 def _shared_css() -> str:

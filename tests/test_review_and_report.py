@@ -10,7 +10,14 @@ from project_nurilab.analyzers.python_static import PythonStaticAnalyzer
 from project_nurilab.input.manager import PythonFileLoader
 from project_nurilab.llm.review import MockLLMReviewClient
 from project_nurilab.reports.generator import ReportGenerator
-from project_nurilab.schemas import AnalysisReport
+from project_nurilab.schemas import (
+    AnalysisReport,
+    ProjectAnalysis,
+    ProjectFileSummary,
+    ProjectReport,
+    ProjectSummary,
+    ReviewResult,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -110,6 +117,54 @@ def test_report_generator_writes_requested_markdown_html_json(
     assert output_paths["md"].name.endswith(".analysis.md")
     assert output_paths["html"].name.endswith(".analysis.html")
     assert output_paths["json"].name.endswith(".analysis.json")
+
+
+def test_report_generator_renders_project_file_summary() -> None:
+    report = ProjectReport(
+        generated_at=datetime.now(UTC).isoformat(),
+        analyzer_version=__version__,
+        analysis=ProjectAnalysis(
+            root_path="/tmp/example_project",
+            summary=ProjectSummary(
+                total_files=2,
+                analyzed_files=2,
+                skipped_files=0,
+                severity_counts={"high": 1, "low": 1},
+                risk_level="high",
+                file_summaries=[
+                    ProjectFileSummary(
+                        path="danger.py",
+                        risk_level="high",
+                        finding_count=3,
+                        suspicious_call_count=1,
+                        secret_count=1,
+                        ruff_finding_count=1,
+                    ),
+                    ProjectFileSummary(
+                        path="clean.py",
+                        risk_level="low",
+                        finding_count=0,
+                    ),
+                ],
+            ),
+        ),
+        review=ReviewResult(
+            summary="Project contains one high-risk file.",
+            risk_level="high",
+        ),
+    )
+
+    generator = ReportGenerator()
+    markdown = generator.to_markdown(report)
+    html = generator.to_html(report)
+
+    assert "## File Summary" in markdown
+    assert "danger.py" in markdown
+    assert "- Findings: `3`" in markdown
+    assert "- Suspicious Calls: `1`" in markdown
+    assert "<h2>File Summary</h2>" in html
+    assert "danger.py" in html
+    assert "<strong>Ruff Findings:</strong> 1" in html
 
 
 def test_pipeline_handles_local_llm_failure(monkeypatch, tmp_path: Path) -> None:
