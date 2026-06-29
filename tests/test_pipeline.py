@@ -229,6 +229,106 @@ def test_pipeline_includes_project_ruff_findings_in_report(
     ]
 
 
+def test_pipeline_project_summary_aggregates_all_signal_severities(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    target_project = tmp_path / "summary_project"
+    target_project.mkdir()
+    command_file = target_project / "command.py"
+    network_file = target_project / "network.py"
+    secret_file = target_project / "secret.py"
+    syntax_file = target_project / "syntax_error.py"
+    invalid_file = target_project / "invalid_utf8.py"
+
+    command_file.write_text(
+        "import os\n\n\ndef run(command):\n    return os.system(command)\n",
+        encoding="utf-8",
+    )
+    network_file.write_text(
+        "import requests\n\n\ndef fetch(url):\n    return requests.get(url)\n",
+        encoding="utf-8",
+    )
+    secret_file.write_text(
+        'API_KEY = "demo_key_value_not_real"\n',
+        encoding="utf-8",
+    )
+    syntax_file.write_text(
+        "def broken(:\n    return None\n",
+        encoding="utf-8",
+    )
+    invalid_file.write_bytes(b"\xff\xfe\x00")
+
+    def fake_collect(self: Any, target: str | Path) -> list[RuffFinding]:
+        assert Path(target) == target_project.resolve()
+        return [
+            RuffFinding(
+                file=str(network_file.resolve()),
+                line=1,
+                column=1,
+                rule_id="F401",
+                message="unused import",
+                severity="medium",
+            ),
+            RuffFinding(
+                file=str(secret_file.resolve()),
+                line=1,
+                column=1,
+                rule_id="F841",
+                message="assigned but unused",
+                severity="low",
+            ),
+        ]
+
+    monkeypatch.setattr(
+        "project_nurilab.analyzers.tools.RuffToolCollector.collect",
+        fake_collect,
+    )
+
+    report, output_paths = Phase1Pipeline().run(
+        input_path=target_project,
+        output_dir=tmp_path,
+        formats=["html", "json"],
+    )
+
+    assert isinstance(report, ProjectReport)
+    assert report.analysis.summary is not None
+    assert report.analysis.summary.total_files == 5
+    assert report.analysis.summary.analyzed_files == 4
+    assert report.analysis.summary.skipped_files == 1
+    assert report.analysis.summary.severity_counts == {
+        "high": 2,
+        "low": 2,
+        "medium": 2,
+    }
+    assert report.analysis.summary.risk_level == "high"
+
+    skipped_results = [
+        result for result in report.analysis.file_results if result.skipped
+    ]
+    assert len(skipped_results) == 1
+    assert skipped_results[0].path == str(invalid_file.resolve())
+
+    syntax_results = [
+        result for result in report.analysis.file_results if result.syntax_error
+    ]
+    assert len(syntax_results) == 1
+    assert syntax_results[0].path == str(syntax_file.resolve())
+
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload["analysis"]["summary"] == {
+        "total_files": 5,
+        "analyzed_files": 4,
+        "skipped_files": 1,
+        "severity_counts": {
+            "high": 2,
+            "low": 2,
+            "medium": 2,
+        },
+        "risk_level": "high",
+    }
+
+
 def test_pipeline_disables_project_ruff_collection(
     tmp_path: Path,
     monkeypatch,
