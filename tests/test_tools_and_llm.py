@@ -17,15 +17,18 @@ FIXTURES = Path(__file__).parent / "fixtures"
 @dataclass
 class CompletedProcessStub:
     stdout: str
+    returncode: int = 0
 
 
 def test_ruff_tool_collector_parses_json(monkeypatch, tmp_path: Path) -> None:
     def fake_run(*args: Any, **kwargs: Any) -> CompletedProcessStub:
+        assert kwargs["check"] is False
         return CompletedProcessStub(
             stdout=(
                 '[{"filename":"sample.py","code":"F401","message":"unused import",'
                 '"location":{"row":1,"column":1}}]'
-            )
+            ),
+            returncode=1,
         )
 
     monkeypatch.setattr("subprocess.run", fake_run)
@@ -35,6 +38,40 @@ def test_ruff_tool_collector_parses_json(monkeypatch, tmp_path: Path) -> None:
     assert len(findings) == 1
     assert findings[0].rule_id == "F401"
     assert findings[0].message == "unused import"
+
+
+def test_ruff_tool_collector_returns_empty_list_for_empty_stdout(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    def fake_run(*args: Any, **kwargs: Any) -> CompletedProcessStub:
+        return CompletedProcessStub(stdout="", returncode=0)
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    findings = RuffToolCollector(command_prefix=()).collect(tmp_path)
+
+    assert findings == []
+
+
+def test_ruff_tool_collector_reports_json_parse_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    def fake_run(*args: Any, **kwargs: Any) -> CompletedProcessStub:
+        return CompletedProcessStub(stdout="not-json", returncode=2)
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    findings = RuffToolCollector(command_prefix=()).collect(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].file == str(tmp_path.resolve())
+    assert findings[0].line == 1
+    assert findings[0].column == 1
+    assert findings[0].rule_id == "RUFF_PARSE_ERROR"
+    assert findings[0].message == "not-json"
+    assert findings[0].severity == "medium"
 
 
 def test_local_llm_review_client_parses_vllm_response(monkeypatch) -> None:
