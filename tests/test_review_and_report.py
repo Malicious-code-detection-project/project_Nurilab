@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,6 +28,94 @@ from project_nurilab.schemas import (
 
 FIXTURES = Path(__file__).parent / "fixtures"
 REVIEW_QUALITY_FIXTURES = FIXTURES / "review_quality"
+
+
+def _build_project_json_contract_report(root_path: str) -> ProjectReport:
+    return ProjectReport(
+        generated_at="2026-06-29T00:00:00+00:00",
+        analyzer_version=__version__,
+        analysis=ProjectAnalysis(
+            root_path=root_path,
+            file_results=[
+                PythonAnalysis(
+                    path=f"{root_path}/risky.py",
+                    line_count=20,
+                    suspicious_calls=[
+                        SuspiciousCall(
+                            name="eval",
+                            line=7,
+                            category="dynamic_execution",
+                            severity="high",
+                            reason="dynamic execution",
+                        )
+                    ],
+                    secrets=[
+                        SecretFinding(
+                            kind="api_key",
+                            line=3,
+                            preview="demo-key",
+                            severity="high",
+                            reason="hard-coded secret",
+                        )
+                    ],
+                ),
+                PythonAnalysis(
+                    path=f"{root_path}/broken.py",
+                    line_count=1,
+                    syntax_error="invalid syntax",
+                ),
+            ],
+            ruff_findings=[
+                RuffFinding(
+                    file=f"{root_path}/risky.py",
+                    line=1,
+                    column=1,
+                    rule_id="F401",
+                    message="unused import",
+                    severity="medium",
+                )
+            ],
+            summary=ProjectSummary(
+                total_files=2,
+                analyzed_files=2,
+                skipped_files=0,
+                severity_counts={"high": 2, "medium": 2},
+                risk_level="high",
+                file_summaries=[
+                    ProjectFileSummary(
+                        path="risky.py",
+                        risk_level="high",
+                        finding_count=3,
+                        suspicious_call_count=1,
+                        secret_count=1,
+                        ruff_finding_count=1,
+                    ),
+                    ProjectFileSummary(
+                        path="broken.py",
+                        risk_level="medium",
+                        finding_count=1,
+                        syntax_error=True,
+                    ),
+                ],
+            ),
+        ),
+        review=ReviewResult(
+            summary="Project contains high-risk findings.",
+            risk_level="high",
+            findings=[
+                ReviewFinding(
+                    title="Dynamic execution",
+                    severity="high",
+                    file=f"{root_path}/risky.py",
+                    line=7,
+                    reason="uses eval",
+                    recommendation="avoid eval",
+                    source="pattern",
+                    rule_id="DYN001",
+                )
+            ],
+        ),
+    )
 
 
 def test_mock_review_client_turns_static_signals_into_findings() -> None:
@@ -195,6 +284,106 @@ def test_report_generator_writes_requested_markdown_html_json(
     assert output_paths["md"].name.endswith(".analysis.md")
     assert output_paths["html"].name.endswith(".analysis.html")
     assert output_paths["json"].name.endswith(".analysis.json")
+
+
+def test_project_report_to_dict_preserves_json_contract() -> None:
+    report = _build_project_json_contract_report("/tmp/json_project")
+
+    payload = report.to_dict()
+
+    assert set(payload) == {"generated_at", "analyzer_version", "analysis", "review"}
+    assert payload["generated_at"] == "2026-06-29T00:00:00+00:00"
+    assert payload["analyzer_version"] == __version__
+
+    analysis = payload["analysis"]
+    assert set(analysis) == {"root_path", "file_results", "ruff_findings", "summary"}
+    assert analysis["root_path"] == "/tmp/json_project"
+    assert analysis["summary"] == {
+        "total_files": 2,
+        "analyzed_files": 2,
+        "skipped_files": 0,
+        "severity_counts": {"high": 2, "medium": 2},
+        "risk_level": "high",
+        "file_summaries": [
+            {
+                "path": "risky.py",
+                "risk_level": "high",
+                "finding_count": 3,
+                "suspicious_call_count": 1,
+                "secret_count": 1,
+                "syntax_error": False,
+                "ruff_finding_count": 1,
+                "skipped": False,
+            },
+            {
+                "path": "broken.py",
+                "risk_level": "medium",
+                "finding_count": 1,
+                "suspicious_call_count": 0,
+                "secret_count": 0,
+                "syntax_error": True,
+                "ruff_finding_count": 0,
+                "skipped": False,
+            },
+        ],
+    }
+    assert len(analysis["file_results"]) == 2
+    assert analysis["file_results"][0]["path"] == "/tmp/json_project/risky.py"
+    assert analysis["file_results"][0]["suspicious_calls"][0] == {
+        "name": "eval",
+        "line": 7,
+        "category": "dynamic_execution",
+        "severity": "high",
+        "reason": "dynamic execution",
+    }
+    assert analysis["file_results"][0]["secrets"][0] == {
+        "kind": "api_key",
+        "line": 3,
+        "preview": "demo-key",
+        "severity": "high",
+        "reason": "hard-coded secret",
+    }
+    assert analysis["file_results"][1]["syntax_error"] == "invalid syntax"
+    assert analysis["ruff_findings"] == [
+        {
+            "file": "/tmp/json_project/risky.py",
+            "line": 1,
+            "column": 1,
+            "rule_id": "F401",
+            "message": "unused import",
+            "severity": "medium",
+            "source": "ruff",
+        }
+    ]
+
+    review = payload["review"]
+    assert set(review) == {"summary", "risk_level", "findings"}
+    assert review["risk_level"] == "high"
+    assert review["findings"] == [
+        {
+            "title": "Dynamic execution",
+            "severity": "high",
+            "line": 7,
+            "reason": "uses eval",
+            "recommendation": "avoid eval",
+            "file": "/tmp/json_project/risky.py",
+            "source": "pattern",
+            "column": None,
+            "rule_id": "DYN001",
+        }
+    ]
+
+
+def test_report_generator_writes_project_json_contract(tmp_path: Path) -> None:
+    report = _build_project_json_contract_report(str(tmp_path / "json_project"))
+
+    output_paths = ReportGenerator().write(report, tmp_path, formats=["json"])
+
+    assert set(output_paths) == {"json"}
+    assert output_paths["json"].name == "json_project.analysis.json"
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload == report.to_dict()
+    assert "html" not in output_paths
 
 
 def test_report_generator_renders_project_file_summary() -> None:
