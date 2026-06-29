@@ -28,6 +28,22 @@ from project_nurilab.schemas import (
 
 FIXTURES = Path(__file__).parent / "fixtures"
 REVIEW_QUALITY_FIXTURES = FIXTURES / "review_quality"
+MIXED_RISK_PROJECT = FIXTURES / "mixed_risk_project"
+
+
+def _copy_mixed_risk_project_fixture(tmp_path: Path) -> Path:
+    target_project = tmp_path / "mixed_risk_project"
+    target_project.mkdir()
+    for source_file in MIXED_RISK_PROJECT.glob("*.py"):
+        (target_project / source_file.name).write_text(
+            source_file.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+    (target_project / "syntax_error.py").write_text(
+        (MIXED_RISK_PROJECT / "syntax_error_source.txt").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return target_project
 
 
 def _build_project_json_contract_report(root_path: str) -> ProjectReport:
@@ -514,6 +530,60 @@ def test_report_generator_renders_readable_project_html() -> None:
     assert long_path in html
     assert "F401" in html
     assert "12:4" in html
+
+
+def test_report_generator_renders_mixed_risk_project_fixture_html(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from project_nurilab.pipeline import Phase1Pipeline
+
+    target_project = _copy_mixed_risk_project_fixture(tmp_path)
+    clean_file = target_project / "mixed_clean.py"
+
+    def fake_collect(self: object, target: str | Path) -> list[RuffFinding]:
+        assert Path(target) == target_project.resolve()
+        return [
+            RuffFinding(
+                file=str(clean_file.resolve()),
+                line=1,
+                column=1,
+                rule_id="F401",
+                message="unused import",
+                severity="low",
+            )
+        ]
+
+    monkeypatch.setattr(
+        "project_nurilab.analyzers.tools.RuffToolCollector.collect",
+        fake_collect,
+    )
+
+    report, output_paths = Phase1Pipeline().run(
+        input_path=target_project,
+        output_dir=tmp_path,
+        formats=["html", "json"],
+    )
+
+    html = output_paths["html"].read_text(encoding="utf-8")
+
+    assert isinstance(report, ProjectReport)
+    assert "Python Project Review Report" in html
+    assert "Project Summary" in html
+    assert "File Summary" in html
+    assert "Findings" in html
+    assert "Ruff Findings" in html
+    assert "hardcoded_secret.py" in html
+    assert "suspicious_call.py" in html
+    assert "syntax_error.py" in html
+    assert "mixed_clean.py" in html
+    assert "Review suspicious call: os.system" in html
+    assert "Potential hard-coded secret: api_key" in html
+    assert "Python syntax error" in html
+    assert "Ruff issue: F401" in html
+    assert "high: 2" in html
+    assert "medium: 1" in html
+    assert "low: 1" in html
 
 
 def test_single_file_html_report_keeps_existing_structure() -> None:

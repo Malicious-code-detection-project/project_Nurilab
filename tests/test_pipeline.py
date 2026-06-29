@@ -9,6 +9,22 @@ from project_nurilab.schemas import AnalysisReport, ProjectReport, RuffFinding
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
+MIXED_RISK_PROJECT = FIXTURES / "mixed_risk_project"
+
+
+def _copy_mixed_risk_project_fixture(tmp_path: Path) -> Path:
+    target_project = tmp_path / "mixed_risk_project"
+    target_project.mkdir()
+    for source_file in MIXED_RISK_PROJECT.glob("*.py"):
+        (target_project / source_file.name).write_text(
+            source_file.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+    (target_project / "syntax_error.py").write_text(
+        (MIXED_RISK_PROJECT / "syntax_error_source.txt").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return target_project
 
 
 def _write_large_risky_python_file(path: Path) -> int:
@@ -355,6 +371,99 @@ def test_pipeline_project_summary_aggregates_all_signal_severities(
         "ruff_finding_count": 1,
         "skipped": False,
     }
+
+
+def test_pipeline_generates_report_from_mixed_risk_project_fixture(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    target_project = _copy_mixed_risk_project_fixture(tmp_path)
+    clean_file = target_project / "mixed_clean.py"
+
+    def fake_collect(self: Any, target: str | Path) -> list[RuffFinding]:
+        assert Path(target) == target_project.resolve()
+        return [
+            RuffFinding(
+                file=str(clean_file.resolve()),
+                line=1,
+                column=1,
+                rule_id="F401",
+                message="unused import",
+                severity="low",
+            )
+        ]
+
+    monkeypatch.setattr(
+        "project_nurilab.analyzers.tools.RuffToolCollector.collect",
+        fake_collect,
+    )
+
+    report, output_paths = Phase1Pipeline().run(
+        input_path=target_project,
+        output_dir=tmp_path,
+        formats=["html", "json"],
+    )
+
+    assert isinstance(report, ProjectReport)
+    assert report.analysis.summary is not None
+    assert report.analysis.summary.total_files == 4
+    assert report.analysis.summary.analyzed_files == 4
+    assert report.analysis.summary.skipped_files == 0
+    assert report.analysis.summary.severity_counts == {
+        "high": 2,
+        "medium": 1,
+        "low": 1,
+    }
+    assert report.analysis.summary.risk_level == "high"
+
+    assert [summary.path for summary in report.analysis.summary.file_summaries] == [
+        "hardcoded_secret.py",
+        "suspicious_call.py",
+        "syntax_error.py",
+        "mixed_clean.py",
+    ]
+    file_summaries = {
+        summary.path: summary for summary in report.analysis.summary.file_summaries
+    }
+    assert file_summaries["hardcoded_secret.py"].secret_count == 1
+    assert file_summaries["suspicious_call.py"].suspicious_call_count == 1
+    assert file_summaries["syntax_error.py"].syntax_error is True
+    assert file_summaries["mixed_clean.py"].ruff_finding_count == 1
+
+    assert set(output_paths) == {"html", "json"}
+    assert output_paths["html"].exists()
+    assert output_paths["json"].exists()
+
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload["analysis"]["summary"]["severity_counts"] == {
+        "high": 2,
+        "medium": 1,
+        "low": 1,
+    }
+    assert payload["analysis"]["ruff_findings"] == [
+        {
+            "file": str(clean_file.resolve()),
+            "line": 1,
+            "column": 1,
+            "rule_id": "F401",
+            "message": "unused import",
+            "severity": "low",
+            "source": "ruff",
+        }
+    ]
+    assert {
+        Path(result["path"]).name for result in payload["analysis"]["file_results"]
+    } == {
+        "hardcoded_secret.py",
+        "mixed_clean.py",
+        "suspicious_call.py",
+        "syntax_error.py",
+    }
+    assert any(
+        result["syntax_error"]
+        for result in payload["analysis"]["file_results"]
+        if Path(result["path"]).name == "syntax_error.py"
+    )
 
 
 def test_pipeline_disables_project_ruff_collection(
