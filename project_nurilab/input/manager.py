@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from project_nurilab.config import DEFAULT_MAX_LINES, SUPPORTED_EXTENSION
+from project_nurilab.config import SUPPORTED_EXTENSION
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,15 +20,7 @@ class LoadedPythonFile:
 
 
 class PythonFileLoader:
-    """Load exactly one short Python source file.
-
-    Phase 1 intentionally rejects directories, non-Python files, and files over
-    the configured line limit. Returning a skipped payload instead of raising for
-    long files lets the reporting layer explain why analysis did not proceed.
-    """
-
-    def __init__(self, max_lines: int = DEFAULT_MAX_LINES) -> None:
-        self.max_lines = max_lines
+    """Load exactly one Python source file."""
 
     def load(self, path: str | Path) -> LoadedPythonFile:
         """Validate and read a UTF-8 Python file."""
@@ -64,18 +56,6 @@ class PythonFileLoader:
             )
 
         lines = source.splitlines()
-
-        if len(lines) > self.max_lines:
-            return LoadedPythonFile(
-                path=file_path,
-                source=source,
-                lines=lines,
-                skipped=True,
-                skip_reason=(
-                    f"File has {len(lines)} lines, which exceeds the "
-                    f"phase 1 limit of {self.max_lines} lines."
-                ),
-            )
 
         return LoadedPythonFile(path=file_path, source=source, lines=lines)
 

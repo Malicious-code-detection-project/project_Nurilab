@@ -25,13 +25,22 @@ def test_python_static_analyzer_extracts_ast_signals() -> None:
     assert analysis.secrets[0].kind == "api_key"
 
 
-def test_python_file_loader_skips_files_over_line_limit(tmp_path: Path) -> None:
+def test_python_file_loader_analyzes_files_over_previous_line_limit(
+    tmp_path: Path,
+) -> None:
     sample = tmp_path / "large.py"
-    sample.write_text("\n".join("print('x')" for _ in range(3)), encoding="utf-8")
+    source_lines = [
+        "import os",
+        *("print('x')" for _ in range(205)),
+        "def run(command):",
+        "    return os.system(command)",
+    ]
+    sample.write_text("\n".join(source_lines), encoding="utf-8")
 
-    loaded = PythonFileLoader(max_lines=2).load(sample)
+    loaded = PythonFileLoader().load(sample)
     analysis = PythonStaticAnalyzer().analyze(loaded)
 
-    assert analysis.skipped is True
-    assert analysis.skip_reason is not None
-    assert "exceeds" in analysis.skip_reason
+    assert analysis.skipped is False
+    assert analysis.skip_reason is None
+    assert analysis.line_count > 200
+    assert [item.name for item in analysis.suspicious_calls] == ["os.system"]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-DEFAULT_MAX_LINES = 200
 DEFAULT_REPORT_DIR = "reports"
 SUPPORTED_EXTENSION = ".py"
 DEFAULT_LLM_BASE_URL = "http://localhost:8000/v1"

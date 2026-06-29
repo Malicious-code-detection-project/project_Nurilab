@@ -5,8 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from project_nurilab.config import DEFAULT_MAX_LINES, DEFAULT_REPORT_DIR
-from project_nurilab.input.manager import PythonFileLoader
+from project_nurilab.config import DEFAULT_REPORT_DIR
 from project_nurilab.llm.review import LocalLLMReviewClient, MockReviewClient
 from project_nurilab.pipeline import Phase1Pipeline
 
@@ -33,8 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument(
         "--max-lines",
         type=int,
-        default=DEFAULT_MAX_LINES,
-        help=f"Maximum allowed source lines. Defaults to {DEFAULT_MAX_LINES}.",
+        default=None,
+        help="Deprecated and ignored; Python files are no longer skipped by line count.",
     )
     analyze.add_argument(
         "--format",
@@ -79,7 +78,6 @@ def main(argv: list[str] | None = None) -> int:
         LocalLLMReviewClient() if args.review_client == "local" else MockReviewClient()
     )
     pipeline = Phase1Pipeline(
-        loader=PythonFileLoader(max_lines=args.max_lines),
         review_client=review_client,
         use_ruff=not args.no_ruff,
     )
