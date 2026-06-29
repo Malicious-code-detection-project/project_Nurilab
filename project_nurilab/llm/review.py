@@ -166,6 +166,19 @@ class LocalLLMReviewClient:
             )
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
+        except requests.exceptions.Timeout as exc:
+            return _local_llm_request_failure(
+                title="Local LLM request timed out",
+                reason=(
+                    "Local LLM request timed out after "
+                    f"{self.timeout:g} second(s) at {endpoint} "
+                    f"for model {self.model}: {exc}"
+                ),
+                recommendation=(
+                    "Confirm that vLLM has finished loading the model, then increase "
+                    "NURILAB_LLM_TIMEOUT if the model needs more time to respond."
+                ),
+            )
         except (
             requests.exceptions.ConnectionError,
             requests.exceptions.InvalidSchema,
@@ -237,7 +250,11 @@ class LocalLLMReviewClient:
             )
 
 
-def _local_llm_request_failure(title: str, reason: str) -> ReviewResult:
+def _local_llm_request_failure(
+    title: str,
+    reason: str,
+    recommendation: str | None = None,
+) -> ReviewResult:
     return ReviewResult(
         summary="Local LLM review failed. Static analysis results are still available.",
         risk_level="unknown",
@@ -248,7 +265,8 @@ def _local_llm_request_failure(title: str, reason: str) -> ReviewResult:
                 line=None,
                 source="local_llm",
                 reason=reason,
-                recommendation=(
+                recommendation=recommendation
+                or (
                     "Check that vLLM is running, the network is accessible, "
                     "and the model is loaded."
                 ),
