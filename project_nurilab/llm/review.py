@@ -774,5 +774,10 @@ def _resolve_timeout(timeout: float | None) -> float:
         return timeout
     configured_timeout = os.getenv("NURILAB_LLM_TIMEOUT")
     if configured_timeout:
-        return float(configured_timeout)
+        try:
+            return float(configured_timeout)
+        except ValueError as exc:
+            raise ValueError(
+                "NURILAB_LLM_TIMEOUT must be a numeric timeout in seconds."
+            ) from exc
     return DEFAULT_LLM_TIMEOUT_SECONDS
