@@ -10,6 +10,11 @@ import requests
 from project_nurilab.analyzers.python_static import PythonStaticAnalyzer
 from project_nurilab.input.manager import PythonFileLoader
 from project_nurilab.analyzers.tools import RuffToolCollector
+from project_nurilab.config import (
+    DEFAULT_LLM_BASE_URL,
+    DEFAULT_LLM_MODEL,
+    DEFAULT_LLM_TIMEOUT_SECONDS,
+)
 from project_nurilab.llm.review import LocalLLMReviewClient
 from project_nurilab.schemas import PythonAnalysis
 
@@ -557,6 +562,92 @@ def test_local_llm_review_client_http_errors_become_findings(
     assert "vLLM server logs" in finding.recommendation
 
 
+def test_local_llm_review_client_uses_default_connection_settings(
+    monkeypatch,
+) -> None:
+    sent_request: dict[str, Any] = {}
+
+    class ResponseStub:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"summary":"ok","risk_level":"low","findings":[]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(url: str, **kwargs: Any) -> ResponseStub:
+        sent_request["url"] = url
+        sent_request["json"] = kwargs["json"]
+        sent_request["timeout"] = kwargs["timeout"]
+        return ResponseStub()
+
+    monkeypatch.delenv("NURILAB_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("NURILAB_LLM_MODEL", raising=False)
+    monkeypatch.delenv("NURILAB_LLM_TIMEOUT", raising=False)
+    monkeypatch.setattr("requests.post", fake_post)
+
+    review = LocalLLMReviewClient().review(
+        PythonAnalysis(path="sample.py", line_count=10)
+    )
+
+    assert sent_request["url"] == f"{DEFAULT_LLM_BASE_URL}/chat/completions"
+    assert sent_request["json"]["model"] == DEFAULT_LLM_MODEL
+    assert sent_request["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS
+    assert review.risk_level == "low"
+
+
+def test_local_llm_review_client_uses_environment_connection_settings(
+    monkeypatch,
+) -> None:
+    sent_request: dict[str, Any] = {}
+
+    class ResponseStub:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"summary":"ok","risk_level":"low","findings":[]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(url: str, **kwargs: Any) -> ResponseStub:
+        sent_request["url"] = url
+        sent_request["json"] = kwargs["json"]
+        sent_request["timeout"] = kwargs["timeout"]
+        return ResponseStub()
+
+    monkeypatch.setenv("NURILAB_LLM_BASE_URL", "http://127.0.0.1:9000/v1/")
+    monkeypatch.setenv("NURILAB_LLM_MODEL", "custom-local-model")
+    monkeypatch.setenv("NURILAB_LLM_TIMEOUT", "9.5")
+    monkeypatch.setattr("requests.post", fake_post)
+
+    review = LocalLLMReviewClient().review(
+        PythonAnalysis(path="sample.py", line_count=10)
+    )
+
+    assert sent_request["url"] == "http://127.0.0.1:9000/v1/chat/completions"
+    assert sent_request["json"]["model"] == "custom-local-model"
+    assert sent_request["timeout"] == 9.5
+    assert review.risk_level == "low"
+
+
 def test_local_llm_review_client_uses_timeout_environment_variable(
     monkeypatch,
 ) -> None:
@@ -632,6 +723,18 @@ def test_local_llm_review_client_explicit_timeout_overrides_environment(
 
     assert sent_timeout == 2.0
     assert review.risk_level == "low"
+
+
+def test_local_llm_review_client_rejects_invalid_timeout_environment(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NURILAB_LLM_TIMEOUT", "not-a-number")
+
+    with pytest.raises(
+        ValueError,
+        match="NURILAB_LLM_TIMEOUT must be a numeric timeout in seconds",
+    ):
+        LocalLLMReviewClient(base_url="http://localhost:8000/v1")
 
 
 def test_local_llm_review_client_parsing_error(monkeypatch) -> None:
