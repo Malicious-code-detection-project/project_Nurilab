@@ -656,6 +656,7 @@ def _render_html_findings(
             f'<p><span class="badge {severity_class}">'
             f"{_escape_html(finding.severity)}</span></p>"
             f"<p><strong>Location:</strong> {_escape_html(location)}</p>"
+            f"<p><strong>Source:</strong> {_escape_html(finding.source)}</p>"
             f"<p><strong>Reason:</strong> {_escape_html(finding.reason)}</p>"
             f"<p><strong>Recommendation:</strong> "
             f"{_escape_html(finding.recommendation)}</p>"

@@ -476,10 +476,9 @@ def test_local_llm_review_client_connection_failures_become_findings(
     assert "http://localhost:8000/v1/chat/completions" in finding.reason
     assert "test-model" in finding.reason
     assert expected_reason in finding.reason
-    assert (
-        "Check that vLLM is running, the network is accessible"
-        in finding.recommendation
-    )
+    assert "Static analysis results are still included" in finding.reason
+    assert "NURILAB_LLM_BASE_URL" in finding.recommendation
+    assert "model name" in finding.recommendation
 
 
 def test_local_llm_review_client_timeout_becomes_finding(monkeypatch) -> None:
@@ -508,7 +507,9 @@ def test_local_llm_review_client_timeout_becomes_finding(monkeypatch) -> None:
     assert "http://localhost:8000/v1/chat/completions" in finding.reason
     assert "test-model" in finding.reason
     assert "model response exceeded timeout" in finding.reason
+    assert "Static analysis results are still included" in finding.reason
     assert "NURILAB_LLM_TIMEOUT" in finding.recommendation
+    assert "model name" in finding.recommendation
 
 
 @pytest.mark.parametrize(
@@ -557,6 +558,7 @@ def test_local_llm_review_client_http_errors_become_findings(
     assert str(status_code) in finding.reason
     assert error_message in finding.reason
     assert response_body in finding.reason
+    assert "Static analysis results are still included" in finding.reason
     assert "base URL" in finding.recommendation
     assert "model name" in finding.recommendation
     assert "vLLM server logs" in finding.recommendation
@@ -767,8 +769,9 @@ def test_local_llm_review_client_parsing_error(monkeypatch) -> None:
     assert "Failed to parse LLM response as JSON." in finding.reason
     assert "Raw response preview:" in finding.reason
     assert "invalid-json" in finding.reason
+    assert "Static analysis results are still included" in finding.reason
     assert (
-        "Ensure the LLM prompt or parameters encourage valid JSON formatting."
+        "returning only JSON with summary, risk_level, and findings"
         in finding.recommendation
     )
 

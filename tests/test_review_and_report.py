@@ -402,6 +402,64 @@ def test_report_generator_writes_project_json_contract(tmp_path: Path) -> None:
     assert "html" not in output_paths
 
 
+def test_report_generator_renders_local_llm_failure_finding_details(
+    tmp_path: Path,
+) -> None:
+    report = AnalysisReport(
+        generated_at=datetime.now(UTC).isoformat(),
+        analyzer_version=__version__,
+        analysis=PythonAnalysis(
+            path=str(tmp_path / "sample.py"),
+            line_count=4,
+            suspicious_calls=[
+                SuspiciousCall(
+                    name="os.system",
+                    line=4,
+                    category="command_execution",
+                    severity="high",
+                    reason="shell command execution",
+                )
+            ],
+        ),
+        review=ReviewResult(
+            summary="Local LLM review failed. Static analysis results are still available.",
+            risk_level="unknown",
+            findings=[
+                ReviewFinding(
+                    title="Local LLM connection failed",
+                    severity="medium",
+                    line=None,
+                    source="local_llm",
+                    reason=(
+                        "Unable to reach the Local LLM endpoint. Static analysis "
+                        "results are still included in this report."
+                    ),
+                    recommendation=(
+                        "Start or restart vLLM and confirm NURILAB_LLM_BASE_URL."
+                    ),
+                )
+            ],
+        ),
+    )
+
+    output_paths = ReportGenerator().write(report, tmp_path, formats=["html", "json"])
+
+    html = output_paths["html"].read_text(encoding="utf-8")
+    assert "Local LLM connection failed" in html
+    assert "<strong>Source:</strong> local_llm" in html
+    assert "Static analysis results are still included" in html
+    assert "NURILAB_LLM_BASE_URL" in html
+
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload["analysis"]["suspicious_calls"][0]["name"] == "os.system"
+    assert payload["review"]["findings"][0]["source"] == "local_llm"
+    assert (
+        "Static analysis results are still included"
+        in payload["review"]["findings"][0]["reason"]
+    )
+    assert "NURILAB_LLM_BASE_URL" in payload["review"]["findings"][0]["recommendation"]
+
+
 def test_report_generator_renders_project_file_summary() -> None:
     report = ProjectReport(
         generated_at=datetime.now(UTC).isoformat(),
