@@ -95,12 +95,27 @@ uv run python main.py analyze tests
 
 Local LLM 리뷰 실행 전에는 vLLM 서버를 별도 프로세스로 먼저 실행합니다.
 
+터미널 1 또는 GPU 서버:
+
 ```bash
 vllm serve Qwen/Qwen2.5-Coder-3B-Instruct
+```
+
+터미널 2 또는 분석 실행 환경:
+
+```bash
 uv run python main.py analyze tests --review-client local
 ```
 
 앱은 vLLM 서버를 직접 실행하지 않습니다.
+
+연결 대상은 환경변수로 조정합니다.
+
+```bash
+export NURILAB_LLM_BASE_URL=http://localhost:8000/v1
+export NURILAB_LLM_MODEL=Qwen/Qwen2.5-Coder-3B-Instruct
+export NURILAB_LLM_TIMEOUT=120
+```
 
 ---
 
@@ -112,6 +127,13 @@ Local LLM 관련 작업을 시작하기 전에는 Mock 경로와 Local 경로의
 - Local LLM review는 `--review-client local`을 명시했을 때만 vLLM OpenAI-compatible API를 호출합니다. 앱 내부에서 vLLM 서버를 시작하거나 종료하지 않습니다.
 - Local LLM 서버 연결 실패, timeout, HTTP 오류, JSON 파싱 실패는 pipeline 실패로 처리하지 않습니다. 실패 원인은 HTML/JSON report의 finding으로 남겨야 합니다.
 - prompt, parsing, 실패 처리, report 표시를 바꾸는 경우 `tests/test_tools_and_llm.py`, `tests/test_pipeline.py`, `tests/test_review_and_report.py` 중 영향 범위에 맞는 테스트를 갱신합니다.
+
+Local LLM 실패 finding을 확인할 때는 아래 항목을 먼저 봅니다.
+
+- `Local LLM connection failed`: vLLM 서버 실행 여부, host/port, `NURILAB_LLM_BASE_URL`, 네트워크 접근 권한
+- `Local LLM request timed out`: 모델 로딩 완료 여부, 모델명, GPU 메모리 상태, `NURILAB_LLM_TIMEOUT`
+- `Local LLM HTTP error`: vLLM OpenAI-compatible endpoint, model 설정, vLLM 서버 로그의 status code
+- `Local LLM JSON parsing failed`: 모델 응답이 expected JSON contract를 지켰는지, prompt/parser 변경 범위가 별도 이슈인지 여부
 
 Local LLM 관련 PR은 최소한 아래 검증을 포함합니다.
 

@@ -167,14 +167,21 @@ uv run python main.py analyze tests --no-ruff
 
 ## 7. Local LLM Serving
 
-기본값은 서버 없이 동작하는 `MockReviewClient`입니다. 실제 LLM 리뷰가 필요할 때만 로컬 서빙 LLM을 붙입니다.
+기본값은 서버 없이 동작하는 `MockReviewClient`입니다. 실제 LLM 리뷰가 필요할 때만 이미 실행 중인 로컬 서빙 LLM을 붙입니다.
 
 현재 구현은 vLLM의 OpenAI-compatible API를 기준으로 연결되어 있습니다.
 
-vLLM 기반 Local LLM 리뷰:
+vLLM 서버는 분석 앱 내부에서 실행하지 않습니다. 별도 터미널이나 GPU 서버에서 먼저 vLLM을 띄운 뒤, 분석 앱은 `--review-client local`로 해당 API에 요청만 보냅니다.
+
+터미널 1 또는 GPU 서버:
 
 ```bash
 vllm serve Qwen/Qwen2.5-Coder-3B-Instruct
+```
+
+터미널 2 또는 분석 실행 환경:
+
+```bash
 uv run python main.py analyze tests --review-client local
 ```
 
@@ -191,7 +198,14 @@ export NURILAB_LLM_TIMEOUT=120
 - `MockReviewClient`: 기본 경로입니다. 외부 서버 없이 deterministic analyzer 결과를 report finding으로 변환하므로 테스트와 PR 검증의 기준으로 사용합니다.
 - `LocalLLMReviewClient`: `--review-client local`을 명시했을 때만 사용합니다. 이미 실행 중인 vLLM OpenAI-compatible API에 HTTP 요청을 보내 요약, 해석, 우선순위화, 권고안을 생성합니다.
 - Local LLM에는 원본 source 전문이 아니라 AST, rule, secret 탐지를 거친 정규화된 정적 분석 결과를 전달합니다.
-- Local LLM 서버 오류, timeout, JSON 파싱 실패는 pipeline 실패가 아닙니다. 분석 결과와 HTML/JSON report는 유지하고, 실패 원인은 `source="local_llm"` report finding으로 남깁니다.
+- Local LLM 연결 실패, timeout, HTTP 오류, JSON 파싱 실패는 pipeline 실패가 아닙니다. 분석 결과와 HTML/JSON report는 유지하고, 실패 원인은 `source="local_llm"` report finding으로 남깁니다.
+
+Local LLM 실패 finding이 생성되면 아래 항목을 먼저 확인합니다.
+
+- `Local LLM connection failed`: vLLM 서버 실행 여부, host/port, `NURILAB_LLM_BASE_URL`, 네트워크 접근 권한을 확인합니다.
+- `Local LLM request timed out`: 모델 로딩 완료 여부, 모델명, GPU 메모리 상태를 확인하고 필요하면 `NURILAB_LLM_TIMEOUT`을 늘립니다.
+- `Local LLM HTTP error`: vLLM OpenAI-compatible endpoint, model 설정, vLLM 서버 로그의 status code를 확인합니다.
+- `Local LLM JSON parsing failed`: 모델 응답이 expected JSON contract를 지켰는지 확인하고 prompt 또는 parser 변경 범위를 별도 이슈로 분리합니다.
 
 Local LLM 관련 변경을 검증할 때는 실제 vLLM 서버가 없어도 통과하는 mock 기반 테스트를 먼저 유지합니다.
 
@@ -302,7 +316,7 @@ Analysis App
 LLM 서버가 없어도 기본 MockReviewClient로 분석은 가능해야 한다.
 ```
 
-LLM 응답은 JSON으로 파싱하며, 파싱 실패나 서버 오류는 pipeline 실패가 아니라 보고서 finding으로 남깁니다.
+LLM 응답은 JSON으로 파싱하며, 연결 실패, timeout, HTTP 오류, JSON 파싱 실패는 pipeline 실패가 아니라 보고서 finding으로 남깁니다.
 
 ## 11. Prompt Contract (LLM의 역할 및 입출력 명세)
  
