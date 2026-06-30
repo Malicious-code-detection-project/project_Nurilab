@@ -170,13 +170,15 @@ class LocalLLMReviewClient:
             return _local_llm_request_failure(
                 title="Local LLM request timed out",
                 reason=(
-                    "Local LLM request timed out after "
-                    f"{self.timeout:g} second(s) at {endpoint} "
-                    f"for model {self.model}: {exc}"
+                    "Local LLM request timed out while calling "
+                    f"{endpoint} with model {self.model} after "
+                    f"{self.timeout:g} second(s). Cause: {exc}. "
+                    "Static analysis results are still included in this report."
                 ),
                 recommendation=(
-                    "Confirm that vLLM has finished loading the model, then increase "
-                    "NURILAB_LLM_TIMEOUT if the model needs more time to respond."
+                    "Confirm that vLLM has finished loading the model, verify "
+                    "the model name, then increase NURILAB_LLM_TIMEOUT if the "
+                    "model needs more time to respond."
                 ),
             )
         except requests.exceptions.HTTPError as exc:
@@ -190,13 +192,15 @@ class LocalLLMReviewClient:
             return _local_llm_request_failure(
                 title="Local LLM HTTP error",
                 reason=(
-                    "Local LLM endpoint "
-                    f"{endpoint} returned HTTP {status_code} "
-                    f"for model {self.model}: {exc}.{response_detail}"
+                    "Local LLM endpoint returned an HTTP error while calling "
+                    f"{endpoint} with model {self.model}. Status: HTTP {status_code}. "
+                    f"Cause: {exc}.{response_detail} Static analysis results "
+                    "are still included in this report."
                 ),
                 recommendation=(
-                    "Check the Local LLM base URL, model name, OpenAI-compatible "
-                    "chat completions route, and vLLM server logs."
+                    "Check the Local LLM base URL (NURILAB_LLM_BASE_URL), the "
+                    "model name, the OpenAI-compatible /chat/completions route, "
+                    "and vLLM server logs for the returned status code."
                 ),
             )
         except (
@@ -209,16 +213,28 @@ class LocalLLMReviewClient:
             return _local_llm_request_failure(
                 title="Local LLM connection failed",
                 reason=(
-                    "Unable to reach Local LLM endpoint "
-                    f"{endpoint} for model {self.model}: {exc}"
+                    "Unable to reach the Local LLM endpoint while calling "
+                    f"{endpoint} with model {self.model}. Cause: {exc}. "
+                    "Static analysis results are still included in this report."
+                ),
+                recommendation=(
+                    "Start or restart vLLM, confirm that NURILAB_LLM_BASE_URL "
+                    "points to the listening host and port, verify DNS/network "
+                    "access, and confirm the configured model name."
                 ),
             )
         except Exception as exc:  # noqa: BLE001 - preserve failures as report data.
             return _local_llm_request_failure(
                 title="Local LLM connection failed",
                 reason=(
-                    "Local LLM server or API error at "
-                    f"{endpoint} for model {self.model}: {exc}"
+                    "Local LLM server or API call failed while calling "
+                    f"{endpoint} with model {self.model}. Cause: {exc}. "
+                    "Static analysis results are still included in this report."
+                ),
+                recommendation=(
+                    "Check the Local LLM server logs, confirm the configured "
+                    "base URL and model name, and verify the OpenAI-compatible "
+                    "response shape."
                 ),
             )
 
@@ -260,10 +276,16 @@ class LocalLLMReviewClient:
                         severity="medium",
                         line=None,
                         source="local_llm",
-                        reason=str(exc),
+                        reason=(
+                            "Local LLM returned a response that could not be parsed "
+                            f"as the expected JSON review. Cause: {exc}. Static "
+                            "analysis results are still included in this report."
+                        ),
                         recommendation=(
-                            "Ensure the LLM prompt or parameters encourage valid JSON formatting. "
-                            "The response content could not be parsed."
+                            "Inspect the raw response preview in the cause, then "
+                            "confirm the model is returning only JSON with summary, "
+                            "risk_level, and findings. This does not change the "
+                            "existing JSON extraction behavior."
                         ),
                     )
                 ],
