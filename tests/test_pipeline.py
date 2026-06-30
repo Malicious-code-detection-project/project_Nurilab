@@ -870,3 +870,66 @@ def test_pipeline_preserves_reports_when_local_llm_times_out(
     assert (
         "model response exceeded timeout" in payload["review"]["findings"][0]["reason"]
     )
+
+
+def test_pipeline_preserves_reports_when_local_llm_returns_http_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import requests
+
+    from project_nurilab.llm.review import LocalLLMReviewClient
+
+    target_file = tmp_path / "sample.py"
+    target_file.write_text(
+        "import os\n\n\ndef run(command):\n    return os.system(command)\n",
+        encoding="utf-8",
+    )
+
+    class ResponseStub:
+        def raise_for_status(self) -> None:
+            response = requests.Response()
+            response.status_code = 500
+            response._content = b"server overloaded"
+            raise requests.exceptions.HTTPError(
+                "500 Server Error: Internal Server Error",
+                response=response,
+            )
+
+    def fake_post(*args: Any, **kwargs: Any) -> ResponseStub:
+        return ResponseStub()
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    report, output_paths = Phase1Pipeline(
+        use_ruff=False,
+        review_client=LocalLLMReviewClient(
+            base_url="http://localhost:8000/v1",
+            model="test-model",
+        ),
+    ).run(
+        input_path=target_file,
+        output_dir=tmp_path,
+        formats=["html", "json"],
+    )
+
+    assert isinstance(report, AnalysisReport)
+    assert [call.name for call in report.analysis.suspicious_calls] == ["os.system"]
+    assert report.review.risk_level == "unknown"
+    assert len(report.review.findings) == 1
+    assert report.review.findings[0].source == "local_llm"
+    assert report.review.findings[0].title == "Local LLM HTTP error"
+    assert "HTTP 500" in report.review.findings[0].reason
+    assert "test-model" in report.review.findings[0].reason
+    assert "base URL" in report.review.findings[0].recommendation
+
+    assert set(output_paths) == {"html", "json"}
+    assert output_paths["html"].exists()
+    assert output_paths["json"].exists()
+
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload["analysis"]["suspicious_calls"][0]["name"] == "os.system"
+    assert payload["review"]["risk_level"] == "unknown"
+    assert payload["review"]["findings"][0]["source"] == "local_llm"
+    assert payload["review"]["findings"][0]["title"] == "Local LLM HTTP error"
+    assert "server overloaded" in payload["review"]["findings"][0]["reason"]

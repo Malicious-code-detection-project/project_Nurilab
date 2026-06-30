@@ -506,6 +506,57 @@ def test_local_llm_review_client_timeout_becomes_finding(monkeypatch) -> None:
     assert "NURILAB_LLM_TIMEOUT" in finding.recommendation
 
 
+@pytest.mark.parametrize(
+    ("status_code", "error_message", "response_body"),
+    [
+        (400, "400 Client Error: Bad Request", "bad request body"),
+        (404, "404 Client Error: Not Found", "model route not found"),
+        (500, "500 Server Error: Internal Server Error", "server overloaded"),
+    ],
+)
+def test_local_llm_review_client_http_errors_become_findings(
+    monkeypatch,
+    status_code: int,
+    error_message: str,
+    response_body: str,
+) -> None:
+    class ResponseStub:
+        def raise_for_status(self) -> None:
+            response = requests.Response()
+            response.status_code = status_code
+            response._content = response_body.encode("utf-8")
+            raise requests.exceptions.HTTPError(error_message, response=response)
+
+    def fake_post(*args: Any, **kwargs: Any) -> ResponseStub:
+        return ResponseStub()
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    review = LocalLLMReviewClient(
+        base_url="http://localhost:8000/v1",
+        model="test-model",
+    ).review(PythonAnalysis(path="sample.py", line_count=10))
+
+    assert (
+        review.summary
+        == "Local LLM review failed. Static analysis results are still available."
+    )
+    assert review.risk_level == "unknown"
+    assert len(review.findings) == 1
+
+    finding = review.findings[0]
+    assert finding.title == "Local LLM HTTP error"
+    assert finding.source == "local_llm"
+    assert "http://localhost:8000/v1/chat/completions" in finding.reason
+    assert "test-model" in finding.reason
+    assert str(status_code) in finding.reason
+    assert error_message in finding.reason
+    assert response_body in finding.reason
+    assert "base URL" in finding.recommendation
+    assert "model name" in finding.recommendation
+    assert "vLLM server logs" in finding.recommendation
+
+
 def test_local_llm_review_client_uses_timeout_environment_variable(
     monkeypatch,
 ) -> None:
