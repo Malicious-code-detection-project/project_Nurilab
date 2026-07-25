@@ -602,7 +602,46 @@ def test_local_llm_review_client_uses_default_connection_settings(
     )
 
     assert sent_request["url"] == f"{DEFAULT_LLM_BASE_URL}/chat/completions"
-    assert sent_request["json"]["model"] == DEFAULT_LLM_MODEL
+    request_payload = sent_request["json"]
+    assert request_payload["model"] == DEFAULT_LLM_MODEL
+    assert request_payload["model"] == "openai/gpt-oss-20b"
+    assert request_payload["reasoning_effort"] == "low"
+    assert request_payload["include_reasoning"] is False
+    response_format = request_payload["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["name"] == "nurilab_security_review"
+    assert response_format["json_schema"]["strict"] is True
+    response_schema = response_format["json_schema"]["schema"]
+    assert response_schema["type"] == "object"
+    assert response_schema["additionalProperties"] is False
+    assert response_schema["required"] == ["summary", "risk_level", "findings"]
+    assert response_schema["properties"]["risk_level"]["enum"] == [
+        "low",
+        "medium",
+        "high",
+    ]
+    finding_schema = response_schema["properties"]["findings"]["items"]
+    assert finding_schema["additionalProperties"] is False
+    assert finding_schema["properties"]["severity"]["enum"] == [
+        "low",
+        "medium",
+        "high",
+    ]
+    assert finding_schema["properties"]["file"]["type"] == ["string", "null"]
+    assert finding_schema["properties"]["line"]["type"] == ["integer", "null"]
+    assert finding_schema["required"] == [
+        "title",
+        "severity",
+        "file",
+        "line",
+        "reason",
+        "recommendation",
+    ]
+    system_prompt = request_payload["messages"][0]["content"]
+    user_prompt = request_payload["messages"][1]["content"]
+    assert "final JSON object" in system_prompt
+    assert "Chain of Thought" not in user_prompt
+    assert "reasoning trace" in user_prompt
     assert sent_request["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS
     assert review.risk_level == "low"
 
