@@ -10,6 +10,7 @@ PR에는 변경 목적, 구현 범위, 제외 범위, 검증 결과, Linear 이�
 2. `<...>` placeholder를 실제 값으로 바꾼다.
 3. 해당하지 않는 항목은 삭제하지 말고 `N/A` 또는 `해당 없음`으로 명시한다.
 4. schema, CLI, report output, prompt contract를 바꾸는 PR은 관련 문서와 테스트 갱신 여부를 반드시 적는다.
+5. PR을 열면 Linear 이슈를 `In Review`로 전환하고, Owner의 병합을 확인한 뒤에만 `Done`으로 전환한다.
 
 ## Template
 

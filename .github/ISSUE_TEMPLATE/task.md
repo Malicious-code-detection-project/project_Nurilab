@@ -1,29 +1,36 @@
 ---
-name: Task
-about: Phase 3 작업 항목을 정의합니다.
+name: Legacy GitHub 작업
+about: Repository Owner가 GitHub Issue 사용을 명시적으로 요청한 경우에만 사용합니다.
 title: "[Task] "
 labels: task
 ---
 
-## Goal
+> Project NuriLab의 실제 작업은 Linear 팀 `The Debugging Water Deer`, 프로젝트
+> `Nurilab`에서 관리합니다. Linear 이슈를 먼저 생성하고 갱신합니다. 이 template은
+> Owner가 GitHub 자체 추적을 요청하는 예외 상황을 위해서만 유지합니다.
 
-이 작업으로 달성하려는 목표를 작성합니다.
+## Linear
 
-## Background
+- Issue: THE-XX
+- Status:
 
-왜 필요한 작업인지 작성합니다.
+## 목표
 
-## Acceptance Criteria
+## 배경
 
-- 
-- 
-- 
+## 범위
 
-## Implementation Notes
+## 제외 범위
 
-관련 모듈, 고려사항, 제외 범위를 작성합니다.
+## 대상 파일
 
-## Validation
+## 완료 조건
+
+-
+-
+-
+
+## 검증
 
 - [ ] `uv run pytest`
 - [ ] `uv run ruff check .`

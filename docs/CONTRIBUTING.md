@@ -1,229 +1,70 @@
-# Contributing Guide
+# Project NuriLab 기여 가이드
 
-이 문서는 Project NuriLab에 기여하는 팀원이 작업을 시작하고, 브랜치를 만들고, PR을 제출하기 위해 따라야 하는 절차를 정리합니다.
+이 문서는 팀원이 작업을 재개하고, Linear 이슈를 선택하고, 범위가 명확한 변경을
+구현하고, 검증한 뒤 GitHub Pull Request를 제출하는 절차를 설명합니다.
 
-협업 규칙의 정본은 [AGENTS.md](../AGENTS.md)입니다. 이 문서는 팀원이 실제로 작업을 진행할 때 참고하는 실행 가이드입니다.
+저장소 정책은 [`../AGENTS.md`](../AGENTS.md), 제품 동작과 실행 명령은
+[`../README.md`](../README.md), 전체 문서 지도는
+[`README.md`](README.md)를 기준으로 합니다.
 
----
+## 작업 추적 체계
 
-## 프로젝트 한 줄 요약
+Project NuriLab은 Linear와 GitHub의 책임을 구분합니다.
 
-Project NuriLab은 로컬 환경에서 동작하는 LLM 기반 악성코드/의심 파일 분석 자동화 시스템입니다.
+| 시스템 | 책임 |
+| --- | --- |
+| Linear 팀 `The Debugging Water Deer`, 프로젝트 `Nurilab` | 작업 범위, 우선순위, 담당자, 의존성, 상태 |
+| GitHub Pull Request | 코드/문서 리뷰, 검증 근거, 병합 이력 |
 
-현재는 **Phase 3: Local LLM 리뷰 품질 개선 및 분석 대상 확장** 단계입니다. 단일 `.py` 파일과 Python 프로젝트 디렉터리를 분석하고, Mock 또는 Local LLM 리뷰를 통해 HTML + JSON 보고서를 생성합니다.
+브랜치 이름, commit, 로컬 메모만으로 작업을 시작하지 않습니다. 먼저 Linear 이슈를
+생성하거나 선택합니다.
 
----
+팀 workflow 상태:
 
-## 작업 재개 절차
+```text
+Backlog
+-> Todo
+-> In Progress
+-> In Review
+-> Done
+```
 
-새 PC에서 작업하거나 오랜만에 저장소를 열었다면 아래 순서로 확인합니다.
+의도적으로 중단한 작업은 `Canceled`, 다른 이슈와 같은 작업은 `Duplicate`로
+처리합니다.
 
-1. [README.md](../README.md) - 프로젝트 소개, 현재 Phase, 실행 방법
-2. [AGENTS.md](../AGENTS.md) - 협업 운영 규칙과 PR 기준
-3. [.github/PULL_REQUEST_TEMPLATE.md](../.github/PULL_REQUEST_TEMPLATE.md) - PR 작성 형식
-4. [.github/ISSUE_TEMPLATE/task.md](../.github/ISSUE_TEMPLATE/task.md) - 작업 이슈 작성 형식
-5. [SGLANG_VLLM_COMPARISON.md](SGLANG_VLLM_COMPARISON.md) - LLM serving 비교 자료
-6. [external_project_validation.md](external_project_validation.md) - 외부 Python 프로젝트 검증 후보와 실행 절차
+`Done`은 Owner가 Pull Request를 병합했거나, 저장소 변경이 필요 없다는 근거가
+이슈에 명시된 상태를 의미합니다. 브랜치를 push하거나 PR을 열었다는 사실만으로
+완료 처리하지 않습니다.
 
-작업 전에는 원격 상태를 먼저 확인합니다.
+## 오랜만에 작업을 재개할 때
+
+새 PC에서 작업하거나 오랜만에 저장소를 열었다면 다음 순서를 따릅니다.
+
+1. [`../README.md`](../README.md)를 읽습니다.
+2. [`../AGENTS.md`](../AGENTS.md)를 읽습니다.
+3. Linear `Nurilab` 프로젝트에서 현재 이슈 상태를 확인합니다.
+4. 로컬 checkout을 최신 상태로 동기화합니다.
+5. lock 파일 기준으로 Python 환경을 복구합니다.
+6. 파일을 수정하기 전에 기본 품질 gate를 실행합니다.
 
 ```bash
-git fetch origin
+git fetch origin --prune
+git switch main
+git pull --ff-only origin main
 git status
+uv sync --locked
 ```
 
-로컬 브랜치가 뒤처진 상태에서 코드 구조나 구현 여부를 단정하지 않습니다.
-
----
-
-## 워크스페이스 구조
-
-```text
-project_Nurilab/
-├── AGENTS.md                         # 협업 운영 매뉴얼
-├── README.md                         # 프로젝트 소개와 실행 방법
-├── docs/                             # 기여, 비교, 실험 계획, PR 설명 템플릿
-│   ├── AI_RULES.md                   # AI 코드 생성 가이드라인
-│   ├── AI_RULES_KOR.md               # AI 코드 생성 가이드라인 한국어판
-│   ├── CONTRIBUTING.md               # 팀원 작업 가이드
-│   ├── external_project_validation.md # 외부 Python 프로젝트 검증 workflow
-│   ├── FINETUNING_EXPERIMENT_PLAN.md # 파인튜닝 실험 계획
-│   ├── PLAN.md                       # Phase 2 개발 계획 기록
-│   ├── PR_DESCRIPTION.md             # PR 본문 작성 참고 템플릿
-│   └── SGLANG_VLLM_COMPARISON.md     # SGLang/vLLM 비교 자료
-├── main.py                           # CLI 진입점
-├── pyproject.toml
-├── uv.lock
-├── .github/
-│   ├── PULL_REQUEST_TEMPLATE.md
-│   └── ISSUE_TEMPLATE/
-│       └── task.md
-├── project_nurilab/
-│   ├── input/                        # 입력 수집과 파일 로딩
-│   ├── analyzers/                    # Python AST, rules, secrets
-│   ├── aggregation/                  # 프로젝트 단위 결과 집계
-│   ├── llm/                          # Mock / Local LLM review client
-│   ├── reports/                      # HTML / JSON / optional Markdown 출력
-│   ├── cli.py
-│   ├── config.py
-│   ├── pipeline.py
-│   └── schemas.py
-├── tests/
-│   └── fixtures/
-├── data/
-├── images/
-└── reports/                          # 로컬 분석 결과, 커밋 금지
-```
-
-`reports/`, `.venv/`, cache 같은 로컬 작업 산출물은 커밋하지 않습니다.
-
----
-
-## 개발 환경 설정
-
-의존성은 `uv` 기준으로 관리합니다.
+프로젝트 interpreter를 확인합니다.
 
 ```bash
-uv sync
+uv run python --version
 ```
 
-기본 분석 실행:
+운영체제의 `python3`는 Python 3.12가 아닐 수 있으므로 프로젝트 명령에 사용하지
+않습니다.
 
-```bash
-uv run python main.py analyze tests
-```
-
-Local LLM 리뷰 실행 전에는 vLLM 서버를 별도 프로세스로 먼저 실행합니다.
-
-터미널 1 또는 GPU 서버:
-
-```bash
-vllm serve Qwen/Qwen2.5-Coder-3B-Instruct
-```
-
-터미널 2 또는 분석 실행 환경:
-
-```bash
-uv run python main.py analyze tests --review-client local
-```
-
-앱은 vLLM 서버를 직접 실행하지 않습니다.
-
-연결 대상은 환경변수로 조정합니다.
-
-```bash
-export NURILAB_LLM_BASE_URL=http://localhost:8000/v1
-export NURILAB_LLM_MODEL=Qwen/Qwen2.5-Coder-3B-Instruct
-export NURILAB_LLM_TIMEOUT=120
-```
-
----
-
-## Local LLM 리뷰 작업 흐름
-
-Local LLM 관련 작업을 시작하기 전에는 Mock 경로와 Local 경로의 책임을 분리해서 확인합니다.
-
-- Mock review는 기본 검증 경로입니다. 외부 서버 없이 deterministic analyzer 결과를 report finding으로 변환하며, Local LLM 서버가 없어도 테스트가 통과해야 합니다.
-- Local LLM review는 `--review-client local`을 명시했을 때만 vLLM OpenAI-compatible API를 호출합니다. 앱 내부에서 vLLM 서버를 시작하거나 종료하지 않습니다.
-- Local LLM 서버 연결 실패, timeout, HTTP 오류, JSON 파싱 실패는 pipeline 실패로 처리하지 않습니다. 실패 원인은 HTML/JSON report의 finding으로 남겨야 합니다.
-- prompt, parsing, 실패 처리, report 표시를 바꾸는 경우 `tests/test_tools_and_llm.py`, `tests/test_pipeline.py`, `tests/test_review_and_report.py` 중 영향 범위에 맞는 테스트를 갱신합니다.
-
-Local LLM 실패 finding을 확인할 때는 아래 항목을 먼저 봅니다.
-
-- `Local LLM connection failed`: vLLM 서버 실행 여부, host/port, `NURILAB_LLM_BASE_URL`, 네트워크 접근 권한
-- `Local LLM request timed out`: 모델 로딩 완료 여부, 모델명, GPU 메모리 상태, `NURILAB_LLM_TIMEOUT`
-- `Local LLM HTTP error`: vLLM OpenAI-compatible endpoint, model 설정, vLLM 서버 로그의 status code
-- `Local LLM JSON parsing failed`: 모델 응답이 expected JSON contract를 지켰는지, prompt/parser 변경 범위가 별도 이슈인지 여부
-
-Local LLM 관련 PR은 최소한 아래 검증을 포함합니다.
-
-```bash
-uv run pytest tests/test_tools_and_llm.py tests/test_pipeline.py tests/test_review_and_report.py
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy .
-```
-
----
-
-## 브랜치 전략
-
-`main`은 항상 동작 가능한 기준 브랜치로 유지합니다. 모든 작업은 브랜치를 만든 뒤 PR로 병합합니다.
-
-브랜치 이름:
-
-- `feat/phase3-<topic>`
-- `fix/<topic>`
-- `docs/<topic>`
-- `test/<topic>`
-- `refactor/<topic>`
-- `experiment/<topic>`
-
-예시:
-
-- `feat/phase3-local-llm-quality`
-- `fix/local-llm-json-parser`
-- `docs/team-collaboration-rules`
-
----
-
-## 커밋 메시지
-
-Conventional Commits 형식을 권장합니다.
-
-```text
-<type>: <summary>
-```
-
-사용 가능한 type:
-
-- `feat`
-- `fix`
-- `docs`
-- `test`
-- `refactor`
-- `chore`
-- `experiment`
-
-예시:
-
-- `feat: improve local llm review prompt`
-- `fix: handle fenced local llm json`
-- `docs: update phase 3 collaboration rules`
-- `test: add project analysis fixture`
-
----
-
-## 작업 범위 규칙
-
-Phase 3에서 우선하는 작업:
-
-- Local LLM 리뷰 품질 개선
-- 외부 실제 Python 프로젝트 분석 안정성 검증
-- 파일 길이 제한 제거에 따른 대용량 소스 분석 흐름 정리
-- 프로젝트 단위 결과 집계 및 보고서 가독성 개선
-- 실제 운영 환경 기준의 Local LLM 연동 안정성 개선
-
-팀 논의 없이 바로 구현하지 않는 작업:
-
-- 파인튜닝
-- remediation snippet
-- 파일 전체 patched code 생성
-- Python 외 언어 지원
-- 멀티모달 입력
-- 실제 악성 샘플 실행 또는 동적 분석
-
-이 항목들은 README의 `Phase Next`에 후보로 남기고, 별도 이슈에서 논의합니다.
-
-외부 프로젝트 분석 안정성 검증은 [external_project_validation.md](external_project_validation.md)의 workflow를 따른다. 외부 프로젝트 원본은 저장소 밖에 clone하고, 기본 검증은 Mock review 경로로 수행한다. Local LLM review는 vLLM 서버가 이미 실행 중일 때만 선택 검증으로 실행한다.
-
-외부 프로젝트 원본, dependency cache, HTML/JSON report artifact는 저장소에 커밋하지 않는다. 분석 결과는 report 파일이 아니라 실행 명령, 대상 commit, 요약 수치, 실패 원인을 이슈 또는 후속 문서에 기록한다.
-
----
-
-## 테스트와 검증
-
-PR 전 아래 명령을 반드시 실행합니다.
+기본 검증:
 
 ```bash
 uv run pytest
@@ -232,74 +73,252 @@ uv run ruff format --check .
 uv run mypy .
 ```
 
-변경 영역별 테스트 기준:
+작업 시작 전부터 검증이 실패하면 관련 없는 수정에 섞지 말고 Linear 이슈에
+baseline failure를 기록합니다.
 
-- 입력 수집 변경: `tests/test_input_collector.py`
-- Python AST 분석 변경: `tests/test_python_static_analyzer.py`
-- pipeline 변경: `tests/test_pipeline.py`
-- report 변경: `tests/test_review_and_report.py`
-- Local LLM parsing 변경: `tests/test_tools_and_llm.py`
+## 이슈 착수
 
-Local LLM 관련 변경은 실제 vLLM 서버 없이도 mock 테스트가 가능해야 합니다.
+구현 전:
 
----
+1. 이슈가 팀 `The Debugging Water Deer`, 프로젝트 `Nurilab`에 속하는지
+   확인합니다.
+2. 목표, 완료 조건, 대상 파일, 의존성, 제외 범위를 읽습니다.
+3. 겹치는 `In Progress` 이슈나 branch를 다른 팀원이 소유하고 있지 않은지
+   확인합니다.
+4. 자신을 담당자로 지정합니다.
+5. 이슈를 `In Progress`로 변경합니다.
+6. 최신 `main`에서 작업 branch를 생성합니다.
 
-## PR 제출 규칙
+권장 이슈 본문:
 
-PR은 작게 유지합니다. 하나의 PR에는 하나의 목적만 담습니다.
+```markdown
+## 목표
+
+## 배경
+
+## 범위
+
+## 제외 범위
+
+## 대상 파일
+
+## 완료 조건
+
+## 검증
+```
+
+브랜치 이름:
+
+| 변경 종류 | 형식 | 예시 |
+| --- | --- | --- |
+| 기능 | `feat/phase3-<topic>` | `feat/phase3-project-summary` |
+| 버그 수정 | `fix/phase3-<topic>` | `fix/phase3-local-llm-timeout` |
+| 테스트 | `test/phase3-<topic>` | `test/phase3-large-input` |
+| 리팩터링 | `refactor/phase3-<topic>` | `refactor/phase3-report-ordering` |
+| 문서 | `docs/phase3-<topic>` | `docs/phase3-documentation-alignment` |
+| 실험 | `experiment/<topic>` | `experiment/gpt-oss-review` |
+
+담당 작업을 명확히 할 필요가 있으면 Linear identifier를 포함합니다.
+
+```text
+docs/phase3-the-76-documentation-alignment
+```
+
+`main`에 직접 commit하거나 push하지 않습니다.
+
+## 구현
+
+하나의 이슈와 Pull Request에는 하나의 목적만 담습니다.
+
+수정 전:
+
+- schema, CLI, report, prompt, 문서 영향 확인
+- `project_nurilab/`의 기존 책임 경계 확인
+- 필요한 최소 test 범위 확인
+- 현재 Phase 범위에 포함되는지 확인
+
+모듈별 책임:
+
+| 경로 | 책임 |
+| --- | --- |
+| `project_nurilab/input/` | 입력 수집, 필터링, 로딩 |
+| `project_nurilab/analyzers/` | deterministic AST, pattern, secret, tool signal |
+| `project_nurilab/aggregation/` | 프로젝트 단위 count 및 risk summary |
+| `project_nurilab/llm/` | Mock 및 Local LLM review client |
+| `project_nurilab/reports/` | HTML, JSON, 선택적 Markdown report |
+| `project_nurilab/schemas.py` | 분석, 리뷰, 보고서 공통 계약 |
+| `tests/` | 회귀 test 및 무해한 fixture |
+
+기존 모듈이 이미 해당 책임을 가진다면 새 모듈을 만들지 않습니다. 선택한 이슈와
+무관한 정리는 함께 수행하지 않습니다.
+
+## Local LLM 변경
+
+Mock review는 필수 offline regression 경로이며 실행 중인 모델 서버 없이 동작해야
+합니다.
+
+Local LLM review 원칙:
+
+- `--review-client local`을 지정한 경우에만 실행합니다.
+- 이미 실행 중인 vLLM OpenAI-compatible API를 호출합니다.
+- 원본 source text가 아니라 정규화된 정적 분석 결과를 전달합니다.
+- 애플리케이션에서 vLLM을 시작하거나 관리하지 않습니다.
+- 요청 실패 시에도 정적 분석 결과와 report를 보존합니다.
+
+현재 구분하는 실패 finding:
+
+- `Local LLM connection failed`
+- `Local LLM request timed out`
+- `Local LLM HTTP error`
+- `Local LLM JSON parsing failed`
+
+Local LLM 작업은 일반적으로 다음 test 중 하나 이상에 영향을 줍니다.
+
+```text
+tests/test_tools_and_llm.py
+tests/test_pipeline.py
+tests/test_review_and_report.py
+```
+
+실제 vLLM smoke test는 유용한 운영 근거지만 mock 기반 regression test를 대체하지
+않습니다. 실제 서버 결과를 기록할 때는 모델, vLLM 버전, GPU, 명령어, 환경변수,
+결과를 함께 남깁니다.
+
+## 외부 프로젝트 검증
+
+[`external_project_validation.md`](external_project_validation.md)의 절차를
+따릅니다. 외부 프로젝트와 생성 report는 이 저장소 밖에 둡니다.
+
+기존 `pypa/packaging` 결과는 Python line-count limit 제거 전의 과거 기록입니다.
+재실행하기 전에는 최신 `main`의 검증 근거로 제시하지 않습니다.
+
+커밋 금지:
+
+- 외부 프로젝트 source tree
+- 외부 프로젝트의 `.git`, virtual environment, dependency cache
+- 생성된 HTML 또는 JSON report
+- private source code 또는 실제 악성코드
+
+## 문서 변경
+
+문서별 정본과 언어 정책은 [`README.md`](README.md)를 따릅니다.
+
+- 현재 동작, command, 환경변수, 출력, 사용자에게 보이는 한계는
+  `../README.md`에 기록합니다.
+- 저장소 정책은 `../AGENTS.md`에 기록합니다.
+- 팀 workflow는 이 문서에 기록합니다.
+- 현재 운영 문서의 본문은 한국어로 작성하되 code identifier, CLI option,
+  환경변수, JSON field, 공식 제품명은 영문을 유지합니다.
+- live issue 상태는 Markdown이 아니라 Linear에 기록합니다.
+- 실험 결과에는 Project NuriLab commit, 대상 commit, 환경, 명령어, 날짜를
+  포함합니다.
+- 과거 계획과 오래된 결과는 이력을 지우지 않고 현재 적용 여부를 표시합니다.
+- 문서를 이동하거나 이름을 바꾸면 relative Markdown link를 검증합니다.
+- 한글/영문 병행본은 같은 PR에서 함께 갱신합니다.
+
+## 검증
+
+문서 전용 PR을 포함한 모든 Pull Request에서 다음 네 명령을 실행합니다.
+
+```bash
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy .
+```
+
+변경 영역별 기본 test:
+
+| 변경 | 기본 test |
+| --- | --- |
+| 입력 수집 및 로딩 | `tests/test_input_collector.py` |
+| Python AST 분석 | `tests/test_python_static_analyzer.py` |
+| Pipeline orchestration | `tests/test_pipeline.py` |
+| Report 및 JSON 계약 | `tests/test_review_and_report.py` |
+| Local LLM 및 Ruff 연동 | `tests/test_tools_and_llm.py` |
+
+추가 검사:
+
+```bash
+git diff --check
+```
+
+관련 없는 이슈를 처리하면서 `ruff format .` 또는 `ruff check --fix .`를 실행해
+저장소 전체를 수정하지 않습니다. 자동 수정은 이슈의 대상 파일 범위 안에
+한정합니다.
+
+## Commit 및 Pull Request
+
+Conventional Commit 형식:
+
+```text
+<type>: <summary>
+```
+
+예시:
+
+```text
+docs: 프로젝트 문서를 현재 동작에 맞게 정비
+fix: local llm timeout에서도 보고서 보존
+test: 프로젝트 json 보고서 계약 검증
+```
+
+이슈 branch를 push한 뒤 GitHub Pull Request를 생성합니다.
 
 PR 제목:
 
 ```text
-[Phase 3] <summary>
+[Phase 3] <요약>
 ```
 
-PR 본문에는 다음을 포함합니다.
+PR 본문은 [`PR_DESCRIPTION.md`](PR_DESCRIPTION.md)를 사용하며 다음 내용을
+포함합니다.
 
-- 변경 목적
-- 주요 변경 내용
-- 검증 명령과 결과
-- 제한사항 또는 후속 작업
-- 관련 GitHub Issue
+- Linear 이슈 (`Closes THE-XX`)
+- 목적과 구현 범위
+- 의도적으로 제외한 작업
+- API/schema/CLI/report/prompt 계약 영향
+- 완료 조건 충족 근거
+- 모든 검증 명령과 결과
+- 실행하지 않은 환경 의존 검증
+- 후속 작업
 
-PR 생성 전 체크리스트:
+PR 생성 후:
 
-- [ ] 최신 `main` 기준 브랜치에서 작업
-- [ ] 브랜치명이 규칙을 따름
-- [ ] `uv run pytest` 통과
-- [ ] `uv run ruff check .` 통과
-- [ ] `uv run ruff format --check .` 통과
-- [ ] `uv run mypy .` 통과
-- [ ] 기능 변경에 테스트 포함
-- [ ] 사용자 실행 흐름이나 출력 변경 시 README 갱신
-- [ ] 실제 악성 샘플, secrets, 민감 데이터 미포함
-- [ ] Local LLM 서버가 없어도 Mock 경로 동작
+1. Linear 이슈를 `In Review`로 변경합니다.
+2. PR link 또는 branch/commit 근거를 이슈에 추가합니다.
+3. Repository Owner의 리뷰와 병합을 기다립니다.
+4. 병합 후 `main`을 동기화하고 merge commit을 확인합니다.
+5. Linear 이슈를 `Done`으로 변경합니다.
 
----
+병합을 확인하고 후속 commit이 필요 없을 때만 작업 branch를 삭제할 수 있습니다.
 
-## 보안과 데이터 취급
+## 보안 및 산출물
 
-다음은 커밋하지 않습니다.
+커밋 금지:
 
-- 실제 악성코드 샘플
-- API key, token, password
-- 민감한 내부 코드
-- 개인 분석 결과
-- `reports/` 출력물
-- `.venv/`, cache, 로컬 설정 파일
+- 실제 악성코드 sample 또는 실행 가능한 payload
+- secret, API key, credential, private CTI
+- 생성된 `reports/`
+- 외부 프로젝트 source tree
+- raw dataset
+- model weight, adapter, checkpoint
+- machine-specific `.env`
 
-실제 악성 파일을 다루는 단계에서는 격리된 분석 환경, 네트워크 통제, 샘플 저장 정책, 접근 권한 관리가 선행되어야 합니다.
+파인튜닝은 별도 프로젝트에서 수행합니다. 이 저장소에는 제품의 Local LLM 연동
+경계와 전달 계획만 유지합니다.
 
----
+## 작업이 막힌 경우
 
-## 막혔을 때
+불명확한 요구사항을 우회하기 위해 범위를 임의로 확장하지 않습니다.
 
-모호하거나 막히면 임의로 확장하지 말고 GitHub Issue 또는 PR 코멘트에 남깁니다.
+Linear 이슈 또는 PR에 다음을 기록합니다.
 
-특히 다음 변경은 Owner 확인 후 진행합니다.
+- 정확한 blocker
+- 근거와 재현 절차
+- 영향받는 계약 또는 파일
+- 시도한 대안
+- Owner에게 필요한 결정
 
-- schema 변경
-- CLI 옵션 변경
-- 보고서 출력 구조 변경
-- Local LLM prompt contract 변경
-- Phase Next 항목 구현 착수
+이슈는 `In Progress`로 유지하거나 팀에서 합의한 blocked 표현을 사용합니다.
+병합되지 않았거나 막힌 작업을 `Done`으로 변경하지 않습니다.

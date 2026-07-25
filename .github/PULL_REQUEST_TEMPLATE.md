@@ -1,27 +1,47 @@
-## Summary
+## Linear
 
-변경 목적과 핵심 내용을 짧게 작성합니다.
+Closes THE-XX
 
-## Changes
+- [ ] Linear 이슈를 담당자에게 할당하고 `In Review`로 변경했습니다.
 
-- 
-- 
-- 
+## 요약
 
-## Validation
+무엇을 변경했고 왜 필요한지 설명합니다.
+
+## 변경 내용
+
+-
+-
+-
+
+## 계약 영향
+
+- Public API: 없음
+- Schema: 없음
+- CLI: 없음
+- Report output: 없음
+- Prompt contract: 없음
+- Artifact storage policy: 없음
+
+## 검증
 
 - [ ] `uv run pytest`
 - [ ] `uv run ruff check .`
 - [ ] `uv run ruff format --check .`
 - [ ] `uv run mypy .`
-- [ ] README 또는 관련 문서 갱신 여부 확인
+- [ ] `git diff --check`
+- [ ] 필요한 경우 README 또는 관련 문서 갱신
 
-## Scope Check
+## 범위 확인
 
-- [ ] Phase 3 범위에 맞는 변경입니다.
-- [ ] 실제 악성 샘플, secrets, 민감 데이터가 포함되지 않았습니다.
-- [ ] Local LLM 서버가 없어도 mock 경로가 동작합니다.
+- [ ] 선택한 Linear 이슈와 현재 Phase 범위 안의 변경입니다.
+- [ ] 실제 악성코드, secret, private CTI, 민감 데이터가 없습니다.
+- [ ] Local LLM 서버 없이 Mock 경로가 동작합니다.
+- [ ] 관련 없는 파일을 포맷하거나 수정하지 않았습니다.
 
-## Notes
+## 참고
 
-리뷰어가 알아야 할 제한사항이나 후속 작업을 작성합니다.
+제외한 작업, 제한사항, 실행하지 않은 환경 의존 검증, 후속 Linear 이슈를
+기록합니다.
+
+상세 PR 본문 형식은 `docs/PR_DESCRIPTION.md`를 사용합니다.
