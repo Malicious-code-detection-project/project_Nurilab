@@ -50,6 +50,7 @@
 | [`../AGENTS.md`](../AGENTS.md) | 사람과 코딩 에이전트가 따르는 저장소 규칙 |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Linear 이슈, 브랜치, 검증, PR, 완료 처리 절차 |
 | [`PR_DESCRIPTION.md`](PR_DESCRIPTION.md) | 상세 PR 본문 작성 template |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | 현재 시스템 구조, 데이터 흐름, 실패 경계와 확장 지점 |
 | [`PLAN.md`](PLAN.md) | 현재 Phase 순서, 목표, 종료 조건을 정의하는 개발 로드맵 |
 | [`../.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md) | GitHub 기본 PR form |
 | [`../.github/ISSUE_TEMPLATE/task.md`](../.github/ISSUE_TEMPLATE/task.md) | Owner가 요청한 경우에만 사용하는 legacy GitHub Issue form |

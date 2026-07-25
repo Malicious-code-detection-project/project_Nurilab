@@ -121,6 +121,10 @@ project-nurilab analyze <path> [options]
 
 ## 아키텍처
 
+아래는 현재 모듈 구조의 요약입니다. 실행 단계, 데이터 계약, 단일 파일과 프로젝트
+분기, 실패 처리와 향후 확장 지점은
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)에서 설명합니다.
+
 ```text
 project_nurilab/
 ├── input/
