@@ -2,7 +2,7 @@
 
 이 문서는 Project NuriLab 저장소에서 코드를 작성하는 모든 주체가 따르는 협업 운영 규칙이다. 사람, Claude Code, 웹 Claude+GitHub, Cursor, 기타 코딩 에이전트는 이 문서를 기준으로 작업한다.
 
-작업 상태는 Linear Issue, 코드 리뷰와 병합은 GitHub Pull Request를 중심으로 진행한다. 작업자는 Linear의 `The Debugging Water Deer` 팀, `Nurilab` 프로젝트에서 이슈를 선택한다. Phase 3 범위, 의존성 순서, 브랜치/커밋/PR 네이밍 규칙은 반드시 지킨다.
+작업 상태는 Linear Issue, 코드 리뷰와 병합은 GitHub Pull Request를 중심으로 진행한다. 작업자는 Linear의 `The Debugging Water Deer` 팀, `Nurilab` 프로젝트에서 이슈를 선택한다. 현재 Phase 범위, 의존성 순서, 브랜치/커밋/PR 네이밍 규칙은 반드시 지킨다.
 
 PR 리뷰와 최종 병합 판단은 Repository Owner가 담당한다.
 
@@ -43,24 +43,28 @@ git status
 
 이 프로젝트는 로컬 환경에서 동작하는 LLM 기반 악성코드/의심 파일 분석 자동화 시스템이다.
 
-현재 구현된 Phase 3 안정화 범위는 다음과 같다. 새로운 작업 우선순위와 진행
-상태는 Linear `Nurilab` 프로젝트를 기준으로 확인한다.
+현재는 Phase 3 종료 검증 단계다. 새로운 작업 우선순위와 진행 상태는 Linear
+`Nurilab` 프로젝트를 기준으로 확인한다.
 
-- Local LLM 리뷰 품질 개선
-- 외부 실제 Python 프로젝트 대상 분석 안정성 검증
-- 파일 길이 제한 제거에 따른 대용량 소스 분석 흐름 정리
-- 프로젝트 단위 결과 집계 및 보고서 가독성 개선
-- 실제 운영 환경 기준의 Local LLM 연동 안정성 개선
+- 기본 Local LLM과 strict JSON review 계약 확정
+- 실제 vLLM 선택형 통합 테스트
+- 외부 실제 Python 프로젝트 최신 `main` 재검증
+- 문서, 테스트, Linear 상태의 종료 기준선 확정
 
-현재 Phase 3 범위를 넘는 항목은 즉시 구현하지 않고 README의
-`Phase 경계`에서 별도 범위로 관리한다.
+후속 개발은 의존성 순서를 바꾸지 않는다.
 
-- 파인튜닝
-- remediation snippet
-- 파일 전체 patched code 생성
-- Python 외 언어 지원
-- 멀티모달 입력
-- 실제 악성 샘플 실행 또는 동적 분석
+```text
+Phase 3 종료 검증
+-> Phase 4 분석 신뢰성
+-> Phase 5 운영 제품화
+-> Phase 6 AegisLM 연동
+-> Phase 7 오프라인 우선 RAG
+```
+
+파인튜닝 실행과 model artifact 생성은 별도 AegisLM 프로젝트의 책임이다.
+Project NuriLab에는 model weight, adapter, dataset, checkpoint를 저장하지 않는다.
+Python 외 언어, 멀티모달, 실제 악성 샘플 실행, 동적 분석, remediation 생성은
+번호가 지정된 Phase가 아니라 연구 백로그로 관리한다.
 
 ---
 
@@ -86,7 +90,7 @@ Linear Issue 생성 또는 선택
 
 - [ ] Linear Issue에서 작업 목적과 완료 조건이 분명한가?
 - [ ] 같은 작업을 다른 사람이 진행 중이지 않은가?
-- [ ] Phase 3 범위에 맞는가?
+- [ ] 현재 Phase와 선택한 상위 이슈 범위에 맞는가?
 - [ ] 스키마, CLI, 보고서 출력에 영향이 있는가?
 - [ ] 영향이 있다면 테스트와 문서 갱신 계획이 있는가?
 
@@ -105,12 +109,12 @@ Linear Issue 생성 또는 선택
 
 | 대상 | 형식 | 예시 |
 | --- | --- | --- |
-| 브랜치 | `<type>/phase3-<topic>` | `feat/phase3-local-llm-quality` |
-| 버그 브랜치 | `fix/<topic>` | `fix/local-llm-json-parser` |
-| 문서 브랜치 | `docs/<topic>` | `docs/team-collaboration-rules` |
+| 브랜치 | `<type>/phase<번호>-<topic>` | `feat/phase4-import-alias` |
+| 버그 브랜치 | `fix/phase<번호>-<topic>` | `fix/phase3-local-llm-json` |
+| 문서 브랜치 | `docs/phase<번호>-<topic>` | `docs/phase3-roadmap` |
 | 실험 브랜치 | `experiment/<topic>` | `experiment/gpt-oss-review` |
 | 커밋 | `<type>: <요약>` | `feat: local llm 리뷰 prompt 개선` |
-| PR 제목 | `[Phase 3] <요약>` | `[Phase 3] Local LLM 리뷰 품질 개선` |
+| PR 제목 | `[Phase <번호>] <요약>` | `[Phase 4] Python import alias 해석` |
 
 `<type>`은 다음 중 하나를 사용한다.
 
@@ -146,8 +150,9 @@ Linear Issue 생성 또는 선택
 - Local LLM 서버를 앱 내부에서 자동 실행하지 않는다.
 - Ruff를 핵심 파이프라인의 필수 조건으로 만들지 않는다.
 - LLM 응답을 최종 판단 기준으로 삼지 않는다.
-- `Phase 경계` 밖의 항목을 논의 없이 Phase 3 구현에 섞지 않는다.
-- 지정된 타겟 파일 외의 다른 파일을 임의로 변경하지 않는다. (예: `ruff format .`이나 `ruff check --fix .` 처럼 프로젝트 전체에 걸쳐 자동 정렬/수정 명령을 실행하여 무관한 파일들의 스타일을 일괄 변경하는 행위를 금지하며, 일괄 적용된 경우 반드시 타겟 외 파일들은 되돌려서(Revert) 배제해야 한다.)
+- 선택한 Phase와 상위 Linear 이슈 밖의 항목을 논의 없이 구현에 섞지 않는다.
+- 지정된 대상 파일 외의 파일을 임의로 변경하거나 프로젝트 전체에
+  `ruff format` 또는 `ruff check --fix`를 적용하지 않는다.
 
 **판단 기준**
 
@@ -208,7 +213,7 @@ PR 생성 전:
 
 - [ ] 최신 `main` 기준 브랜치에서 작업했는가?
 - [ ] 브랜치명이 네이밍 표준을 따르는가?
-- [ ] PR 제목이 `[Phase 3] <요약>` 형식을 따르는가?
+- [ ] PR 제목이 `[Phase <번호>] <요약>` 형식을 따르는가?
 - [ ] `uv run pytest` 통과
 - [ ] `uv run ruff check .` 통과
 - [ ] `uv run ruff format --check .` 통과
@@ -248,6 +253,7 @@ PR 본문에는 다음을 포함한다.
 - GitHub Actions 기반 CI 추가 검토
 - CODEOWNERS 도입 여부 검토
 - branch protection 설정 검토
-- Phase 3 완료 상태와 다음 Phase 이슈 목록 정리
-- 외부 실제 Python 프로젝트 테스트셋 선정
-- README의 `Phase 경계` 항목 주기적 정리
+- Phase 3 실제 vLLM 및 외부 프로젝트 종료 검증
+- Phase 4 내장 analyzer 정확도 개선
+- Phase 5 CI, CODEOWNERS, branch protection 적용
+- README와 `docs/PLAN.md`의 Phase 상태 주기적 정리
