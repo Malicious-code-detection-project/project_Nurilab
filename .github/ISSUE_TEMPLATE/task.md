@@ -1,36 +1,36 @@
 ---
-name: Legacy GitHub Task
-about: Use only when the Repository Owner explicitly requests a GitHub Issue.
+name: Legacy GitHub 작업
+about: Repository Owner가 GitHub Issue 사용을 명시적으로 요청한 경우에만 사용합니다.
 title: "[Task] "
 labels: task
 ---
 
-> Project NuriLab tracks active work in Linear team `The Debugging Water Deer`,
-> project `Nurilab`. Create and update the Linear issue first. This template is
-> retained only for exceptional GitHub-native tracking requested by the Owner.
+> Project NuriLab의 실제 작업은 Linear 팀 `The Debugging Water Deer`, 프로젝트
+> `Nurilab`에서 관리합니다. Linear 이슈를 먼저 생성하고 갱신합니다. 이 template은
+> Owner가 GitHub 자체 추적을 요청하는 예외 상황을 위해서만 유지합니다.
 
 ## Linear
 
 - Issue: THE-XX
 - Status:
 
-## Goal
+## 목표
 
-## Background
+## 배경
 
-## Scope
+## 범위
 
-## Out of Scope
+## 제외 범위
 
-## Target Files
+## 대상 파일
 
-## Acceptance Criteria
+## 완료 조건
 
 -
 -
 -
 
-## Validation
+## 검증
 
 - [ ] `uv run pytest`
 - [ ] `uv run ruff check .`

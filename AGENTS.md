@@ -1,4 +1,4 @@
-# AGENTS.md - Project NuriLab Collaboration Manual
+# AGENTS.md - Project NuriLab 협업 운영 매뉴얼
 
 이 문서는 Project NuriLab 저장소에서 코드를 작성하는 모든 주체가 따르는 협업 운영 규칙이다. 사람, Claude Code, 웹 Claude+GitHub, Cursor, 기타 코딩 에이전트는 이 문서를 기준으로 작업한다.
 
@@ -13,7 +13,7 @@ PR 리뷰와 최종 병합 판단은 Repository Owner가 담당한다.
 | 알고 싶은 것 | 정본 위치 |
 | --- | --- |
 | 프로젝트 소개, 현재 Phase, 실행 방법 | `README.md` |
-| 전체 문서 지도와 문서별 상태 | `docs/README.md` |
+| 전체 문서 지도, 문서별 상태, 언어 정책 | `docs/README.md` |
 | 팀 기여 절차, 브랜치, 커밋, 테스트 규칙 | `docs/CONTRIBUTING.md` |
 | 에이전트/개발자 공통 운영 규칙 | `AGENTS.md` |
 | 실제 작업 상태와 담당자 | Linear `The Debugging Water Deer` / `Nurilab` |
@@ -53,7 +53,7 @@ git status
 - 실제 운영 환경 기준의 Local LLM 연동 안정성 개선
 
 현재 Phase 3 범위를 넘는 항목은 즉시 구현하지 않고 README의
-`Phase Boundary`에서 별도 범위로 관리한다.
+`Phase 경계`에서 별도 범위로 관리한다.
 
 - 파인튜닝
 - remediation snippet
@@ -109,8 +109,8 @@ Linear Issue 생성 또는 선택
 | 버그 브랜치 | `fix/<topic>` | `fix/local-llm-json-parser` |
 | 문서 브랜치 | `docs/<topic>` | `docs/team-collaboration-rules` |
 | 실험 브랜치 | `experiment/<topic>` | `experiment/gpt-oss-review` |
-| 커밋 | `<type>: <요약>` | `feat: improve local llm review prompt` |
-| PR 제목 | `[Phase 3] <요약>` | `[Phase 3] Improve local LLM review quality` |
+| 커밋 | `<type>: <요약>` | `feat: local llm 리뷰 prompt 개선` |
+| PR 제목 | `[Phase 3] <요약>` | `[Phase 3] Local LLM 리뷰 품질 개선` |
 
 `<type>`은 다음 중 하나를 사용한다.
 
@@ -128,7 +128,7 @@ Linear Issue 생성 또는 선택
 
 ## 5. 개발 가드레일
 
-**Must Do**
+**필수**
 
 - 작은 단위로 변경한다.
 - 핵심 로직은 `project_nurilab/` 내부 모듈에 둔다.
@@ -136,15 +136,17 @@ Linear Issue 생성 또는 선택
 - public 함수와 주요 데이터 모델에는 타입 힌트를 유지한다.
 - 기능 변경에는 테스트를 추가하거나 기존 테스트를 갱신한다.
 - 사용자 실행 흐름이나 출력이 바뀌면 README 또는 관련 문서를 갱신한다.
+- 현재 운영 문서는 한국어를 정본으로 작성하고, 영문 병행본이 필요한 경우
+  `docs/README.md`의 언어 정책에 따라 같은 PR에서 함께 갱신한다.
 
-**Must Not**
+**금지**
 
 - 실제 악성 샘플, secrets, 민감 데이터를 커밋하지 않는다.
 - `main`에 직접 push하지 않는다.
 - Local LLM 서버를 앱 내부에서 자동 실행하지 않는다.
 - Ruff를 핵심 파이프라인의 필수 조건으로 만들지 않는다.
 - LLM 응답을 최종 판단 기준으로 삼지 않는다.
-- `Phase Boundary` 밖의 항목을 논의 없이 Phase 3 구현에 섞지 않는다.
+- `Phase 경계` 밖의 항목을 논의 없이 Phase 3 구현에 섞지 않는다.
 - 지정된 타겟 파일 외의 다른 파일을 임의로 변경하지 않는다. (예: `ruff format .`이나 `ruff check --fix .` 처럼 프로젝트 전체에 걸쳐 자동 정렬/수정 명령을 실행하여 무관한 파일들의 스타일을 일괄 변경하는 행위를 금지하며, 일괄 적용된 경우 반드시 타겟 외 파일들은 되돌려서(Revert) 배제해야 한다.)
 
 **판단 기준**
@@ -248,4 +250,4 @@ PR 본문에는 다음을 포함한다.
 - branch protection 설정 검토
 - Phase 3 완료 상태와 다음 Phase 이슈 목록 정리
 - 외부 실제 Python 프로젝트 테스트셋 선정
-- README의 `Phase Boundary` 항목 주기적 정리
+- README의 `Phase 경계` 항목 주기적 정리

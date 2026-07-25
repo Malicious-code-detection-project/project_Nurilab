@@ -1,98 +1,96 @@
 # Project NuriLab
 
-Local-first Python static analysis and LLM-assisted security review.
+로컬 환경에서 동작하는 Python 정적 분석 및 LLM 보조 보안 리뷰 도구입니다.
 
-Project NuriLab accepts one Python file or a Python project directory, extracts
-deterministic static signals, optionally asks a locally served LLM to interpret
-those signals, and writes HTML and JSON reports.
+Project NuriLab은 단일 Python 파일 또는 Python 프로젝트 디렉터리를 입력받아
+재현 가능한 정적 분석 신호를 추출하고, 선택적으로 로컬에서 서빙되는 LLM이 해당
+신호를 해석하도록 요청한 뒤 HTML과 JSON 보고서를 생성합니다.
 
-The project is currently in **Phase 3 stabilization**. Phase 3 implementation
-work covers Local LLM review quality, real-project input stability, large source
-files, project-level aggregation, report readability, and Local LLM failure
-handling. Live work status is tracked in the Linear project `Nurilab`.
+현재 프로젝트는 **Phase 3 안정화 단계**입니다. Phase 3 구현 범위에는 Local LLM
+리뷰 품질, 실제 프로젝트 입력 안정성, 대용량 소스 파일, 프로젝트 단위 집계,
+보고서 가독성, Local LLM 실패 처리가 포함됩니다. 실제 작업 상태는 Linear의
+`Nurilab` 프로젝트에서 관리합니다.
 
-## What It Does
+## 동작 개요
 
 ```text
-Python file or project directory
--> input collection and UTF-8 loading
--> AST, suspicious-call, secret, and optional Ruff analysis
--> deterministic Mock review or optional Local LLM review
--> project aggregation
--> HTML and JSON reports
+Python 파일 또는 프로젝트 디렉터리
+-> 입력 수집 및 UTF-8 로딩
+-> AST, 위험 호출, secret, 선택적 Ruff 분석
+-> deterministic Mock 리뷰 또는 선택적 Local LLM 리뷰
+-> 프로젝트 단위 집계
+-> HTML 및 JSON 보고서
 ```
 
-Current capabilities:
+현재 지원 기능:
 
-- Analyze one `.py` file or recursively collect `.py` files from a directory.
-- Exclude `.git`, `.venv`, caches, build output, and report directories.
-- Analyze Python files without a line-count limit.
-- Extract imports, functions, classes, syntax errors, suspicious calls, and
-  potential hard-coded secrets.
-- Collect Ruff findings when Ruff integration is enabled.
-- Produce deterministic offline reviews with `MockReviewClient`.
-- Call a running vLLM OpenAI-compatible API with `LocalLLMReviewClient`.
-- Preserve static analysis and report generation when Local LLM requests fail.
-- Write HTML and JSON by default, with optional Markdown output.
+- 단일 `.py` 파일 또는 디렉터리 내부 `.py` 파일 재귀 분석
+- `.git`, `.venv`, cache, build 결과, report 디렉터리 제외
+- 파일 줄 수 제한 없는 Python 소스 분석
+- import, function, class, syntax error, 위험 호출, hard-coded secret 후보 추출
+- Ruff 연동이 활성화된 경우 Ruff finding 수집
+- `MockReviewClient`를 이용한 재현 가능한 오프라인 리뷰
+- `LocalLLMReviewClient`를 이용한 vLLM OpenAI-compatible API 호출
+- Local LLM 요청 실패 시에도 정적 분석 결과와 보고서 보존
+- HTML과 JSON 기본 출력 및 선택적 Markdown 출력
 
-Project NuriLab does not currently:
+현재 지원하지 않는 기능:
 
-- determine conclusively whether code is malware;
-- execute submitted code or real malware samples;
-- perform dynamic analysis;
-- support languages other than Python;
-- start or manage an LLM server;
-- generate patched source files or remediation snippets;
-- run fine-tuning jobs in this repository.
+- 코드가 악성인지 여부에 대한 확정 판단
+- 입력 코드 또는 실제 악성 샘플 실행
+- 동적 분석
+- Python 이외 언어
+- LLM 서버 시작 및 관리
+- 수정된 전체 코드 또는 remediation snippet 생성
+- 이 저장소 내부에서의 파인튜닝 실행
 
-## Requirements
+## 요구 환경
 
 - Python 3.12
 - [uv](https://docs.astral.sh/uv/)
 
-The repository pins the project interpreter through `.python-version`. Use
-`uv run python`, not the operating system's unqualified `python3`, because the
-system interpreter may be a different version.
+저장소는 `.python-version`으로 프로젝트 Python 버전을 지정합니다. 운영체제의
+`python3`는 다른 버전일 수 있으므로 `uv run python`을 사용합니다.
 
-Set up the environment from the lock file:
+lock 파일 기준으로 환경을 구성합니다.
 
 ```bash
 uv sync --locked
 ```
 
-## Quick Start
+## 빠른 시작
 
-Analyze one file:
+단일 파일 분석:
 
 ```bash
 uv run python main.py analyze tests/fixtures/vulnerable_sample.py
 ```
 
-Analyze a project directory:
+프로젝트 디렉터리 분석:
 
 ```bash
 uv run python main.py analyze tests
 ```
 
-Disable Ruff collection:
+Ruff 수집 비활성화:
 
 ```bash
 uv run python main.py analyze tests --no-ruff
 ```
 
-Request Markdown in addition to HTML and JSON:
+HTML과 JSON에 Markdown까지 추가:
 
 ```bash
 uv run python main.py analyze tests --format html json md
 ```
 
-Choose an output directory:
+출력 디렉터리 지정:
 
 ```bash
 uv run python main.py analyze tests --out /tmp/nurilab-reports
 ```
 
-Default output:
+기본 출력:
 
 ```text
 reports/
@@ -100,138 +98,135 @@ reports/
 └── <target>.analysis.json
 ```
 
-The `reports/` directory is a local artifact directory and must not be
-committed.
+`reports/`는 로컬 산출물 디렉터리이며 저장소에 커밋하지 않습니다.
 
-## CLI Contract
+## CLI 계약
 
 ```text
 project-nurilab analyze <path> [options]
 ```
 
-| Option | Behavior |
+| 옵션 | 동작 |
 | --- | --- |
-| `<path>` | A `.py` file or project directory |
-| `--out <dir>` | Report output directory; default `reports` |
-| `--format <formats...>` | Any of `html`, `json`, `md`; default `html json` |
-| `--review-client mock\|local` | Review backend; default `mock` |
-| `--no-ruff` | Disable Ruff JSON collection |
-| `--max-lines <n>` | Deprecated no-op retained for CLI compatibility |
+| `<path>` | `.py` 파일 또는 프로젝트 디렉터리 |
+| `--out <dir>` | 보고서 출력 디렉터리, 기본값 `reports` |
+| `--format <formats...>` | `html`, `json`, `md` 조합, 기본값 `html json` |
+| `--review-client mock\|local` | 리뷰 backend, 기본값 `mock` |
+| `--no-ruff` | Ruff JSON finding 수집 비활성화 |
+| `--max-lines <n>` | CLI 호환성을 위해 남겨 둔 deprecated no-op |
 
-An invalid path raises an input error. A non-Python file is represented as a
-skipped input. Python files that cannot be decoded as UTF-8 or read from disk
-are preserved as skipped analysis results instead of terminating project
-analysis.
+존재하지 않는 경로는 입력 오류를 발생시킵니다. 단일 non-Python 파일은 skipped
+입력으로 표현됩니다. UTF-8로 decode할 수 없거나 디스크에서 읽을 수 없는 Python
+파일은 프로젝트 분석 전체를 중단하지 않고 skipped 분석 결과로 보존됩니다.
 
-## Architecture
+## 아키텍처
 
 ```text
 project_nurilab/
 ├── input/
-│   ├── collector.py        # file/directory collection and exclusions
-│   └── manager.py          # UTF-8 Python file loading
+│   ├── collector.py        # 파일/디렉터리 수집 및 제외 경로 처리
+│   └── manager.py          # UTF-8 Python 파일 로딩
 ├── analyzers/
-│   ├── python_static.py    # AST signal extraction
-│   ├── patterns.py         # suspicious call rules
-│   ├── secrets.py          # potential hard-coded secret checks
-│   └── tools.py            # Ruff JSON integration
+│   ├── python_static.py    # AST 신호 추출
+│   ├── patterns.py         # 위험 호출 rule
+│   ├── secrets.py          # hard-coded secret 후보 탐지
+│   └── tools.py            # Ruff JSON 연동
 ├── aggregation/
 │   └── result_aggregator.py
 ├── llm/
-│   └── review.py           # Mock and Local LLM review clients
+│   └── review.py           # Mock 및 Local LLM review client
 ├── reports/
-│   └── generator.py        # HTML, JSON, and Markdown rendering
-├── schemas.py              # shared data contracts
-├── pipeline.py             # orchestration
+│   └── generator.py        # HTML, JSON, Markdown 렌더링
+├── schemas.py              # 공통 데이터 계약
+├── pipeline.py             # 전체 흐름 조정
 ├── cli.py
 └── config.py
 ```
 
-The deterministic analyzers are the evidence source. Review clients convert
-that evidence into summaries, priorities, and recommendations. LLM output does
-not override or remove deterministic analysis results.
+Deterministic analyzer가 판단 근거가 되는 신호를 생성합니다. Review client는 해당
+신호를 사람이 읽을 수 있는 요약, 우선순위, 권고안으로 변환합니다. LLM 출력은
+정적 분석 결과를 덮어쓰거나 제거하지 않습니다.
 
-## Analysis And Review Contracts
+## 분석 및 리뷰 계약
 
-Single-file analysis is serialized as `PythonAnalysis`:
+단일 파일 분석은 `PythonAnalysis`로 직렬화합니다.
 
 ```text
 path, line_count, language, skipped, skip_reason, syntax_error,
 imports, functions, classes, suspicious_calls, secrets, ruff_findings
 ```
 
-Project analysis is serialized as `ProjectAnalysis`:
+프로젝트 분석은 `ProjectAnalysis`로 직렬화합니다.
 
 ```text
 root_path, file_results, ruff_findings, summary
 ```
 
-The project summary contains:
+프로젝트 summary:
 
 ```text
 total_files, analyzed_files, skipped_files, severity_counts,
 risk_level, file_summaries
 ```
 
-Review output is serialized as `ReviewResult`:
+리뷰 출력은 `ReviewResult`로 직렬화합니다.
 
 ```text
 summary, risk_level, findings
 ```
 
-Each review finding contains:
+각 review finding:
 
 ```text
 title, severity, file, line, column, source, rule_id,
 reason, recommendation
 ```
 
-Static analysis models can represent `info`, `low`, `medium`, `high`,
-`critical`, and `unknown`. The current Local LLM prompt contract asks the model
-to return `low`, `medium`, or `high`; unsupported Local LLM finding severities
-are normalized to `unknown`.
+정적 분석 모델은 `info`, `low`, `medium`, `high`, `critical`, `unknown`을
+표현할 수 있습니다. 현재 Local LLM prompt 계약은 모델에 `low`, `medium`,
+`high` 중 하나를 반환하도록 요구합니다. 허용되지 않은 Local LLM finding
+severity는 `unknown`으로 정규화됩니다.
 
-`analysis.summary.risk_level` and `review.risk_level` have different
-responsibilities. The former summarizes deterministic project signals. The
-latter is the selected review client's result. If Local LLM review fails,
-`review.risk_level` becomes `unknown`, while the deterministic analysis remains
-available in the same report.
+`analysis.summary.risk_level`과 `review.risk_level`은 역할이 다릅니다. 전자는
+deterministic project signal의 최고 위험도를 요약하고, 후자는 선택한 review
+client의 결과를 나타냅니다. Local LLM 리뷰가 실패하면 `review.risk_level`은
+`unknown`이 되지만 같은 보고서의 deterministic analysis는 그대로 유지됩니다.
 
-JSON is the canonical machine-readable artifact. HTML is the default
-human-readable view. Markdown is optional.
+JSON은 canonical machine-readable artifact입니다. HTML은 기본 human-readable
+view이고 Markdown은 선택 출력입니다.
 
 ## Local LLM
 
-Mock review is the default and requires no LLM server:
+Mock 리뷰는 기본 경로이며 LLM 서버가 필요하지 않습니다.
 
 ```bash
 uv run python main.py analyze tests --review-client mock
 ```
 
-For Local LLM review, start vLLM separately. The application never starts,
-stops, downloads, or supervises the model server.
+Local LLM 리뷰를 사용하려면 vLLM을 별도 프로세스로 먼저 실행합니다. 분석
+애플리케이션은 모델 서버를 시작하거나 종료하거나 다운로드하거나 감시하지 않습니다.
 
-Server process:
+서버 프로세스:
 
 ```bash
 vllm serve Qwen/Qwen2.5-Coder-3B-Instruct
 ```
 
-Analysis process:
+분석 프로세스:
 
 ```bash
 uv run python main.py analyze tests --review-client local
 ```
 
-Configuration:
+연결 설정:
 
-| Environment variable | Default |
+| 환경변수 | 기본값 |
 | --- | --- |
 | `NURILAB_LLM_BASE_URL` | `http://localhost:8000/v1` |
 | `NURILAB_LLM_MODEL` | `Qwen/Qwen2.5-Coder-3B-Instruct` |
-| `NURILAB_LLM_TIMEOUT` | `120` seconds |
+| `NURILAB_LLM_TIMEOUT` | `120`초 |
 
-Example:
+예시:
 
 ```bash
 export NURILAB_LLM_BASE_URL=http://127.0.0.1:8000/v1
@@ -240,44 +235,40 @@ export NURILAB_LLM_TIMEOUT=120
 uv run python main.py analyze tests --review-client local
 ```
 
-Only normalized static analysis data is sent to the Local LLM. Original source
-text is not included in the current prompt payload.
+Local LLM에는 정규화된 정적 분석 데이터만 전달합니다. 현재 prompt payload에는
+원본 source text가 포함되지 않습니다.
 
-These Local LLM failures become `source="local_llm"` report findings instead
-of terminating the pipeline:
+다음 실패는 pipeline을 중단하지 않고 `source="local_llm"` report finding으로
+남습니다.
 
-- connection, URL, and unexpected API response access failures;
-- request timeouts;
-- HTTP errors;
-- review JSON parsing failures.
+- 연결, URL, 예상하지 못한 API response 접근 실패
+- request timeout
+- HTTP error
+- review JSON parsing failure
 
-The current automated suite verifies these paths with mocks. It does not prove
-that a specific GPU, model, vLLM version, or network deployment works. Record
-real-server validation separately with the exact model, server version,
-command, and result.
+현재 자동화 테스트는 mock으로 이 경로를 검증합니다. 특정 GPU, 모델, vLLM 버전,
+네트워크 배포가 실제로 동작한다는 의미는 아닙니다. 실제 서버 검증 결과에는 모델,
+서버 버전, 명령어, 환경, 결과를 함께 기록해야 합니다.
 
-## Static Analysis Limits
+## 정적 분석의 한계
 
-The current analyzer is intentionally conservative:
+현재 analyzer는 의도적으로 보수적인 초기 구현입니다.
 
-- Suspicious calls are exact AST call-name matches. Import aliases and
-  data-flow relationships are not resolved.
-- Secret detection is line-oriented pattern matching, not semantic analysis.
-- A suspicious call is a review signal, not proof of malicious intent.
-- Ruff is an optional supporting signal and is not the security decision
-  engine.
-- Large files are analyzed without a line limit, but no source chunking or RAG
-  path is implemented.
-- Local LLM input contains normalized signals, not full code context.
-- A syntactically valid non-object Local LLM JSON value currently normalizes to
-  an empty low-risk review instead of a schema-error finding.
+- 위험 호출은 정확한 AST call name으로 매칭합니다. import alias와 data flow는
+  해석하지 않습니다.
+- Secret 탐지는 semantic analysis가 아닌 line-oriented pattern matching입니다.
+- 위험 호출 발견은 검토 신호이며 악성 의도의 증거가 아닙니다.
+- Ruff는 선택적인 보조 신호이며 보안 판단 engine이 아닙니다.
+- 파일 줄 수 제한은 없지만 source chunking과 RAG는 구현하지 않았습니다.
+- Local LLM 입력에는 정규화된 신호만 포함되며 전체 코드 문맥은 포함되지 않습니다.
+- 문법적으로 유효한 non-object Local LLM JSON은 현재 schema error finding이
+  아니라 빈 low-risk review로 정규화됩니다.
 
-These limitations must be considered when interpreting risk levels and
-findings.
+Risk level과 finding을 해석할 때 이 한계를 함께 고려해야 합니다.
 
-## Validation
+## 검증
 
-Every pull request must pass:
+모든 Pull Request는 다음 명령을 통과해야 합니다.
 
 ```bash
 uv run pytest
@@ -286,70 +277,67 @@ uv run ruff format --check .
 uv run mypy .
 ```
 
-The test suite must remain runnable without a Local LLM server.
+테스트 suite는 Local LLM 서버 없이 실행할 수 있어야 합니다.
 
-## Work And Pull Request Workflow
+## 작업 및 Pull Request 흐름
 
-Work is tracked in Linear:
+작업은 Linear에서 관리합니다.
 
-1. Create or select an issue in team `The Debugging Water Deer`, project
-   `Nurilab`.
-2. Confirm scope, acceptance criteria, dependencies, and target files.
-3. Move the issue to `In Progress`.
-4. Create a branch from the latest `main`.
-5. Implement and run the four required validation commands.
-6. Open a GitHub pull request and move the Linear issue to `In Review`.
-7. The Repository Owner reviews and merges the pull request.
-8. After merge confirmation, move the Linear issue to `Done`.
+1. Linear 팀 `The Debugging Water Deer`, 프로젝트 `Nurilab`에서 이슈를
+   생성하거나 선택합니다.
+2. 작업 범위, 완료 조건, 의존성, 대상 파일을 확인합니다.
+3. 이슈를 `In Progress`로 변경합니다.
+4. 최신 `main`에서 작업 브랜치를 생성합니다.
+5. 구현 후 네 가지 필수 검증 명령을 실행합니다.
+6. GitHub Pull Request를 열고 Linear 이슈를 `In Review`로 변경합니다.
+7. Repository Owner가 PR을 검토하고 병합합니다.
+8. 병합을 확인한 뒤 Linear 이슈를 `Done`으로 변경합니다.
 
-Do not mark an issue `Done` merely because a branch was pushed or a pull
-request was opened.
+브랜치를 push하거나 PR을 열었다는 이유만으로 이슈를 `Done`으로 변경하지 않습니다.
 
-See [AGENTS.md](AGENTS.md) for repository rules and
-[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the complete contributor
-workflow.
+저장소 규칙은 [AGENTS.md](AGENTS.md), 전체 기여 절차는
+[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)를 확인합니다.
 
-## Documentation
+## 문서
 
-The documentation map and authority rules are maintained in
-[docs/README.md](docs/README.md).
+문서 지도, 정본 우선순위, 언어 정책은
+[docs/README.md](docs/README.md)에서 관리합니다.
 
-Primary documents:
+주요 문서:
 
-- [AGENTS.md](AGENTS.md): collaboration and agent behavior rules.
-- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md): contributor workflow.
+- [AGENTS.md](AGENTS.md): 협업 및 코딩 에이전트 행동 규칙
+- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md): 팀원 작업 절차
 - [docs/external_project_validation.md](docs/external_project_validation.md):
-  external-project validation procedure and historical results.
+  외부 프로젝트 검증 절차 및 과거 실행 결과
 - [docs/FINETUNING_EXPERIMENT_PLAN.md](docs/FINETUNING_EXPERIMENT_PLAN.md):
-  boundary and handoff notes for the separate fine-tuning project.
+  별도 파인튜닝 프로젝트로 전달할 범위와 계획
 
-## Phase Boundary
+## Phase 경계
 
-The following work is outside the current Phase 3 product scope and requires a
-separate Linear issue and explicit Owner approval:
+다음 작업은 현재 Phase 3 제품 범위 밖이며 별도 Linear 이슈와 Owner의 명시적
+승인이 필요합니다.
 
-- fine-tuning;
-- RAG-based security knowledge retrieval;
-- remediation snippets or full patched code;
-- non-Python languages;
-- multimodal input;
-- executable malware formats;
-- real malware execution or dynamic analysis.
+- 파인튜닝
+- RAG 기반 보안 지식 검색
+- remediation snippet 또는 전체 patched code
+- Python 이외 언어
+- 멀티모달 입력
+- 실행 파일 형태의 악성코드 분석
+- 실제 악성코드 실행 또는 동적 분석
 
-Fine-tuning code, datasets, adapters, checkpoints, and experiment logs belong
-in a separate project. This repository only keeps the integration boundary and
-high-level handoff plan.
+파인튜닝 코드, 데이터셋, adapter, checkpoint, 실험 로그는 별도 프로젝트에서
+관리합니다. 이 저장소에는 제품 연동 경계와 상위 수준의 전달 계획만 유지합니다.
 
-## Security
+## 보안
 
-Never commit:
+다음 항목은 커밋하지 않습니다.
 
-- real malware samples or executable payloads;
-- API keys, credentials, or private CTI;
-- private customer or internal source code without approval;
-- downloaded external projects;
-- generated reports;
-- raw datasets, model weights, adapters, or checkpoints.
+- 실제 악성코드 샘플 또는 실행 가능한 payload
+- API key, credential, private CTI
+- 승인받지 않은 고객 또는 내부 source code
+- 내려받은 외부 프로젝트
+- 생성된 report
+- raw dataset, model weight, adapter, checkpoint
 
-Real malware handling requires a separately approved isolated environment,
-storage policy, network policy, and access-control procedure.
+실제 악성코드를 다루려면 별도로 승인된 격리 환경, 저장 정책, 네트워크 정책,
+접근 권한 관리 절차가 선행되어야 합니다.
