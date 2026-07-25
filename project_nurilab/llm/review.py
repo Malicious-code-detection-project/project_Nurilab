@@ -37,6 +37,41 @@ SEVERITY_RANK = {
     "info": 1,
     "unknown": 0,
 }
+_REVIEW_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "summary": {"type": "string"},
+        "risk_level": {"type": "string", "enum": ["low", "medium", "high"]},
+        "findings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "title": {"type": "string"},
+                    "severity": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high"],
+                    },
+                    "file": {"type": ["string", "null"]},
+                    "line": {"type": ["integer", "null"]},
+                    "reason": {"type": "string"},
+                    "recommendation": {"type": "string"},
+                },
+                "required": [
+                    "title",
+                    "severity",
+                    "file",
+                    "line",
+                    "reason",
+                    "recommendation",
+                ],
+            },
+        },
+    },
+    "required": ["summary", "risk_level", "findings"],
+}
 
 
 class ReviewClient(Protocol):
@@ -151,12 +186,23 @@ class LocalLLMReviewClient:
                 json={
                     "model": self.model,
                     "temperature": self.temperature,
+                    "reasoning_effort": "low",
+                    "include_reasoning": False,
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "nurilab_security_review",
+                            "strict": True,
+                            "schema": _REVIEW_JSON_SCHEMA,
+                        },
+                    },
                     "messages": [
                         {
                             "role": "system",
                             "content": (
                                 "You are a senior secure code reviewer. "
-                                "Return only valid JSON."
+                                "Return only the final JSON object that matches "
+                                "the response schema."
                             ),
                         },
                         {"role": "user", "content": prompt},
@@ -656,13 +702,11 @@ def _build_llm_prompt(analysis: PythonAnalysis | ProjectAnalysis) -> str:
         For 'risk_level' and 'severity', strictly use only one of the following values: "low", "medium", or "high".
 
         IMPORTANT: You are a static signal interpreter, not a definitive malware judge.
-        Your role is to explain what the payload indicates objectively.
-        
-        Step-by-step Analysis (Chain of Thought):
-        1. Identify the static signals and their locations in the payload.
-        2. Analyze the specific context (e.g., function names, arguments) for each signal.
-        3. Synthesize how the context interacts with the static signal to explain the code's behavior objectively.
-        4. Formulate the final JSON. For the 'reason' field, output your synthesized explanation rather than just the static rule description.
+        Explain only what the payload indicates and do not infer source context that is
+        absent from the normalized signals. For each reason, identify the relevant signal
+        and location without presenting the signal as proof of malicious intent.
+        Return only the final JSON object. Do not add Markdown, surrounding prose, or a
+        reasoning trace.
 
         Example Response:
         {
