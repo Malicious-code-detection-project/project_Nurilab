@@ -1,5 +1,13 @@
 # GPT-OSS-20B Fine-Tuning Experiment Plan
 
+> **Separate-project handoff document**
+>
+> This is a planning snapshot, not the current Project NuriLab implementation
+> contract. Fine-tuning code, package pins, datasets, training runs, adapters,
+> checkpoints, and experiment results belong in a separate repository. Verify
+> model availability, package compatibility, licenses, and external service
+> terms again in that project before running an experiment.
+
 This document defines the Project NuriLab fine-tuning experiment direction and
 the boundary between the main product repository and the separate fine-tuning
 project.

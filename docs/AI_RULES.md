@@ -1,5 +1,11 @@
 # AI_RULES.md - AI Code Generation Guidelines
 
+> **Legacy guidance**
+>
+> `AGENTS.md` is the current repository-wide authority for both people and
+> coding agents. This file is retained for history and must not override
+> `AGENTS.md`.
+
 This document defines the core architecture, coding standards, and project structure rules that all AI agents (Gemini, Cursor, Copilot, etc.) MUST follow when generating or modifying code in this repository.
 
 ---

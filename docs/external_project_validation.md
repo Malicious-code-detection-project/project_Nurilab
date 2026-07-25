@@ -1,5 +1,14 @@
 # External Python Project Validation Workflow
 
+> **Status: procedure plus historical result**
+>
+> 실행 절차는 현재도 참고할 수 있지만, 아래 `pypa/packaging` 결과는
+> Project NuriLab commit `7c23d9c`에서 수집한 기록이다. 이 기록은 Python
+> 파일 라인 수 제한 제거 이전 결과이므로 현재 `main`의 안정성 증거로 사용하지
+> 않는다. 최신 결론이 필요하면 대상 commit, Project NuriLab commit, 실행 환경을
+> 다시 기록하고 전체 절차를 재실행한다. `click`과 `requests` 결과는 아직
+> 기록되지 않았다.
+
 이 문서는 Phase 3 안정성 검증에 사용할 외부 Python 프로젝트 후보와 로컬 분석 절차를 정리한다.
 
 외부 프로젝트 원본, dependency cache, HTML/JSON report artifact는 Project NuriLab 저장소에 커밋하지 않는다.
