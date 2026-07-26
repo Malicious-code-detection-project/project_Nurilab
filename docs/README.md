@@ -60,6 +60,7 @@
 | 문서 | 현재 상태 |
 | --- | --- |
 | [`external_project_validation.md`](external_project_validation.md) | 실행 절차와 과거 결과를 함께 보관합니다. 최신 `main`에서 재실행하기 전에는 현재 검증 근거로 사용하지 않습니다. |
+| [`LOCAL_LLM_INTEGRATION_TEST.md`](LOCAL_LLM_INTEGRATION_TEST.md) | 실제 vLLM 선택형 통합 테스트 절차와 환경·결과 기록입니다. |
 | [`SGLANG_VLLM_COMPARISON.md`](SGLANG_VLLM_COMPARISON.md) | 개념 비교 참고 자료이며 현재 benchmark나 dependency 계약이 아닙니다. |
 | [`FINETUNING_EXPERIMENT_PLAN.md`](FINETUNING_EXPERIMENT_PLAN.md) | 별도 파인튜닝 프로젝트로 전달할 한글 계획입니다. |
 | [`FINETUNING_EXPERIMENT_PLAN.en.md`](FINETUNING_EXPERIMENT_PLAN.en.md) | 별도 프로젝트 및 외부 도구 맥락을 위한 영문 병행본입니다. |

@@ -260,6 +260,11 @@ Local LLM request는 `reasoning_effort="low"`를 사용하고 reasoning text를
 네트워크 배포가 실제로 동작한다는 의미는 아닙니다. 실제 서버 검증 결과에는 모델,
 서버 버전, 명령어, 환경, 결과를 함께 기록해야 합니다.
 
+실제 vLLM server를 대상으로 하는 선택형 통합 테스트는
+[docs/LOCAL_LLM_INTEGRATION_TEST.md](docs/LOCAL_LLM_INTEGRATION_TEST.md)의 절차를
+사용합니다. `NURILAB_RUN_LOCAL_LLM=1`을 명시하지 않은 기본 pytest에서는 해당
+테스트를 skip합니다.
+
 ## 정적 분석의 한계
 
 현재 analyzer는 의도적으로 보수적인 초기 구현입니다.

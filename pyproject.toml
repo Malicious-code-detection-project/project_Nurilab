@@ -23,6 +23,9 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "local_llm_integration: requires an already-running local vLLM server and NURILAB_RUN_LOCAL_LLM=1",
+]
 
 [tool.mypy]
 exclude = ["^data/"]
