@@ -697,3 +697,56 @@ def test_pipeline_handles_local_llm_failure(monkeypatch, tmp_path: Path) -> None
     assert len(report.review.findings) == 1
     assert report.review.findings[0].source == "local_llm"
     assert report.review.findings[0].title == "Local LLM JSON parsing failed"
+
+
+def test_pipeline_preserves_analysis_for_non_object_local_llm_json(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from project_nurilab.llm.review import LocalLLMReviewClient
+    from project_nurilab.pipeline import Phase1Pipeline
+
+    class ResponseStub:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '[{"summary":"ok","risk_level":"low","findings":[]}]'
+                            )
+                        }
+                    }
+                ]
+            }
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: ResponseStub())
+
+    pipeline = Phase1Pipeline(
+        review_client=LocalLLMReviewClient(base_url="http://localhost:8000/v1"),
+        use_ruff=False,
+    )
+    report, output_paths = pipeline.run(
+        input_path=FIXTURES / "clean_sample.py",
+        output_dir=tmp_path,
+        formats=["html", "json"],
+    )
+
+    assert isinstance(report, AnalysisReport)
+    assert report.analysis.path == str((FIXTURES / "clean_sample.py").resolve())
+    assert report.analysis.line_count > 0
+    assert report.review.risk_level == "unknown"
+    assert report.review.findings[0].title == "Local LLM JSON parsing failed"
+    assert "top level must be an object, got array" in report.review.findings[0].reason
+    assert set(output_paths) == {"html", "json"}
+    persisted_report = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert persisted_report["analysis"]["path"] == report.analysis.path
+    assert persisted_report["analysis"]["line_count"] == report.analysis.line_count
+    assert persisted_report["review"]["risk_level"] == "unknown"
+    assert (
+        persisted_report["review"]["findings"][0]["title"]
+        == "Local LLM JSON parsing failed"
+    )

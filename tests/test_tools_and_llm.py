@@ -139,6 +139,7 @@ def test_local_llm_review_client_parses_fixture_based_review(monkeypatch) -> Non
                                         {
                                             "title": "Dynamic execution via eval",
                                             "severity": "high",
+                                            "file": None,
                                             "line": 2,
                                             "reason": (
                                                 "The static signal identifies eval "
@@ -255,10 +256,7 @@ def test_local_llm_review_client_parses_fenced_json_response(monkeypatch) -> Non
                             "content": (
                                 "```json\n"
                                 "{\n"
-                                '  "summary": {\n'
-                                '    "total_files": 2,\n'
-                                '    "risk_level": "high"\n'
-                                "  },\n"
+                                '  "summary": "Found a high-risk signal.",\n'
                                 '  "risk_level": "high",\n'
                                 '  "findings": [\n'
                                 "    {\n"
@@ -289,47 +287,121 @@ def test_local_llm_review_client_parses_fenced_json_response(monkeypatch) -> Non
 
     assert review.risk_level == "high"
     assert review.findings[0].title == "Dynamic Execution Risk"
-    assert '"total_files": 2' in review.summary
+    assert review.summary == "Found a high-risk signal."
 
 
-def test_local_llm_review_client_normalizes_severity_and_handles_missing_fields(
+@pytest.mark.parametrize(
+    ("content", "expected_error"),
+    [
+        (
+            '{"risk_level":"low","findings":[]}',
+            "review missing required field(s): summary",
+        ),
+        (
+            '{"summary":"ok","findings":[]}',
+            "review missing required field(s): risk_level",
+        ),
+        (
+            '{"summary":"ok","risk_level":"low"}',
+            "review missing required field(s): findings",
+        ),
+        (
+            '{"summary":"ok","risk_level":"low","findings":[],"extra":true}',
+            "review unexpected field(s): extra",
+        ),
+        (
+            '{"summary":{},"risk_level":"low","findings":[]}',
+            "review.summary must be a string",
+        ),
+        (
+            '{"summary":"ok","risk_level":"critical","findings":[]}',
+            "review.risk_level must be one of: low, medium, high",
+        ),
+        (
+            '{"summary":"ok","risk_level":"low","findings":{}}',
+            "review.findings must be an array",
+        ),
+        (
+            '{"summary":"ok","risk_level":"low","findings":["invalid"]}',
+            "review.findings[0] must be an object",
+        ),
+        (
+            (
+                '{"summary":"ok","risk_level":"high","findings":['
+                '{"title":"Finding","severity":"high","file":null,"line":1,'
+                '"reason":"reason"}]}'
+            ),
+            "review.findings[0] missing required field(s): recommendation",
+        ),
+        (
+            (
+                '{"summary":"ok","risk_level":"high","findings":['
+                '{"title":"Finding","severity":"high","file":null,"line":"1",'
+                '"reason":"reason","recommendation":"fix"}]}'
+            ),
+            "review.findings[0].line must be an integer or null",
+        ),
+        (
+            (
+                '{"summary":"ok","risk_level":"high","findings":['
+                '{"title":1,"severity":"high","file":null,"line":1,'
+                '"reason":"reason","recommendation":"fix"}]}'
+            ),
+            "review.findings[0].title must be a string",
+        ),
+        (
+            (
+                '{"summary":"ok","risk_level":"high","findings":['
+                '{"title":"Finding","severity":"critical","file":null,"line":1,'
+                '"reason":"reason","recommendation":"fix"}]}'
+            ),
+            "review.findings[0].severity must be one of: low, medium, high",
+        ),
+        (
+            (
+                '{"summary":"ok","risk_level":"high","findings":['
+                '{"title":"Finding","severity":"high","file":1,"line":1,'
+                '"reason":"reason","recommendation":"fix"}]}'
+            ),
+            "review.findings[0].file must be a string or null",
+        ),
+        (
+            (
+                '{"summary":"ok","risk_level":"high","findings":['
+                '{"title":"Finding","severity":"high","file":null,"line":1,'
+                '"reason":null,"recommendation":"fix"}]}'
+            ),
+            "review.findings[0].reason must be a string",
+        ),
+        (
+            (
+                '{"summary":"ok","risk_level":"high","findings":['
+                '{"title":"Finding","severity":"high","file":null,"line":1,'
+                '"reason":"reason","recommendation":null}]}'
+            ),
+            "review.findings[0].recommendation must be a string",
+        ),
+        (
+            (
+                '{"summary":"ok","risk_level":"high","findings":['
+                '{"title":"Finding","severity":"high","file":null,"line":1,'
+                '"reason":"reason","recommendation":"fix","extra":true}]}'
+            ),
+            "review.findings[0] unexpected field(s): extra",
+        ),
+    ],
+)
+def test_local_llm_review_client_rejects_schema_violations(
     monkeypatch,
+    content: str,
+    expected_error: str,
 ) -> None:
     class ResponseStub:
         def raise_for_status(self) -> None:
             return None
 
         def json(self) -> dict[str, Any]:
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": (
-                                "{\n"
-                                '  "summary": "Summary of analysis",\n'
-                                '  "risk_level": "INVALID_RISK",\n'
-                                '  "findings": [\n'
-                                "    {\n"
-                                '      "title": "Finding 1",\n'
-                                '      "severity": "CRITICAL",\n'
-                                '      "line": "15",\n'
-                                '      "reason": "Reason 1"\n'
-                                "    },\n"
-                                "    {\n"
-                                '      "title": "",\n'
-                                '      "severity": "invalid-severity-value",\n'
-                                '      "line": "not-an-int",\n'
-                                '      "reason": null,\n'
-                                '      "recommendation": "Rec 2"\n'
-                                "    },\n"
-                                '    "not-a-dict-finding"\n'
-                                "  ]\n"
-                                "}"
-                            )
-                        }
-                    }
-                ]
-            }
+            return {"choices": [{"message": {"content": content}}]}
 
     def fake_post(*args: Any, **kwargs: Any) -> ResponseStub:
         return ResponseStub()
@@ -340,48 +412,38 @@ def test_local_llm_review_client_normalizes_severity_and_handles_missing_fields(
         PythonAnalysis(path="sample.py", line_count=10)
     )
 
-    # Findings that are not dicts (like "not-a-dict-finding") should be ignored.
-    assert len(review.findings) == 2
-
-    # Finding 1 assertions
-    f1 = review.findings[0]
-    assert f1.title == "Finding 1"
-    assert f1.severity == "critical"  # CRITICAL normalized to critical
-    assert f1.line == 15  # "15" string parsed as 15 int
-    assert f1.reason == "Reason 1"
-    assert f1.recommendation == ""  # Missing recommendation defaults to empty string
-
-    # Finding 2 assertions
-    f2 = review.findings[1]
-    assert f2.title == "LLM finding"  # Empty title defaults to LLM finding
-    assert f2.severity == "unknown"  # Invalid severity normalized to unknown
-    assert f2.line is None  # Invalid line string fallback to None
-    assert f2.reason == ""  # Null reason defaults to empty string
-    assert f2.recommendation == "Rec 2"
-
-    # Risk level fallback
-    # Since "INVALID_RISK" is not low, medium, or high, it should derive from findings
-    # findings has "critical" severity, so risk_level should derive to "high"
-    assert review.risk_level == "high"
+    assert review.risk_level == "unknown"
+    assert len(review.findings) == 1
+    finding = review.findings[0]
+    assert finding.title == "Local LLM JSON parsing failed"
+    assert finding.source == "local_llm"
+    assert expected_error in finding.reason
 
 
-def test_local_llm_review_client_handles_non_dict_payload(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("content", "json_type"),
+    [
+        ("[]", "array"),
+        (
+            '[{"summary":"ok","risk_level":"low","findings":[]}]',
+            "array",
+        ),
+        ('"not a review object"', "string"),
+        ("42", "number"),
+        ("null", "null"),
+    ],
+)
+def test_local_llm_review_client_rejects_non_object_json(
+    monkeypatch,
+    content: str,
+    json_type: str,
+) -> None:
     class ResponseStub:
         def raise_for_status(self) -> None:
             return None
 
         def json(self) -> dict[str, Any]:
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": (
-                                '[{"some_key": "some_val"}]'  # JSON list instead of JSON dict
-                            )
-                        }
-                    }
-                ]
-            }
+            return {"choices": [{"message": {"content": content}}]}
 
     def fake_post(*args: Any, **kwargs: Any) -> ResponseStub:
         return ResponseStub()
@@ -392,10 +454,12 @@ def test_local_llm_review_client_handles_non_dict_payload(monkeypatch) -> None:
         PythonAnalysis(path="sample.py", line_count=10)
     )
 
-    # Should not crash and should return safe defaults
-    assert review.summary == ""
-    assert review.risk_level == "low"
-    assert len(review.findings) == 0
+    assert review.risk_level == "unknown"
+    assert len(review.findings) == 1
+    finding = review.findings[0]
+    assert finding.title == "Local LLM JSON parsing failed"
+    assert finding.source == "local_llm"
+    assert f"top level must be an object, got {json_type}" in finding.reason
 
 
 def test_extract_json_payload() -> None:
