@@ -37,12 +37,22 @@ SEVERITY_RANK = {
     "info": 1,
     "unknown": 0,
 }
+_REVIEW_RISK_LEVELS = ("low", "medium", "high")
+_REVIEW_REQUIRED_FIELDS = ("summary", "risk_level", "findings")
+_REVIEW_FINDING_REQUIRED_FIELDS = (
+    "title",
+    "severity",
+    "file",
+    "line",
+    "reason",
+    "recommendation",
+)
 _REVIEW_JSON_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
         "summary": {"type": "string"},
-        "risk_level": {"type": "string", "enum": ["low", "medium", "high"]},
+        "risk_level": {"type": "string", "enum": list(_REVIEW_RISK_LEVELS)},
         "findings": {
             "type": "array",
             "items": {
@@ -52,25 +62,18 @@ _REVIEW_JSON_SCHEMA: dict[str, Any] = {
                     "title": {"type": "string"},
                     "severity": {
                         "type": "string",
-                        "enum": ["low", "medium", "high"],
+                        "enum": list(_REVIEW_RISK_LEVELS),
                     },
                     "file": {"type": ["string", "null"]},
                     "line": {"type": ["integer", "null"]},
                     "reason": {"type": "string"},
                     "recommendation": {"type": "string"},
                 },
-                "required": [
-                    "title",
-                    "severity",
-                    "file",
-                    "line",
-                    "reason",
-                    "recommendation",
-                ],
+                "required": list(_REVIEW_FINDING_REQUIRED_FIELDS),
             },
         },
     },
-    "required": ["summary", "risk_level", "findings"],
+    "required": list(_REVIEW_REQUIRED_FIELDS),
 }
 
 
@@ -740,76 +743,154 @@ def _parse_llm_review(content: str) -> ReviewResult:
             f"Raw response preview: {repr(preview)}"
         ) from exc
 
-    if not isinstance(payload, dict):
-        payload = {}
-
-    summary_value = payload.get("summary")
-    if summary_value is None:
-        summary = ""
-    elif isinstance(summary_value, str):
-        summary = summary_value
-    else:
-        summary = json.dumps(summary_value, ensure_ascii=False)
-
-    findings_raw = payload.get("findings")
-    if not isinstance(findings_raw, list):
-        findings_raw = []
-
-    findings: list[ReviewFinding] = []
-    for item in findings_raw:
-        if not isinstance(item, dict):
-            continue
-
-        title_val = item.get("title")
-        title = str(title_val) if title_val is not None else ""
-
-        severity_val = item.get("severity")
-        severity = str(severity_val) if severity_val is not None else ""
-
-        reason_val = item.get("reason")
-        reason = str(reason_val) if reason_val is not None else ""
-
-        rec_val = item.get("recommendation")
-        recommendation = str(rec_val) if rec_val is not None else ""
-
-        file_val = item.get("file")
-        file_path = str(file_val) if file_val is not None else None
-
-        line_val = item.get("line")
-        line: int | None = None
-        if line_val is not None:
-            try:
-                line = int(line_val)
-            except (ValueError, TypeError):
-                line = None
-
-        findings.append(
-            ReviewFinding(
-                title=title,
-                severity=severity,
-                file=file_path,
-                line=line,
-                source="local_llm",
-                reason=reason,
-                recommendation=recommendation,
-            )
+    review_payload = _validate_llm_review_payload(payload, content)
+    findings = [
+        ReviewFinding(
+            title=item["title"],
+            severity=item["severity"],
+            file=item["file"],
+            line=item["line"],
+            source="local_llm",
+            reason=item["reason"],
+            recommendation=item["recommendation"],
         )
-
-    risk_level_value = payload.get("risk_level")
-    if risk_level_value is not None and str(risk_level_value).strip().lower() in {
-        "low",
-        "medium",
-        "high",
-    }:
-        risk_level = str(risk_level_value).strip().lower()
-    else:
-        risk_level = _derive_risk_level([f.severity for f in findings])
+        for item in review_payload["findings"]
+    ]
 
     return ReviewResult(
-        summary=summary,
-        risk_level=risk_level,
+        summary=review_payload["summary"],
+        risk_level=review_payload["risk_level"],
         findings=findings,
     )
+
+
+def _validate_llm_review_payload(payload: Any, content: str) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise _llm_review_schema_error(
+            f"top level must be an object, got {_json_type_name(payload)}",
+            content,
+        )
+
+    _validate_exact_fields(
+        payload,
+        required=set(_REVIEW_REQUIRED_FIELDS),
+        location="review",
+        content=content,
+    )
+
+    if not isinstance(payload["summary"], str):
+        raise _llm_review_schema_error(
+            "review.summary must be a string",
+            content,
+        )
+
+    risk_level = payload["risk_level"]
+    if not isinstance(risk_level, str) or risk_level not in _REVIEW_RISK_LEVELS:
+        raise _llm_review_schema_error(
+            "review.risk_level must be one of: low, medium, high",
+            content,
+        )
+
+    findings = payload["findings"]
+    if not isinstance(findings, list):
+        raise _llm_review_schema_error(
+            "review.findings must be an array",
+            content,
+        )
+
+    for index, finding in enumerate(findings):
+        location = f"review.findings[{index}]"
+        if not isinstance(finding, dict):
+            raise _llm_review_schema_error(
+                f"{location} must be an object",
+                content,
+            )
+        _validate_exact_fields(
+            finding,
+            required=set(_REVIEW_FINDING_REQUIRED_FIELDS),
+            location=location,
+            content=content,
+        )
+        if not isinstance(finding["title"], str):
+            raise _llm_review_schema_error(
+                f"{location}.title must be a string",
+                content,
+            )
+        severity = finding["severity"]
+        if not isinstance(severity, str) or severity not in _REVIEW_RISK_LEVELS:
+            raise _llm_review_schema_error(
+                f"{location}.severity must be one of: low, medium, high",
+                content,
+            )
+        if finding["file"] is not None and not isinstance(finding["file"], str):
+            raise _llm_review_schema_error(
+                f"{location}.file must be a string or null",
+                content,
+            )
+        line = finding["line"]
+        if line is not None and (not isinstance(line, int) or isinstance(line, bool)):
+            raise _llm_review_schema_error(
+                f"{location}.line must be an integer or null",
+                content,
+            )
+        if not isinstance(finding["reason"], str):
+            raise _llm_review_schema_error(
+                f"{location}.reason must be a string",
+                content,
+            )
+        if not isinstance(finding["recommendation"], str):
+            raise _llm_review_schema_error(
+                f"{location}.recommendation must be a string",
+                content,
+            )
+
+    return payload
+
+
+def _validate_exact_fields(
+    payload: dict[str, Any],
+    *,
+    required: set[str],
+    location: str,
+    content: str,
+) -> None:
+    actual = set(payload)
+    missing = sorted(required - actual)
+    unexpected = sorted(actual - required)
+    violations: list[str] = []
+    if missing:
+        violations.append(f"missing required field(s): {', '.join(missing)}")
+    if unexpected:
+        violations.append(f"unexpected field(s): {', '.join(unexpected)}")
+    if violations:
+        raise _llm_review_schema_error(
+            f"{location} {'; '.join(violations)}",
+            content,
+        )
+
+
+def _llm_review_schema_error(message: str, content: str) -> ValueError:
+    preview = _preview_response_text(content, limit=200)
+    return ValueError(
+        "Local LLM response does not match the review schema: "
+        f"{message}. Raw response preview: {preview!r}"
+    )
+
+
+def _json_type_name(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, (int, float)):
+        return "number"
+    return type(value).__name__
 
 
 def _extract_json_payload(content: str) -> str:
@@ -827,6 +908,13 @@ def _extract_json_payload(content: str) -> str:
         while lines and lines[-1].strip() == "```":
             lines.pop()
         stripped = "\n".join(lines).strip()
+
+    try:
+        json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+    else:
+        return stripped
 
     json_start = stripped.find("{")
     json_end = stripped.rfind("}")

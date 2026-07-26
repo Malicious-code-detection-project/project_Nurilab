@@ -254,7 +254,7 @@ Local LLM request는 `reasoning_effort="low"`를 사용하고 reasoning text를
 - 연결, URL, 예상하지 못한 API response 접근 실패
 - request timeout
 - HTTP error
-- review JSON parsing failure
+- review JSON decode 또는 strict schema validation failure
 
 현재 자동화 테스트는 mock으로 이 경로를 검증합니다. 특정 GPU, 모델, vLLM 버전,
 네트워크 배포가 실제로 동작한다는 의미는 아닙니다. 실제 서버 검증 결과에는 모델,
@@ -271,8 +271,6 @@ Local LLM request는 `reasoning_effort="low"`를 사용하고 reasoning text를
 - Ruff는 선택적인 보조 신호이며 보안 판단 engine이 아닙니다.
 - 파일 줄 수 제한은 없지만 source chunking과 RAG는 구현하지 않았습니다.
 - Local LLM 입력에는 정규화된 신호만 포함되며 전체 코드 문맥은 포함되지 않습니다.
-- 문법적으로 유효한 non-object Local LLM JSON은 현재 schema error finding이
-  아니라 빈 low-risk review로 정규화됩니다.
 
 Risk level과 finding을 해석할 때 이 한계를 함께 고려해야 합니다.
 

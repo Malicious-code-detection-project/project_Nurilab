@@ -163,7 +163,8 @@ PythonAnalysis[]
 - 정규화된 정적 분석 payload만 vLLM OpenAI-compatible
   `/chat/completions` endpoint로 전송합니다.
 - 원본 source text는 전송하지 않습니다.
-- 응답 JSON을 `ReviewResult`와 `ReviewFinding`으로 정규화합니다.
+- 응답 JSON이 strict review schema를 충족하는지 검증한 뒤
+  `ReviewResult`와 `ReviewFinding`으로 변환합니다.
 - 상대 finding 경로를 분석 대상 기준의 절대 경로로 복원합니다.
 
 Local LLM 결과는 정적 분석 결과를 덮어쓰지 않습니다. 연결, timeout, HTTP,
@@ -195,7 +196,7 @@ risk가 `unknown`이어도 deterministic analysis는 같은 보고서에 유지�
 | Python syntax error | `syntax_error` signal로 보존 |
 | Ruff invalid JSON | `RUFF_PARSE_ERROR` finding으로 보존 |
 | Local LLM 연결·timeout·HTTP 오류 | Local LLM failure finding으로 보존 |
-| Local LLM JSON parsing 오류 | Local LLM parsing finding으로 보존 |
+| Local LLM JSON decode 또는 schema validation 오류 | Local LLM parsing finding으로 보존 |
 | 출력 디렉터리 또는 파일 쓰기 실패 | 예외 발생 |
 
 pipeline이 실패 finding으로 변환하는 장애와 호출자에게 예외를 반환하는 장애를
