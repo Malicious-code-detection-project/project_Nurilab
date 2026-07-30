@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Python Code Review Report</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --text: #20242a;
+      --muted: #5f6b7a;
+      --line: #d9dee7;
+      --low: #1f7a3f;
+      --medium: #9a6400;
+      --high: #b42318;
+      --critical: #7a1e70;
+      --info: #255f99;
+    }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }
+    header {
+      margin-bottom: 24px;
+    }
+    h1, h2, h3 {
+      margin: 0 0 12px;
+      line-height: 1.2;
+    }
+    h1 {
+      font-size: 30px;
+    }
+    h2 {
+      margin-top: 28px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+      font-size: 21px;
+    }
+    h3 {
+      font-size: 17px;
+    }
+    .summary {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      margin: 16px 0;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+      margin: 16px 0;
+    }
+    .meta-item, .finding, .section-list {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    code {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+      background: #eef1f5;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+    ul {
+      margin: 8px 0 0;
+      padding-left: 22px;
+    }
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 4px 10px;
+      color: white;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .severity-low { background: var(--low); }
+    .severity-medium { background: var(--medium); }
+    .severity-high { background: var(--high); }
+    .severity-critical { background: var(--critical); }
+    .severity-info, .severity-unknown { background: var(--info); }
+    .finding {
+      margin: 12px 0;
+      border-left: 5px solid var(--line);
+    }
+    .finding.severity-low { border-left-color: var(--low); }
+    .finding.severity-medium { border-left-color: var(--medium); }
+    .finding.severity-high { border-left-color: var(--high); }
+    .finding.severity-critical { border-left-color: var(--critical); }
+    .finding.severity-info { border-left-color: var(--info); }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Python Code Review Report</h1>
+      <span class="badge severity-unknown">unknown</span>
+    </header>
+
+    <section class="summary">
+      <h2>Summary</h2>
+      <p>Local LLM review failed. Static analysis results are still available.</p>
+    </section>
+
+    <section>
+      <h2>Metadata</h2>
+      <div class="meta-grid">
+        <div class="meta-item"><span class="label">Generated At</span><code>2026-07-27T06:41:57.002704+00:00</code></div>
+        <div class="meta-item"><span class="label">Analyzer Version</span><code>0.1.0</code></div>
+        <div class="meta-item"><span class="label">File</span><code>tests/fixtures/review_quality/dynamic_execution_sample.py</code></div>
+        <div class="meta-item"><span class="label">Lines</span><code>2</code></div>
+        <div class="meta-item"><span class="label">Skipped</span><code>False</code></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Static Analysis</h2>
+      <div class="meta-grid">
+        <div class="section-list"><h3>Imports</h3><ul><li>None</li></ul></div>
+        <div class="section-list"><h3>Functions</h3><ul><li>Line 1: function evaluate_expression</li></ul></div>
+        <div class="section-list"><h3>Classes</h3><ul><li>None</li></ul></div>
+      </div>
+      <div class="section-list"><h3>Suspicious Calls</h3><ul><li>Line 2: eval (high, dynamic_execution) - eval executes dynamically constructed Python expressions.</li></ul></div>
+      <div class="section-list"><h3>Potential Secrets</h3><ul><li>None</li></ul></div>
+    </section>
+
+    <section>
+      <h2>Findings</h2>
+      <article class="finding severity-medium"><h3>Local LLM JSON parsing failed</h3><p><span class="badge severity-medium">medium</span></p><p><strong>Location:</strong> No line</p><p><strong>Source:</strong> local_llm</p><p><strong>Reason:</strong> Local LLM returned a response that could not be parsed as the expected JSON review. Cause: &#x27;NoneType&#x27; object has no attribute &#x27;strip&#x27;. Static analysis results are still included in this report.</p><p><strong>Recommendation:</strong> Inspect the raw response preview in the cause, then confirm the model is returning only JSON with summary, risk_level, and findings. This does not change the existing JSON extraction behavior.</p></article>
+    </section>
+  </main>
+</body>
+</html>
