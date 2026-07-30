@@ -242,11 +242,12 @@ uv run python main.py analyze tests --review-client local
 Local LLM에는 정규화된 정적 분석 데이터만 전달합니다. 현재 prompt payload에는
 원본 source text가 포함되지 않습니다.
 
-Local LLM request는 `reasoning_effort="low"`를 사용하고 reasoning text를
-응답에서 제외합니다. 최종 review는 vLLM의 strict JSON Schema로
-`summary`, `risk_level`, `findings` 구조를 강제하며, 기존 parser는 서버 또는
-모델이 계약을 지키지 못한 경우를 report finding으로 변환하는 방어선으로
-유지합니다.
+Local LLM request는 `reasoning_effort="low"`를 사용합니다. vLLM 버전별
+호환성을 위해 provider-specific `include_reasoning` 필드는 보내지 않으며,
+응답의 raw reasoning/Chain-of-Thought는 읽거나 보고서에 저장하지 않습니다.
+최종 review는 vLLM의 strict JSON Schema로 `summary`, `risk_level`,
+`findings` 구조를 강제하며, 기존 parser는 서버 또는 모델이 계약을 지키지 못한
+경우를 report finding으로 변환하는 방어선으로 유지합니다.
 
 다음 실패는 pipeline을 중단하지 않고 `source="local_llm"` report finding으로
 남습니다.

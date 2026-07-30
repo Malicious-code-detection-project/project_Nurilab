@@ -190,7 +190,6 @@ class LocalLLMReviewClient:
                     "model": self.model,
                     "temperature": self.temperature,
                     "reasoning_effort": "low",
-                    "include_reasoning": False,
                     "response_format": {
                         "type": "json_schema",
                         "json_schema": {

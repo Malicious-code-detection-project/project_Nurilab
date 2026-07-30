@@ -93,6 +93,30 @@ uv run pytest
 기본 회귀 테스트가 Local LLM server 없이 통과해야 실제 통합 테스트의 opt-in
 경계가 유지된 것입니다.
 
+## 2026-07-27 예비 CLI 진단
+
+GPU host에서 `tests/` 디렉터리를 실제 NuriLab CLI로 분석해 Local LLM 응답과
+HTML/JSON report 생성을 확인했습니다. 이 기록은 호환성 원인을 찾기 위한 예비
+검증이며, 아래 선택형 pytest의 최종 성공 기록을 대신하지 않습니다.
+
+| 항목 | 결과 |
+| --- | --- |
+| 입력 | `tests/` 디렉터리 |
+| 분석 파일 | 21개 중 21개 완료, skipped 0개 |
+| 최종 risk | `high` |
+| Local LLM findings | 14개 (`high` 11, `medium` 1, `low` 2) |
+| Local LLM failure finding | 0개 |
+| report | LLM `summary`, `reason`, `recommendation`의 JSON/HTML 반영 확인 |
+
+호환성 진단 결과 strict `response_format=json_schema`와
+`reasoning_effort="low"` 조합은 정상 동작했습니다. 여기에
+`include_reasoning=false`를 함께 보내면 HTTP 200 응답의
+`message.content`가 `null`이 되거나 응답이 지연됐습니다.
+
+따라서 NuriLab은 provider-specific `include_reasoning` 요청 필드를 제거하고,
+raw reasoning/Chain-of-Thought를 읽거나 보고서에 저장하지 않습니다. 서버 주소와
+내부 IP, 생성된 report 원본은 저장소에 기록하거나 커밋하지 않았습니다.
+
 ## 실행 기록
 
 실제 실행 후 아래 항목을 같은 PR과 Linear 이슈에 기록합니다. 생성된 report,
