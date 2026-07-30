@@ -1,0 +1,48 @@
+{
+  "generated_at": "2026-07-27T06:41:57.002704+00:00",
+  "analyzer_version": "0.1.0",
+  "analysis": {
+    "path": "tests/fixtures/review_quality/dynamic_execution_sample.py",
+    "line_count": 2,
+    "language": "python",
+    "skipped": false,
+    "skip_reason": null,
+    "syntax_error": null,
+    "imports": [],
+    "functions": [
+      {
+        "name": "evaluate_expression",
+        "line": 1
+      }
+    ],
+    "classes": [],
+    "suspicious_calls": [
+      {
+        "name": "eval",
+        "line": 2,
+        "category": "dynamic_execution",
+        "severity": "high",
+        "reason": "eval executes dynamically constructed Python expressions."
+      }
+    ],
+    "secrets": [],
+    "ruff_findings": []
+  },
+  "review": {
+    "summary": "Local LLM review failed. Static analysis results are still available.",
+    "risk_level": "unknown",
+    "findings": [
+      {
+        "title": "Local LLM JSON parsing failed",
+        "severity": "medium",
+        "line": null,
+        "reason": "Local LLM returned a response that could not be parsed as the expected JSON review. Cause: 'NoneType' object has no attribute 'strip'. Static analysis results are still included in this report.",
+        "recommendation": "Inspect the raw response preview in the cause, then confirm the model is returning only JSON with summary, risk_level, and findings. This does not change the existing JSON extraction behavior.",
+        "file": null,
+        "source": "local_llm",
+        "column": null,
+        "rule_id": null
+      }
+    ]
+  }
+}

@@ -670,7 +670,7 @@ def test_local_llm_review_client_uses_default_connection_settings(
     assert request_payload["model"] == DEFAULT_LLM_MODEL
     assert request_payload["model"] == "openai/gpt-oss-20b"
     assert request_payload["reasoning_effort"] == "low"
-    assert request_payload["include_reasoning"] is False
+    assert "include_reasoning" not in request_payload
     response_format = request_payload["response_format"]
     assert response_format["type"] == "json_schema"
     assert response_format["json_schema"]["name"] == "nurilab_security_review"
