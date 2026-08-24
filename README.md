@@ -186,10 +186,12 @@ title, severity, file, line, column, source, rule_id,
 reason, recommendation
 ```
 
-정적 분석 모델은 `info`, `low`, `medium`, `high`, `critical`, `unknown`을
-표현할 수 있습니다. 현재 Local LLM prompt 계약은 모델에 `low`, `medium`,
-`high` 중 하나를 반환하도록 요구합니다. 허용되지 않은 Local LLM finding
-severity는 `unknown`으로 정규화됩니다.
+정적 분석 모델과 일반 `ReviewFinding`은 `info`, `low`, `medium`, `high`,
+`critical`, `unknown`을 표현할 수 있으며, 허용되지 않은 severity는
+`unknown`으로 정규화합니다. 반면 Local LLM strict JSON 계약은
+`review.risk_level`과 각 finding의 `severity`에 `low`, `medium`, `high`만
+허용합니다. 범위를 벗어난 값이 포함되면 개별 finding을 정규화하지 않고
+전체 Local LLM 응답을 schema validation failure로 처리합니다.
 
 `analysis.summary.risk_level`과 `review.risk_level`은 역할이 다릅니다. 전자는
 deterministic project signal의 최고 위험도를 요약하고, 후자는 선택한 review
