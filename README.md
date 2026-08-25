@@ -272,8 +272,9 @@ Local LLM request는 `reasoning_effort="low"`를 사용합니다. vLLM 버전별
 
 현재 analyzer는 의도적으로 보수적인 초기 구현입니다.
 
-- 위험 호출은 정확한 AST call name으로 매칭합니다. import alias와 data flow는
-  해석하지 않습니다.
+- 위험 호출은 AST call name으로 매칭하며, 직접 import alias와
+  `from ... import ...` binding은 canonical 호출 경로로 정규화합니다. 재할당,
+  호출 인자 문맥과 복잡한 scope/data flow는 해석하지 않습니다.
 - Secret 탐지는 semantic analysis가 아닌 line-oriented pattern matching입니다.
 - 위험 호출 발견은 검토 신호이며 악성 의도의 증거가 아닙니다.
 - Ruff는 선택적인 보조 신호이며 보안 판단 engine이 아닙니다.
@@ -337,8 +338,8 @@ uv run mypy .
 | --- | --- | --- |
 | Phase 1 | 단일 Python 파일 분석 MVP | 완료 |
 | Phase 2 | Python 프로젝트 단위 정적 분석 | 완료 |
-| Phase 3 | Local LLM과 보고서 파이프라인 종료 검증 | 진행 중 |
-| Phase 4 | Python 정적 분석 정확도와 대규모 입력 안정성 | 예정 |
+| Phase 3 | Local LLM과 보고서 파이프라인 종료 검증 | 완료 |
+| Phase 4 | Python 정적 분석 정확도와 대규모 입력 안정성 | 진행 중 |
 | Phase 5 | 설치·배포·재현·운영 가능한 제품화 | 예정 |
 | Phase 6 | AegisLM 모델 연동과 기준 모델 비교 | 예정 |
 | Phase 7 | 오프라인 우선 보안 지식 RAG와 근거 추적 | 예정 |

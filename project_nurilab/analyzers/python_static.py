@@ -64,6 +64,7 @@ class _PythonSignalVisitor(ast.NodeVisitor):
         self.functions: list[CodeSymbol] = []
         self.classes: list[CodeSymbol] = []
         self.suspicious_calls: list[SuspiciousCall] = []
+        self._import_bindings: dict[str, str] = {}
 
     def visit_Import(self, node: ast.Import) -> None:  # noqa: N802
         for alias in node.names:
@@ -75,6 +76,9 @@ class _PythonSignalVisitor(ast.NodeVisitor):
                     line=node.lineno,
                 )
             )
+            binding = alias.asname or alias.name.partition(".")[0]
+            canonical_name = alias.name if alias.asname else binding
+            self._import_bindings[binding] = canonical_name
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:  # noqa: N802
@@ -88,22 +92,27 @@ class _PythonSignalVisitor(ast.NodeVisitor):
                     line=node.lineno,
                 )
             )
+            if node.level == 0 and node.module and alias.name != "*":
+                binding = alias.asname or alias.name
+                self._import_bindings[binding] = f"{node.module}.{alias.name}"
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
         self.functions.append(CodeSymbol(name=node.name, line=node.lineno))
-        self.generic_visit(node)
+        self._visit_nested_scope(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
         self.functions.append(CodeSymbol(name=node.name, line=node.lineno))
-        self.generic_visit(node)
+        self._visit_nested_scope(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
         self.classes.append(CodeSymbol(name=node.name, line=node.lineno))
-        self.generic_visit(node)
+        self._visit_nested_scope(node)
 
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
-        call_name = _resolve_call_name(node.func)
+        call_name = _canonicalize_call_name(
+            _resolve_call_name(node.func), self._import_bindings
+        )
         rule = SUSPICIOUS_CALL_RULES.get(call_name)
         if rule:
             self.suspicious_calls.append(
@@ -117,6 +126,16 @@ class _PythonSignalVisitor(ast.NodeVisitor):
             )
         self.generic_visit(node)
 
+    def _visit_nested_scope(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+    ) -> None:
+        """Visit a nested scope without leaking its import bindings outward."""
+
+        outer_bindings = self._import_bindings.copy()
+        self.generic_visit(node)
+        self._import_bindings = outer_bindings
+
 
 def _resolve_call_name(node: ast.AST) -> str:
     """Resolve common function call shapes into dotted names."""
@@ -127,3 +146,18 @@ def _resolve_call_name(node: ast.AST) -> str:
         parent = _resolve_call_name(node.value)
         return f"{parent}.{node.attr}" if parent else node.attr
     return ""
+
+
+def _canonicalize_call_name(call_name: str, import_bindings: dict[str, str]) -> str:
+    """Replace an imported root name with its canonical module path."""
+
+    if not call_name:
+        return call_name
+
+    root, separator, remainder = call_name.partition(".")
+    canonical_root = import_bindings.get(root)
+    if canonical_root is None:
+        return call_name
+    if not separator:
+        return canonical_root
+    return f"{canonical_root}.{remainder}"
