@@ -31,15 +31,33 @@ class RuffToolCollector:
             "--output-format",
             "json",
         ]
-        completed = subprocess.run(  # noqa: S603
-            command,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        resolved_target = str(Path(target).expanduser().resolve())
+        try:
+            completed = subprocess.run(  # noqa: S603
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as exc:
+            return [
+                self._command_failure(
+                    resolved_target,
+                    returncode=None,
+                    stderr=str(exc),
+                )
+            ]
 
         if not completed.stdout.strip():
-            return []
+            if completed.returncode == 0:
+                return []
+            return [
+                self._command_failure(
+                    resolved_target,
+                    returncode=completed.returncode,
+                    stderr=getattr(completed, "stderr", "") or "",
+                )
+            ]
 
         try:
             payload = json.loads(completed.stdout)
@@ -56,6 +74,26 @@ class RuffToolCollector:
             ]
 
         return [self._from_ruff_item(item) for item in payload]
+
+    def _command_failure(
+        self,
+        target: str,
+        returncode: int | None,
+        stderr: str,
+    ) -> RuffFinding:
+        exit_code = str(returncode) if returncode is not None else "unavailable"
+        details = stderr.strip() or "no stderr output"
+        return RuffFinding(
+            file=target,
+            line=1,
+            column=1,
+            rule_id="RUFF_COMMAND_FAILED",
+            message=(
+                f"Ruff command failed for target {target} "
+                f"(exit code {exit_code}): {details}"
+            ),
+            severity="medium",
+        )
 
     def _from_ruff_item(self, item: dict[str, Any]) -> RuffFinding:
         location = item.get("location") or {}

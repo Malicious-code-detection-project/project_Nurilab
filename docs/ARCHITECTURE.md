@@ -112,12 +112,16 @@ import alias와 호출 인자 문맥은 아직 해석하지 않습니다.
 subprocess로 실행합니다. Ruff의 non-zero exit code는 finding이 존재할 때도
 사용되므로 pipeline 실패로 취급하지 않습니다.
 
-- JSON stdout은 `RuffFinding`으로 정규화합니다.
-- stdout이 JSON이 아니면 `RUFF_PARSE_ERROR` finding을 만듭니다.
-- stdout이 비어 있으면 현재는 빈 finding 목록으로 처리합니다.
+- `returncode=0`에서 빈 stdout 또는 JSON `[]`만 정상적인 0 findings로 처리합니다.
+- 유효한 Ruff JSON은 return code와 관계없이 `RuffFinding`으로 정규화합니다.
+- non-zero return code에서 stdout이 비어 있으면 target, exit code와 stderr를 담은
+  medium `RUFF_COMMAND_FAILED` diagnostic을 보존합니다.
+- subprocess가 `OSError`를 반환해도 같은 `RUFF_COMMAND_FAILED` diagnostic으로
+  보존하며 pipeline과 report 생성을 계속합니다.
+- stdout이 JSON이 아니면 기존 `RUFF_PARSE_ERROR` finding을 만듭니다.
 
-Ruff finding과 Ruff 실행 실패를 더 정확히 구분하는 작업은 Phase 4의 `THE-91`
-범위입니다.
+따라서 Ruff 실행 실패는 pipeline 예외가 아니라 보고서에 남는 보조 신호이며,
+deterministic analyzer 결과와 함께 확인해야 합니다.
 
 ### 단일 파일과 프로젝트 분기
 
@@ -195,6 +199,7 @@ risk가 `unknown`이어도 deterministic analysis는 같은 보고서에 유지�
 | UTF-8 decode, 권한, 파일 읽기 실패 | skipped file result로 보존 |
 | Python syntax error | `syntax_error` signal로 보존 |
 | Ruff invalid JSON | `RUFF_PARSE_ERROR` finding으로 보존 |
+| Ruff non-zero + empty stdout 또는 subprocess `OSError` | medium `RUFF_COMMAND_FAILED` finding으로 보존하고 pipeline 계속 |
 | Local LLM 연결·timeout·HTTP 오류 | Local LLM failure finding으로 보존 |
 | Local LLM JSON decode 또는 schema validation 오류 | Local LLM parsing finding으로 보존 |
 | 출력 디렉터리 또는 파일 쓰기 실패 | 예외 발생 |

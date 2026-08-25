@@ -245,6 +245,34 @@ def test_pipeline_includes_project_ruff_findings_in_report(
     ]
 
 
+def test_pipeline_reports_ruff_os_error_without_aborting(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    target_file = tmp_path / "sample.py"
+    target_file.write_text("value = 1\n", encoding="utf-8")
+
+    def fail_run(*args: Any, **kwargs: Any) -> None:
+        raise OSError("ruff executable not found")
+
+    monkeypatch.setattr("subprocess.run", fail_run)
+
+    report, output_paths = Phase1Pipeline().run(
+        input_path=target_file,
+        output_dir=tmp_path,
+        formats=["json"],
+    )
+
+    assert isinstance(report, AnalysisReport)
+    assert len(report.analysis.ruff_findings) == 1
+    finding = report.analysis.ruff_findings[0]
+    assert finding.rule_id == "RUFF_COMMAND_FAILED"
+    assert finding.severity == "medium"
+    assert "ruff executable not found" in finding.message
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload["analysis"]["ruff_findings"][0]["rule_id"] == ("RUFF_COMMAND_FAILED")
+
+
 def test_pipeline_project_summary_aggregates_all_signal_severities(
     tmp_path: Path,
     monkeypatch,
