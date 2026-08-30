@@ -14,11 +14,46 @@ SECRET_ASSIGNMENT_RE = re.compile(
 PRIVATE_KEY_RE = re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")
 
 
+PLACEHOLDER_EXACT_KEYWORDS = {
+    "example",
+    "sample",
+    "dummy",
+    "placeholder",
+    "changeme",
+    "replace-me",
+    "replace_me",
+    "not-a-secret",
+    "not_a_secret",
+    "test-token",
+    "test_token",
+}
+
+
+def _is_placeholder(value: str) -> bool:
+    """Return True if the value matches explicit dummy/placeholder patterns."""
+    normalized = value.strip().lower()
+
+    if normalized in PLACEHOLDER_EXACT_KEYWORDS:
+        return True
+
+    if normalized.startswith(("your_", "your-")):
+        return True
+
+    if normalized.startswith("<") and normalized.endswith(">"):
+        return True
+
+    if normalized.startswith("${") and normalized.endswith("}"):
+        return True
+
+    return False
+
+
 def find_potential_secrets(lines: list[str]) -> list[SecretFinding]:
     """Return potential secrets from source lines.
 
     The matcher is deliberately simple for phase 1. It errs on the side of
     marking suspicious assignments as review findings, not confirmed leaks.
+    Explicit placeholders and test dummy values are suppressed.
     """
 
     findings: list[SecretFinding] = []
@@ -28,15 +63,16 @@ def find_potential_secrets(lines: list[str]) -> list[SecretFinding]:
         if assignment:
             secret_name = assignment.group(1)
             secret_value = assignment.group(2)
-            findings.append(
-                SecretFinding(
-                    kind=secret_name.lower(),
-                    line=index,
-                    preview=_preview(secret_value),
-                    severity="high",
-                    reason="Potential hard-coded secret assigned in source code.",
+            if not _is_placeholder(secret_value):
+                findings.append(
+                    SecretFinding(
+                        kind=secret_name.lower(),
+                        line=index,
+                        preview=_preview(secret_value),
+                        severity="high",
+                        reason="Potential hard-coded secret assigned in source code.",
+                    )
                 )
-            )
 
         if PRIVATE_KEY_RE.search(line):
             findings.append(
