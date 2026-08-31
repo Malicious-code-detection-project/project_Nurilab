@@ -26,6 +26,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 class CompletedProcessStub:
     stdout: str
     returncode: int = 0
+    stderr: str = ""
 
 
 def test_ruff_tool_collector_parses_json(monkeypatch, tmp_path: Path) -> None:
@@ -60,6 +61,46 @@ def test_ruff_tool_collector_returns_empty_list_for_empty_stdout(
     findings = RuffToolCollector(command_prefix=()).collect(tmp_path)
 
     assert findings == []
+
+
+def test_ruff_tool_collector_reports_nonzero_command_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    def fake_run(*args: Any, **kwargs: Any) -> CompletedProcessStub:
+        return CompletedProcessStub(
+            stdout="", returncode=2, stderr="ruff configuration is invalid"
+        )
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    findings = RuffToolCollector(command_prefix=()).collect(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].file == str(tmp_path.resolve())
+    assert findings[0].rule_id == "RUFF_COMMAND_FAILED"
+    assert findings[0].severity == "medium"
+    assert str(tmp_path.resolve()) in findings[0].message
+    assert "exit code 2" in findings[0].message
+    assert "ruff configuration is invalid" in findings[0].message
+
+
+def test_ruff_tool_collector_reports_subprocess_os_error(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    def fake_run(*args: Any, **kwargs: Any) -> CompletedProcessStub:
+        raise OSError("ruff executable not found")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    findings = RuffToolCollector(command_prefix=()).collect(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].rule_id == "RUFF_COMMAND_FAILED"
+    assert findings[0].severity == "medium"
+    assert "exit code unavailable" in findings[0].message
+    assert "ruff executable not found" in findings[0].message
 
 
 def test_ruff_tool_collector_reports_json_parse_failure(
