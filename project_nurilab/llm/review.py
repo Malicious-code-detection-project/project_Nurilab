@@ -18,6 +18,7 @@ import requests
 
 from project_nurilab.config import (
     DEFAULT_LLM_BASE_URL,
+    DEFAULT_LLM_INPUT_BUDGET_BYTES,
     DEFAULT_LLM_MODEL,
     DEFAULT_LLM_TEMPERATURE,
     DEFAULT_LLM_TIMEOUT_SECONDS,
@@ -27,6 +28,9 @@ from project_nurilab.schemas import (
     PythonAnalysis,
     ReviewFinding,
     ReviewResult,
+    RuffFinding,
+    SecretFinding,
+    SuspiciousCall,
 )
 
 SEVERITY_RANK = {
@@ -170,6 +174,7 @@ class LocalLLMReviewClient:
         model: str | None = None,
         timeout: float | None = None,
         temperature: float = DEFAULT_LLM_TEMPERATURE,
+        budget_bytes: int | None = None,
     ) -> None:
         self.base_url = (
             base_url or os.getenv("NURILAB_LLM_BASE_URL") or DEFAULT_LLM_BASE_URL
@@ -177,11 +182,14 @@ class LocalLLMReviewClient:
         self.model = model or os.getenv("NURILAB_LLM_MODEL") or DEFAULT_LLM_MODEL
         self.timeout = _resolve_timeout(timeout)
         self.temperature = temperature
+        self.budget_bytes = _resolve_budget_bytes(budget_bytes)
 
     def review(self, analysis: PythonAnalysis | ProjectAnalysis) -> ReviewResult:
         """Generate a structured review by calling the local LLM server."""
 
-        prompt = _build_llm_prompt(analysis)
+        prompt, input_metadata = _build_llm_prompt_with_metadata(
+            analysis, budget_bytes=self.budget_bytes
+        )
         endpoint = f"{self.base_url}/chat/completions"
         try:
             response = requests.post(
@@ -228,6 +236,7 @@ class LocalLLMReviewClient:
                     "the model name, then increase NURILAB_LLM_TIMEOUT if the "
                     "model needs more time to respond."
                 ),
+                input_metadata=input_metadata,
             )
         except requests.exceptions.HTTPError as exc:
             response = exc.response
@@ -250,6 +259,7 @@ class LocalLLMReviewClient:
                     "model name, the OpenAI-compatible /chat/completions route, "
                     "and vLLM server logs for the returned status code."
                 ),
+                input_metadata=input_metadata,
             )
         except (
             requests.exceptions.ConnectionError,
@@ -270,6 +280,7 @@ class LocalLLMReviewClient:
                     "points to the listening host and port, verify DNS/network "
                     "access, and confirm the configured model name."
                 ),
+                input_metadata=input_metadata,
             )
         except Exception as exc:  # noqa: BLE001 - preserve failures as report data.
             return _local_llm_request_failure(
@@ -284,10 +295,12 @@ class LocalLLMReviewClient:
                     "base URL and model name, and verify the OpenAI-compatible "
                     "response shape."
                 ),
+                input_metadata=input_metadata,
             )
 
         try:
             result = _parse_llm_review(content)
+            result.input_metadata = input_metadata
             # Normalize finding paths back to absolute paths
             if isinstance(analysis, ProjectAnalysis):
                 for finding in result.findings:
@@ -315,28 +328,20 @@ class LocalLLMReviewClient:
                                 pass
             return result
         except Exception as exc:  # noqa: BLE001 - preserve failures as report data.
-            return ReviewResult(
-                summary="Local LLM review failed. Static analysis results are still available.",
-                risk_level="unknown",
-                findings=[
-                    ReviewFinding(
-                        title="Local LLM JSON parsing failed",
-                        severity="medium",
-                        line=None,
-                        source="local_llm",
-                        reason=(
-                            "Local LLM returned a response that could not be parsed "
-                            f"as the expected JSON review. Cause: {exc}. Static "
-                            "analysis results are still included in this report."
-                        ),
-                        recommendation=(
-                            "Inspect the raw response preview in the cause, then "
-                            "confirm the model is returning only JSON with summary, "
-                            "risk_level, and findings. This does not change the "
-                            "existing JSON extraction behavior."
-                        ),
-                    )
-                ],
+            return _local_llm_request_failure(
+                title="Local LLM JSON parsing failed",
+                reason=(
+                    "Local LLM returned a response that could not be parsed "
+                    f"as the expected JSON review. Cause: {exc}. Static "
+                    "analysis results are still included in this report."
+                ),
+                recommendation=(
+                    "Inspect the raw response preview in the cause, then "
+                    "confirm the model is returning only JSON with summary, "
+                    "risk_level, and findings. This does not change the "
+                    "existing JSON extraction behavior."
+                ),
+                input_metadata=input_metadata,
             )
 
 
@@ -351,6 +356,7 @@ def _local_llm_request_failure(
     title: str,
     reason: str,
     recommendation: str | None = None,
+    input_metadata: dict[str, Any] | None = None,
 ) -> ReviewResult:
     return ReviewResult(
         summary="Local LLM review failed. Static analysis results are still available.",
@@ -369,6 +375,7 @@ def _local_llm_request_failure(
                 ),
             )
         ],
+        input_metadata=input_metadata,
     )
 
 
@@ -524,7 +531,102 @@ def get_relative_path(file_path: str, root_path: str) -> str:
     return file_path
 
 
-def _build_project_payload_summary(analysis: ProjectAnalysis) -> dict[str, Any]:
+def _signal_sort_key(
+    severity: str,
+    source_kind: str,
+    relative_path: str,
+    line: int | None,
+    rule_or_name: str,
+) -> tuple[int, str, str, int, str]:
+    """Return canonical deterministic sort key.
+
+    Order:
+      1. severity (descending, -SEVERITY_RANK)
+      2. source kind (ascending)
+      3. relative path (ascending)
+      4. line (ascending, None -> 0)
+      5. stable rule/name tie-break (ascending)
+    """
+    return (
+        -SEVERITY_RANK.get(severity.lower(), 0),
+        source_kind,
+        relative_path,
+        line if line is not None else 0,
+        rule_or_name,
+    )
+
+
+def _calculate_json_bytes(payload: Any) -> int:
+    """Return the UTF-8 byte length of normalized JSON payload."""
+    return len(json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
+
+
+def _count_file_signals(file_summary: dict[str, Any]) -> int:
+    count = 0
+    if file_summary.get("skipped"):
+        count += 1
+    if file_summary.get("syntax_error"):
+        count += 1
+    count += len(file_summary.get("suspicious_calls", []))
+    count += len(file_summary.get("secrets", []))
+    count += len(file_summary.get("ruff_findings", []))
+    return count
+
+
+def _serialize_suspicious_call(call: SuspiciousCall) -> dict[str, Any]:
+    return {
+        "name": call.name,
+        "line": call.line,
+        "category": call.category,
+        "severity": call.severity,
+        "reason": call.reason,
+    }
+
+
+def _serialize_secret(secret: SecretFinding) -> dict[str, Any]:
+    return {
+        "kind": secret.kind,
+        "line": secret.line,
+        "preview": secret.preview,
+        "severity": secret.severity,
+        "reason": secret.reason,
+    }
+
+
+def _serialize_ruff_finding(ruff: RuffFinding) -> dict[str, Any]:
+    return {
+        "line": ruff.line,
+        "column": ruff.column,
+        "rule_id": ruff.rule_id,
+        "message": ruff.message,
+        "severity": ruff.severity,
+    }
+
+
+def _finalize_truncation_metadata(
+    payload: dict[str, Any],
+    budget_bytes: int,
+    before_bytes: int,
+    included_count: int,
+    total_signals: int,
+) -> None:
+    meta = {
+        "budget_bytes": budget_bytes,
+        "before_bytes": before_bytes,
+        "sent_bytes": budget_bytes,
+        "included_count": included_count,
+        "omitted_count": total_signals - included_count,
+        "truncated": True,
+    }
+    payload["truncation"] = meta
+    meta["sent_bytes"] = _calculate_json_bytes(payload)
+    meta["sent_bytes"] = _calculate_json_bytes(payload)
+
+
+def _build_project_payload_summary(
+    analysis: ProjectAnalysis,
+    budget_bytes: int = DEFAULT_LLM_INPUT_BUDGET_BYTES,
+) -> dict[str, Any]:
     # 1. Resolve all file results paths
     file_results_resolved = {}
     for r in analysis.file_results:
@@ -544,7 +646,7 @@ def _build_project_payload_summary(analysis: ProjectAnalysis) -> dict[str, Any]:
         ruff_by_file[res_path].append(ruff)
 
     # 3. Build file summaries for all resolved paths in file results
-    file_analyses = []
+    file_entries: list[tuple[tuple[int, str, str, int, str], dict[str, Any]]] = []
     processed_paths = set()
 
     for res_path, file_result in file_results_resolved.items():
@@ -562,49 +664,81 @@ def _build_project_payload_summary(analysis: ProjectAnalysis) -> dict[str, Any]:
         if not has_signal:
             continue
 
-        file_summary = {
-            "file": get_relative_path(file_result.path, analysis.root_path),
+        rel_path = get_relative_path(file_result.path, analysis.root_path)
+
+        sorted_calls = sorted(
+            file_result.suspicious_calls,
+            key=lambda call: _signal_sort_key(
+                call.severity, "pattern", rel_path, call.line, call.name
+            ),
+        )
+        sorted_secrets = sorted(
+            file_result.secrets,
+            key=lambda secret: _signal_sort_key(
+                secret.severity, "secret", rel_path, secret.line, secret.kind
+            ),
+        )
+        sorted_ruff = sorted(
+            file_ruff,
+            key=lambda ruff: _signal_sort_key(
+                ruff.severity, "ruff", rel_path, ruff.line, ruff.rule_id
+            ),
+        )
+
+        file_summary: dict[str, Any] = {
+            "file": rel_path,
             "line_count": file_result.line_count,
         }
+        signal_keys: list[tuple[int, str, str, int, str]] = []
+
         if file_result.skipped:
             file_summary["skipped"] = True
             file_summary["skip_reason"] = file_result.skip_reason
+            signal_keys.append(
+                _signal_sort_key("info", "input", rel_path, 0, "skipped")
+            )
         if file_result.syntax_error:
             file_summary["syntax_error"] = file_result.syntax_error
-        if file_result.suspicious_calls:
+            signal_keys.append(
+                _signal_sort_key("medium", "ast", rel_path, 0, "syntax_error")
+            )
+        if sorted_calls:
             file_summary["suspicious_calls"] = [
-                {
-                    "name": call.name,
-                    "line": call.line,
-                    "category": call.category,
-                    "severity": call.severity,
-                    "reason": call.reason,
-                }
-                for call in file_result.suspicious_calls
+                _serialize_suspicious_call(call) for call in sorted_calls
             ]
-        if file_result.secrets:
+            signal_keys.extend(
+                _signal_sort_key(
+                    call.severity, "pattern", rel_path, call.line, call.name
+                )
+                for call in sorted_calls
+            )
+        if sorted_secrets:
             file_summary["secrets"] = [
-                {
-                    "kind": secret.kind,
-                    "line": secret.line,
-                    "preview": secret.preview,
-                    "severity": secret.severity,
-                    "reason": secret.reason,
-                }
-                for secret in file_result.secrets
+                _serialize_secret(secret) for secret in sorted_secrets
             ]
-        if file_ruff:
+            signal_keys.extend(
+                _signal_sort_key(
+                    secret.severity, "secret", rel_path, secret.line, secret.kind
+                )
+                for secret in sorted_secrets
+            )
+        if sorted_ruff:
             file_summary["ruff_findings"] = [
-                {
-                    "line": ruff.line,
-                    "column": ruff.column,
-                    "rule_id": ruff.rule_id,
-                    "message": ruff.message,
-                    "severity": ruff.severity,
-                }
-                for ruff in file_ruff
+                _serialize_ruff_finding(ruff) for ruff in sorted_ruff
             ]
-        file_analyses.append(file_summary)
+            signal_keys.extend(
+                _signal_sort_key(
+                    ruff.severity, "ruff", rel_path, ruff.line, ruff.rule_id
+                )
+                for ruff in sorted_ruff
+            )
+
+        top_key = (
+            min(signal_keys)
+            if signal_keys
+            else _signal_sort_key("unknown", "", rel_path, 0, "")
+        )
+        file_entries.append((top_key, file_summary))
 
     # 4. Handle any ruff findings for paths not in file_results
     for res_path, file_ruff in ruff_by_file.items():
@@ -612,21 +746,31 @@ def _build_project_payload_summary(analysis: ProjectAnalysis) -> dict[str, Any]:
             continue
 
         raw_path = file_ruff[0].file
+        rel_path = get_relative_path(raw_path, analysis.root_path)
+        sorted_ruff = sorted(
+            file_ruff,
+            key=lambda ruff: _signal_sort_key(
+                ruff.severity, "ruff", rel_path, ruff.line, ruff.rule_id
+            ),
+        )
         file_summary = {
-            "file": get_relative_path(raw_path, analysis.root_path),
+            "file": rel_path,
             "line_count": 0,
-            "ruff_findings": [
-                {
-                    "line": ruff.line,
-                    "column": ruff.column,
-                    "rule_id": ruff.rule_id,
-                    "message": ruff.message,
-                    "severity": ruff.severity,
-                }
-                for ruff in file_ruff
-            ],
+            "ruff_findings": [_serialize_ruff_finding(ruff) for ruff in sorted_ruff],
         }
-        file_analyses.append(file_summary)
+        signal_keys = [
+            _signal_sort_key(ruff.severity, "ruff", rel_path, ruff.line, ruff.rule_id)
+            for ruff in sorted_ruff
+        ]
+        top_key = (
+            min(signal_keys)
+            if signal_keys
+            else _signal_sort_key("unknown", "", rel_path, 0, "")
+        )
+        file_entries.append((top_key, file_summary))
+
+    file_entries.sort(key=lambda entry: entry[0])
+    file_analyses = [entry[1] for entry in file_entries]
 
     summary_dict = {}
     if analysis.summary:
@@ -638,66 +782,331 @@ def _build_project_payload_summary(analysis: ProjectAnalysis) -> dict[str, Any]:
             "risk_level": analysis.summary.risk_level,
         }
 
-    return {
+    full_payload: dict[str, Any] = {
         "root_path": analysis.root_path,
         "summary": summary_dict,
         "file_analyses": file_analyses,
     }
 
+    before_bytes = _calculate_json_bytes(full_payload)
+    if before_bytes <= budget_bytes:
+        return full_payload
 
-def _build_file_payload_summary(analysis: PythonAnalysis) -> dict[str, Any]:
-    payload = {
+    # Truncate without cutting signals in the middle
+    total_signals = sum(_count_file_signals(entry[1]) for entry in file_entries)
+
+    included_files: list[dict[str, Any]] = []
+    included_signals = 0
+
+    for _, file_summary in file_entries:
+        # 1. Try adding the entire file
+        test_files = list(included_files) + [file_summary]
+        test_payload = {
+            "root_path": analysis.root_path,
+            "summary": summary_dict,
+            "file_analyses": test_files,
+            "truncation": {
+                "budget_bytes": budget_bytes,
+                "before_bytes": before_bytes,
+                "sent_bytes": budget_bytes,
+                "included_count": included_signals + _count_file_signals(file_summary),
+                "omitted_count": total_signals
+                - (included_signals + _count_file_signals(file_summary)),
+                "truncated": True,
+            },
+        }
+        if _calculate_json_bytes(test_payload) <= budget_bytes:
+            included_files.append(file_summary)
+            included_signals += _count_file_signals(file_summary)
+            continue
+
+        # 2. Entire file does not fit. Try adding skeleton and individual signals
+        skeleton: dict[str, Any] = {
+            "file": file_summary["file"],
+            "line_count": file_summary["line_count"],
+        }
+        if "skipped" in file_summary:
+            skeleton["skipped"] = file_summary["skipped"]
+            skeleton["skip_reason"] = file_summary.get("skip_reason")
+        if "syntax_error" in file_summary:
+            skeleton["syntax_error"] = file_summary["syntax_error"]
+
+        skeleton_signals = (1 if "skipped" in skeleton else 0) + (
+            1 if "syntax_error" in skeleton else 0
+        )
+
+        test_files = list(included_files) + [skeleton]
+        test_payload = {
+            "root_path": analysis.root_path,
+            "summary": summary_dict,
+            "file_analyses": test_files,
+            "truncation": {
+                "budget_bytes": budget_bytes,
+                "before_bytes": before_bytes,
+                "sent_bytes": budget_bytes,
+                "included_count": included_signals + skeleton_signals,
+                "omitted_count": total_signals - (included_signals + skeleton_signals),
+                "truncated": True,
+            },
+        }
+        if _calculate_json_bytes(test_payload) > budget_bytes:
+            # Even skeleton cannot fit; stop
+            break
+
+        # Collect and sort signals for this file
+        file_signals: list[
+            tuple[tuple[int, str, str, int, str], str, dict[str, Any]]
+        ] = []
+        for c in file_summary.get("suspicious_calls", []):
+            k = _signal_sort_key(
+                c["severity"],
+                "pattern",
+                file_summary["file"],
+                c["line"],
+                c["name"],
+            )
+            file_signals.append((k, "suspicious_calls", c))
+        for s in file_summary.get("secrets", []):
+            k = _signal_sort_key(
+                s["severity"],
+                "secret",
+                file_summary["file"],
+                s["line"],
+                s["kind"],
+            )
+            file_signals.append((k, "secrets", s))
+        for r in file_summary.get("ruff_findings", []):
+            k = _signal_sort_key(
+                r["severity"],
+                "ruff",
+                file_summary["file"],
+                r["line"],
+                r["rule_id"],
+            )
+            file_signals.append((k, "ruff_findings", r))
+
+        file_signals.sort(key=lambda item: item[0])
+
+        candidate_file = dict(skeleton)
+        calls_list: list[dict[str, Any]] = []
+        secrets_list: list[dict[str, Any]] = []
+        ruff_list: list[dict[str, Any]] = []
+        added_file_signals = skeleton_signals
+
+        for _, sig_type, sig_dict in file_signals:
+            if sig_type == "suspicious_calls":
+                calls_list.append(sig_dict)
+            elif sig_type == "secrets":
+                secrets_list.append(sig_dict)
+            elif sig_type == "ruff_findings":
+                ruff_list.append(sig_dict)
+
+            temp_file = dict(candidate_file)
+            if calls_list:
+                temp_file["suspicious_calls"] = calls_list
+            if secrets_list:
+                temp_file["secrets"] = secrets_list
+            if ruff_list:
+                temp_file["ruff_findings"] = ruff_list
+
+            test_files = list(included_files) + [temp_file]
+            test_payload = {
+                "root_path": analysis.root_path,
+                "summary": summary_dict,
+                "file_analyses": test_files,
+                "truncation": {
+                    "budget_bytes": budget_bytes,
+                    "before_bytes": before_bytes,
+                    "sent_bytes": budget_bytes,
+                    "included_count": included_signals + added_file_signals + 1,
+                    "omitted_count": total_signals
+                    - (included_signals + added_file_signals + 1),
+                    "truncated": True,
+                },
+            }
+            if _calculate_json_bytes(test_payload) <= budget_bytes:
+                added_file_signals += 1
+            else:
+                if sig_type == "suspicious_calls":
+                    calls_list.pop()
+                elif sig_type == "secrets":
+                    secrets_list.pop()
+                elif sig_type == "ruff_findings":
+                    ruff_list.pop()
+                break
+
+        if calls_list or secrets_list or ruff_list or skeleton_signals > 0:
+            if calls_list:
+                skeleton["suspicious_calls"] = calls_list
+            if secrets_list:
+                skeleton["secrets"] = secrets_list
+            if ruff_list:
+                skeleton["ruff_findings"] = ruff_list
+            included_files.append(skeleton)
+            included_signals += added_file_signals
+
+        break
+
+    final_payload: dict[str, Any] = {
+        "root_path": analysis.root_path,
+        "summary": summary_dict,
+        "file_analyses": included_files,
+    }
+    _finalize_truncation_metadata(
+        final_payload,
+        budget_bytes=budget_bytes,
+        before_bytes=before_bytes,
+        included_count=included_signals,
+        total_signals=total_signals,
+    )
+    return final_payload
+
+
+def _build_file_payload_summary(
+    analysis: PythonAnalysis,
+    budget_bytes: int = DEFAULT_LLM_INPUT_BUDGET_BYTES,
+) -> dict[str, Any]:
+    rel_path = analysis.path
+    sorted_calls = sorted(
+        analysis.suspicious_calls,
+        key=lambda call: _signal_sort_key(
+            call.severity, "pattern", rel_path, call.line, call.name
+        ),
+    )
+    sorted_secrets = sorted(
+        analysis.secrets,
+        key=lambda secret: _signal_sort_key(
+            secret.severity, "secret", rel_path, secret.line, secret.kind
+        ),
+    )
+    sorted_ruff = sorted(
+        analysis.ruff_findings,
+        key=lambda ruff: _signal_sort_key(
+            ruff.severity, "ruff", rel_path, ruff.line, ruff.rule_id
+        ),
+    )
+
+    full_payload: dict[str, Any] = {
         "file": analysis.path,
         "line_count": analysis.line_count,
     }
     if analysis.skipped:
-        payload["skipped"] = True
-        payload["skip_reason"] = analysis.skip_reason
+        full_payload["skipped"] = True
+        full_payload["skip_reason"] = analysis.skip_reason
     if analysis.syntax_error:
-        payload["syntax_error"] = analysis.syntax_error
-    if analysis.suspicious_calls:
-        payload["suspicious_calls"] = [
-            {
-                "name": call.name,
-                "line": call.line,
-                "category": call.category,
-                "severity": call.severity,
-                "reason": call.reason,
-            }
-            for call in analysis.suspicious_calls
+        full_payload["syntax_error"] = analysis.syntax_error
+    if sorted_calls:
+        full_payload["suspicious_calls"] = [
+            _serialize_suspicious_call(call) for call in sorted_calls
         ]
-    if analysis.secrets:
-        payload["secrets"] = [
-            {
-                "kind": secret.kind,
-                "line": secret.line,
-                "preview": secret.preview,
-                "severity": secret.severity,
-                "reason": secret.reason,
-            }
-            for secret in analysis.secrets
+    if sorted_secrets:
+        full_payload["secrets"] = [
+            _serialize_secret(secret) for secret in sorted_secrets
         ]
-    if analysis.ruff_findings:
-        payload["ruff_findings"] = [
-            {
-                "line": ruff.line,
-                "column": ruff.column,
-                "rule_id": ruff.rule_id,
-                "message": ruff.message,
-                "severity": ruff.severity,
-            }
-            for ruff in analysis.ruff_findings
+    if sorted_ruff:
+        full_payload["ruff_findings"] = [
+            _serialize_ruff_finding(ruff) for ruff in sorted_ruff
         ]
-    return payload
+
+    before_bytes = _calculate_json_bytes(full_payload)
+    if before_bytes <= budget_bytes:
+        return full_payload
+
+    # Truncate file signals without cutting any signal in the middle
+    all_signals: list[tuple[tuple[int, str, str, int, str], str, dict[str, Any]]] = []
+    for call in sorted_calls:
+        k = _signal_sort_key(call.severity, "pattern", rel_path, call.line, call.name)
+        all_signals.append((k, "suspicious_calls", _serialize_suspicious_call(call)))
+    for secret in sorted_secrets:
+        k = _signal_sort_key(
+            secret.severity, "secret", rel_path, secret.line, secret.kind
+        )
+        all_signals.append((k, "secrets", _serialize_secret(secret)))
+    for ruff in sorted_ruff:
+        k = _signal_sort_key(ruff.severity, "ruff", rel_path, ruff.line, ruff.rule_id)
+        all_signals.append((k, "ruff_findings", _serialize_ruff_finding(ruff)))
+
+    all_signals.sort(key=lambda item: item[0])
+    total_signals = len(all_signals)
+
+    current_payload: dict[str, Any] = {
+        "file": analysis.path,
+        "line_count": analysis.line_count,
+    }
+    if analysis.skipped:
+        current_payload["skipped"] = True
+        current_payload["skip_reason"] = analysis.skip_reason
+    if analysis.syntax_error:
+        current_payload["syntax_error"] = analysis.syntax_error
+
+    included_signals = 0
+    calls_list: list[dict[str, Any]] = []
+    secrets_list: list[dict[str, Any]] = []
+    ruff_list: list[dict[str, Any]] = []
+
+    for _, sig_type, sig_dict in all_signals:
+        if sig_type == "suspicious_calls":
+            calls_list.append(sig_dict)
+        elif sig_type == "secrets":
+            secrets_list.append(sig_dict)
+        elif sig_type == "ruff_findings":
+            ruff_list.append(sig_dict)
+
+        test_payload = dict(current_payload)
+        if calls_list:
+            test_payload["suspicious_calls"] = calls_list
+        if secrets_list:
+            test_payload["secrets"] = secrets_list
+        if ruff_list:
+            test_payload["ruff_findings"] = ruff_list
+        test_payload["truncation"] = {
+            "budget_bytes": budget_bytes,
+            "before_bytes": before_bytes,
+            "sent_bytes": budget_bytes,
+            "included_count": included_signals + 1,
+            "omitted_count": total_signals - (included_signals + 1),
+            "truncated": True,
+        }
+
+        if _calculate_json_bytes(test_payload) <= budget_bytes:
+            included_signals += 1
+        else:
+            if sig_type == "suspicious_calls":
+                calls_list.pop()
+            elif sig_type == "secrets":
+                secrets_list.pop()
+            elif sig_type == "ruff_findings":
+                ruff_list.pop()
+            break
+
+    if calls_list:
+        current_payload["suspicious_calls"] = calls_list
+    if secrets_list:
+        current_payload["secrets"] = secrets_list
+    if ruff_list:
+        current_payload["ruff_findings"] = ruff_list
+
+    _finalize_truncation_metadata(
+        current_payload,
+        budget_bytes=budget_bytes,
+        before_bytes=before_bytes,
+        included_count=included_signals,
+        total_signals=total_signals,
+    )
+    return current_payload
 
 
-def _build_llm_prompt(analysis: PythonAnalysis | ProjectAnalysis) -> str:
+def _build_llm_prompt_with_metadata(
+    analysis: PythonAnalysis | ProjectAnalysis,
+    budget_bytes: int = DEFAULT_LLM_INPUT_BUDGET_BYTES,
+) -> tuple[str, dict[str, Any] | None]:
     if isinstance(analysis, ProjectAnalysis):
-        payload = _build_project_payload_summary(analysis)
+        payload = _build_project_payload_summary(analysis, budget_bytes=budget_bytes)
     else:
-        payload = _build_file_payload_summary(analysis)
+        payload = _build_file_payload_summary(analysis, budget_bytes=budget_bytes)
 
-    return (
+    input_metadata = payload.get("truncation")
+    prompt = (
         """Review the following normalized Python static analysis result.
         Return JSON with keys: summary, risk_level, findings.
         Each finding must include title, severity, file, line, reason, recommendation.
@@ -729,6 +1138,15 @@ def _build_llm_prompt(analysis: PythonAnalysis | ProjectAnalysis) -> str:
         """
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
+    return prompt, input_metadata
+
+
+def _build_llm_prompt(
+    analysis: PythonAnalysis | ProjectAnalysis,
+    budget_bytes: int = DEFAULT_LLM_INPUT_BUDGET_BYTES,
+) -> str:
+    prompt, _ = _build_llm_prompt_with_metadata(analysis, budget_bytes=budget_bytes)
+    return prompt
 
 
 def _parse_llm_review(content: str) -> ReviewResult:
@@ -934,3 +1352,22 @@ def _resolve_timeout(timeout: float | None) -> float:
                 "NURILAB_LLM_TIMEOUT must be a numeric timeout in seconds."
             ) from exc
     return DEFAULT_LLM_TIMEOUT_SECONDS
+
+
+def _resolve_budget_bytes(budget_bytes: int | None) -> int:
+    if budget_bytes is not None:
+        if budget_bytes <= 0:
+            raise ValueError("budget_bytes must be a positive integer.")
+        return budget_bytes
+    configured_budget = os.getenv("NURILAB_LLM_INPUT_BUDGET_BYTES")
+    if configured_budget:
+        try:
+            val = int(configured_budget)
+            if val <= 0:
+                raise ValueError
+            return val
+        except ValueError as exc:
+            raise ValueError(
+                "NURILAB_LLM_INPUT_BUDGET_BYTES must be a positive integer."
+            ) from exc
+    return DEFAULT_LLM_INPUT_BUDGET_BYTES

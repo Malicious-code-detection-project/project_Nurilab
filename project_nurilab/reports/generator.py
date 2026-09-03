@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Any, Protocol
 
 from project_nurilab.schemas import AnalysisReport, ProjectFileSummary, ProjectReport
 
@@ -120,6 +120,7 @@ class ReportGenerator:
             "",
             review.summary,
             "",
+            *_render_markdown_truncation_notice(review.input_metadata),
         ]
 
         if analysis.skip_reason:
@@ -295,6 +296,8 @@ class ReportGenerator:
       <p>{_escape_html(review.summary)}</p>
     </section>
 
+    {_render_html_truncation_notice(review.input_metadata)}
+
     <section>
       <h2>Metadata</h2>
       <div class="meta-grid">
@@ -346,6 +349,7 @@ class ReportGenerator:
             "",
             report.review.summary,
             "",
+            *_render_markdown_truncation_notice(report.review.input_metadata),
         ]
 
         if summary:
@@ -452,6 +456,7 @@ class ReportGenerator:
       </div>
       {severity_counts}
     </section>
+    {_render_html_truncation_notice(report.review.input_metadata)}
     <section>
       <h2>Metadata</h2>
       <div class="meta-grid">
@@ -854,6 +859,46 @@ def _render_html_ruff_findings(ruff_findings) -> str:
             "</article>"
         )
     return "\n".join(rendered)
+
+
+def _render_markdown_truncation_notice(
+    input_metadata: dict[str, Any] | None,
+) -> list[str]:
+    if not input_metadata or not input_metadata.get("truncated"):
+        return []
+    return [
+        "## LLM Input Truncation",
+        "",
+        f"- Budget Limit: `{input_metadata.get('budget_bytes', 0):,} bytes`",
+        f"- Before Truncation: `{input_metadata.get('before_bytes', 0):,} bytes`",
+        f"- Sent Payload: `{input_metadata.get('sent_bytes', 0):,} bytes`",
+        f"- Signals Included: `{input_metadata.get('included_count', 0)}`",
+        f"- Signals Omitted: `{input_metadata.get('omitted_count', 0)}`",
+        f"- Truncated: `{input_metadata.get('truncated', False)}`",
+        "",
+    ]
+
+
+def _render_html_truncation_notice(input_metadata: dict[str, Any] | None) -> str:
+    if not input_metadata or not input_metadata.get("truncated"):
+        return ""
+    budget_bytes = input_metadata.get("budget_bytes", 0)
+    before_bytes = input_metadata.get("before_bytes", 0)
+    sent_bytes = input_metadata.get("sent_bytes", 0)
+    included_count = input_metadata.get("included_count", 0)
+    omitted_count = input_metadata.get("omitted_count", 0)
+
+    return f"""    <section class="summary truncation-notice">
+      <h2>LLM Input Truncation</h2>
+      <p>The input payload exceeded the budget limit ({budget_bytes:,} bytes) and was truncated for the Local LLM review. Deterministic static analysis results are fully preserved.</p>
+      <div class="meta-grid">
+        <div class="meta-item"><span class="label">Budget Limit</span><code>{budget_bytes:,} bytes</code></div>
+        <div class="meta-item"><span class="label">Before Truncation</span><code>{before_bytes:,} bytes</code></div>
+        <div class="meta-item"><span class="label">Sent Payload</span><code>{sent_bytes:,} bytes</code></div>
+        <div class="meta-item"><span class="label">Signals Included</span><code>{included_count:,}</code></div>
+        <div class="meta-item"><span class="label">Signals Omitted</span><code>{omitted_count:,}</code></div>
+      </div>
+    </section>"""
 
 
 def _shared_css() -> str:

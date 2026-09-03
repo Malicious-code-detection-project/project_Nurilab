@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1093,3 +1094,714 @@ def test_local_llm_review_client_resolves_project_finding_paths(
     # The relative path "subdir/risky.py" should be resolved to absolute path
     expected_absolute_path = str((project_dir / "subdir" / "risky.py").resolve())
     assert review.findings[0].file == expected_absolute_path
+
+
+def test_signal_sort_key_priority() -> None:
+    from project_nurilab.llm.review import _signal_sort_key
+
+    # 1. Severity descending: critical < high < medium < low < info < unknown
+    k_crit = _signal_sort_key("critical", "pattern", "a.py", 10, "eval")
+    k_high = _signal_sort_key("high", "pattern", "a.py", 10, "eval")
+    k_med = _signal_sort_key("medium", "pattern", "a.py", 10, "eval")
+    k_low = _signal_sort_key("low", "pattern", "a.py", 10, "eval")
+    k_info = _signal_sort_key("info", "pattern", "a.py", 10, "eval")
+    k_unk = _signal_sort_key("unknown", "pattern", "a.py", 10, "eval")
+
+    assert k_crit < k_high < k_med < k_low < k_info < k_unk
+
+    # 2. Source kind tie-break
+    k_ast = _signal_sort_key("high", "ast", "a.py", 10, "eval")
+    k_pat = _signal_sort_key("high", "pattern", "a.py", 10, "eval")
+    k_ruff = _signal_sort_key("high", "ruff", "a.py", 10, "eval")
+    k_sec = _signal_sort_key("high", "secret", "a.py", 10, "eval")
+
+    assert k_ast < k_pat < k_ruff < k_sec
+
+    # 3. Relative path tie-break
+    k_path_a = _signal_sort_key("high", "pattern", "a.py", 10, "eval")
+    k_path_b = _signal_sort_key("high", "pattern", "b.py", 10, "eval")
+
+    assert k_path_a < k_path_b
+
+    # 4. Line tie-break (None is treated as 0)
+    k_line_none = _signal_sort_key("high", "pattern", "a.py", None, "eval")
+    k_line_5 = _signal_sort_key("high", "pattern", "a.py", 5, "eval")
+    k_line_10 = _signal_sort_key("high", "pattern", "a.py", 10, "eval")
+
+    assert k_line_none < k_line_5 < k_line_10
+
+    # 5. Stable rule/name tie-break
+    k_name_a = _signal_sort_key("high", "pattern", "a.py", 10, "call_a")
+    k_name_b = _signal_sort_key("high", "pattern", "a.py", 10, "call_b")
+
+    assert k_name_a < k_name_b
+
+
+def test_payload_summary_deterministic_ordering(tmp_path: Path) -> None:
+    from project_nurilab.llm.review import (
+        _build_file_payload_summary,
+        _build_project_payload_summary,
+    )
+    from project_nurilab.schemas import (
+        ProjectAnalysis,
+        ProjectSummary,
+        PythonAnalysis,
+        RuffFinding,
+        SecretFinding,
+        SuspiciousCall,
+    )
+
+    root = tmp_path / "project"
+    file_med = root / "med.py"
+    file_high = root / "high.py"
+    file_low = root / "low.py"
+
+    res_med = PythonAnalysis(
+        path=str(file_med),
+        line_count=50,
+        suspicious_calls=[
+            SuspiciousCall(
+                name="exec",
+                line=20,
+                category="dynamic_execution",
+                severity="medium",
+                reason="med issue",
+            )
+        ],
+    )
+    res_high = PythonAnalysis(
+        path=str(file_high),
+        line_count=100,
+        suspicious_calls=[
+            SuspiciousCall(
+                name="os.system",
+                line=30,
+                category="command_execution",
+                severity="high",
+                reason="high issue 2",
+            ),
+            SuspiciousCall(
+                name="eval",
+                line=10,
+                category="dynamic_execution",
+                severity="high",
+                reason="high issue 1",
+            ),
+        ],
+        secrets=[
+            SecretFinding(
+                kind="token",
+                line=5,
+                preview="tok_...",
+                severity="high",
+                reason="hardcoded token",
+            ),
+            SecretFinding(
+                kind="api_key",
+                line=2,
+                preview="sk_...",
+                severity="high",
+                reason="hardcoded key",
+            ),
+        ],
+    )
+    res_low = PythonAnalysis(
+        path=str(file_low),
+        line_count=10,
+        syntax_error=None,
+    )
+    ruff_low = [
+        RuffFinding(
+            file=str(file_low),
+            line=5,
+            column=1,
+            rule_id="F401",
+            message="unused import",
+            severity="low",
+        )
+    ]
+
+    summary = ProjectSummary(
+        total_files=3,
+        analyzed_files=3,
+        skipped_files=0,
+        severity_counts={"high": 4, "medium": 1, "low": 1},
+        risk_level="high",
+    )
+
+    # Order 1: med, high, low
+    proj1 = ProjectAnalysis(
+        root_path=str(root),
+        file_results=[res_med, res_high, res_low],
+        ruff_findings=ruff_low,
+        summary=summary,
+    )
+    # Order 2: low, high, med (shuffled)
+    proj2 = ProjectAnalysis(
+        root_path=str(root),
+        file_results=[res_low, res_high, res_med],
+        ruff_findings=ruff_low,
+        summary=summary,
+    )
+
+    payload1 = _build_project_payload_summary(proj1)
+    payload2 = _build_project_payload_summary(proj2)
+
+    # Output must be 100% identical regardless of input collection order
+    assert payload1 == payload2
+
+    # Files must be ordered by top severity: high.py -> med.py -> low.py
+    file_order = [fa["file"] for fa in payload1["file_analyses"]]
+    assert file_order == ["high.py", "med.py", "low.py"]
+
+    # Inside high.py:
+    high_analysis = payload1["file_analyses"][0]
+    # Suspicious calls sorted: eval (line 10) before os.system (line 30)
+    assert [c["name"] for c in high_analysis["suspicious_calls"]] == [
+        "eval",
+        "os.system",
+    ]
+    # Secrets sorted: api_key (line 2) before token (line 5)
+    assert [s["kind"] for s in high_analysis["secrets"]] == ["api_key", "token"]
+
+    # Also verify single file payload summary sorts signals
+    file_payload = _build_file_payload_summary(res_high)
+    assert [c["name"] for c in file_payload["suspicious_calls"]] == [
+        "eval",
+        "os.system",
+    ]
+    assert [s["kind"] for s in file_payload["secrets"]] == ["api_key", "token"]
+
+
+def test_calculate_json_bytes_utf8() -> None:
+    from project_nurilab.llm.review import _calculate_json_bytes
+
+    payload = {"message": "정적 분석 결과", "count": 42}
+    expected_bytes = len(
+        json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    )
+    assert _calculate_json_bytes(payload) == expected_bytes
+    # Ensure Korean characters are counted as 3 UTF-8 bytes each
+    assert "정적 분석 결과".encode("utf-8") == bytes("정적 분석 결과", encoding="utf-8")
+
+
+def test_resolve_budget_bytes(monkeypatch) -> None:
+    from project_nurilab.config import DEFAULT_LLM_INPUT_BUDGET_BYTES
+    from project_nurilab.llm.review import _resolve_budget_bytes
+
+    assert DEFAULT_LLM_INPUT_BUDGET_BYTES == 64 * 1024
+    assert _resolve_budget_bytes(None) == 65536
+    assert _resolve_budget_bytes(2048) == 2048
+
+    with pytest.raises(ValueError, match="positive integer"):
+        _resolve_budget_bytes(0)
+    with pytest.raises(ValueError, match="positive integer"):
+        _resolve_budget_bytes(-10)
+
+    monkeypatch.setenv("NURILAB_LLM_INPUT_BUDGET_BYTES", "32768")
+    assert _resolve_budget_bytes(None) == 32768
+
+    monkeypatch.setenv("NURILAB_LLM_INPUT_BUDGET_BYTES", "invalid")
+    with pytest.raises(ValueError, match="positive integer"):
+        _resolve_budget_bytes(None)
+
+
+def test_project_payload_budget_truncation_atomic_signals(tmp_path: Path) -> None:
+    from project_nurilab.llm.review import (
+        _build_project_payload_summary,
+        _calculate_json_bytes,
+    )
+    from project_nurilab.schemas import (
+        ProjectAnalysis,
+        ProjectSummary,
+        PythonAnalysis,
+        SecretFinding,
+        SuspiciousCall,
+    )
+
+    root = tmp_path / "budget_proj"
+    # Create 3 files with multiple signals each
+    files = []
+    for i in range(5):
+        p = root / f"file_{i}.py"
+        files.append(
+            PythonAnalysis(
+                path=str(p),
+                line_count=100,
+                suspicious_calls=[
+                    SuspiciousCall(
+                        name=f"call_{j}",
+                        line=j * 10,
+                        category="dynamic_execution",
+                        severity="high" if j == 0 else "medium",
+                        reason=f"Detailed reason for call_{j} with enough text to consume byte budget.",
+                    )
+                    for j in range(5)
+                ],
+                secrets=[
+                    SecretFinding(
+                        kind="api_key",
+                        line=50,
+                        preview="sk-...",
+                        severity="high",
+                        reason="Hardcoded key with descriptive explanation.",
+                    )
+                ],
+            )
+        )
+
+    analysis = ProjectAnalysis(
+        root_path=str(root),
+        file_results=files,
+        summary=ProjectSummary(
+            total_files=5,
+            analyzed_files=5,
+            skipped_files=0,
+            severity_counts={"high": 10, "medium": 20},
+            risk_level="high",
+        ),
+    )
+
+    # 1. Without budget constraint, entire project fits
+    full_payload = _build_project_payload_summary(analysis, budget_bytes=100_000)
+    assert "truncation" not in full_payload
+    assert len(full_payload["file_analyses"]) == 5
+
+    # 2. With small budget constraint: budget = 1800 bytes
+    budget = 1800
+    payload1 = _build_project_payload_summary(analysis, budget_bytes=budget)
+    payload2 = _build_project_payload_summary(analysis, budget_bytes=budget)
+
+    # Byte-identical output for identical analysis
+    json_bytes1 = json.dumps(payload1, ensure_ascii=False, indent=2).encode("utf-8")
+    json_bytes2 = json.dumps(payload2, ensure_ascii=False, indent=2).encode("utf-8")
+    assert json_bytes1 == json_bytes2
+
+    # Payload byte size strictly within budget
+    assert _calculate_json_bytes(payload1) <= budget
+    assert len(json_bytes1) <= budget
+
+    # Truncation tracking
+    assert "truncation" in payload1
+    trunc = payload1["truncation"]
+    assert trunc["truncated"] is True
+    assert trunc["budget_bytes"] == budget
+    assert trunc["before_bytes"] > budget
+    assert trunc["sent_bytes"] <= budget
+    assert trunc["included_count"] < 30
+    assert trunc["omitted_count"] > 0
+    assert trunc["included_count"] + trunc["omitted_count"] == 30
+
+    # No signal cut in the middle: every included signal has all fields intact
+    for fa in payload1["file_analyses"]:
+        for call in fa.get("suspicious_calls", []):
+            assert set(call.keys()) == {
+                "name",
+                "line",
+                "category",
+                "severity",
+                "reason",
+            }
+            assert isinstance(call["name"], str)
+            assert isinstance(call["reason"], str)
+            assert not call["reason"].endswith("...")  # not sliced midway
+        for secret in fa.get("secrets", []):
+            assert set(secret.keys()) == {
+                "kind",
+                "line",
+                "preview",
+                "severity",
+                "reason",
+            }
+
+
+def test_file_payload_budget_truncation_atomic_signals() -> None:
+    from project_nurilab.llm.review import (
+        _build_file_payload_summary,
+        _calculate_json_bytes,
+    )
+    from project_nurilab.schemas import PythonAnalysis, SuspiciousCall
+
+    # File with 20 suspicious calls
+    calls = [
+        SuspiciousCall(
+            name=f"call_{i}",
+            line=i * 5,
+            category="command_execution",
+            severity="high" if i < 3 else "low",
+            reason=f"Explanation for suspicious call {i} in this file.",
+        )
+        for i in range(20)
+    ]
+    analysis = PythonAnalysis(
+        path="single_sample.py",
+        line_count=200,
+        suspicious_calls=calls,
+    )
+
+    budget = 800
+    payload1 = _build_file_payload_summary(analysis, budget_bytes=budget)
+    payload2 = _build_file_payload_summary(analysis, budget_bytes=budget)
+
+    # Byte-identical output
+    assert json.dumps(payload1, ensure_ascii=False, indent=2).encode(
+        "utf-8"
+    ) == json.dumps(payload2, ensure_ascii=False, indent=2).encode("utf-8")
+    # Within budget
+    assert _calculate_json_bytes(payload1) <= budget
+    assert "truncation" in payload1
+    trunc = payload1["truncation"]
+    assert trunc["truncated"] is True
+    assert trunc["budget_bytes"] == budget
+    assert trunc["before_bytes"] > budget
+    assert trunc["sent_bytes"] <= budget
+    assert trunc["included_count"] < 20
+    assert trunc["omitted_count"] > 0
+    assert trunc["included_count"] + trunc["omitted_count"] == 20
+
+    # High severity calls prioritized
+    included_calls = payload1["suspicious_calls"]
+    assert len(included_calls) > 0
+    # First calls must be high severity
+    assert included_calls[0]["severity"] == "high"
+    # Complete fields (no signal cut in the middle)
+    for c in included_calls:
+        assert set(c.keys()) == {"name", "line", "category", "severity", "reason"}
+
+
+def test_payload_budget_boundaries_below_at_over(tmp_path: Path) -> None:
+    from project_nurilab.llm.review import (
+        _build_file_payload_summary,
+        _build_project_payload_summary,
+        _calculate_json_bytes,
+    )
+    from project_nurilab.schemas import (
+        ProjectAnalysis,
+        ProjectSummary,
+        PythonAnalysis,
+        SuspiciousCall,
+    )
+
+    # Setup file analysis with multiple signals
+    calls = [
+        SuspiciousCall(
+            name=f"call_{i}",
+            line=i * 10,
+            category="command_execution",
+            severity="high" if i == 0 else "medium",
+            reason=f"Suspicious invocation {i}",
+        )
+        for i in range(5)
+    ]
+    file_analysis = PythonAnalysis(
+        path="boundary_sample.py",
+        line_count=50,
+        suspicious_calls=calls,
+    )
+
+    # Calculate exact unconstrained before_bytes
+    unconstrained_file = _build_file_payload_summary(
+        file_analysis, budget_bytes=100_000
+    )
+    exact_file_bytes = _calculate_json_bytes(unconstrained_file)
+    assert "truncation" not in unconstrained_file
+
+    # 1. File payload: BELOW boundary (budget = exact_file_bytes + 1)
+    below_file = _build_file_payload_summary(
+        file_analysis, budget_bytes=exact_file_bytes + 1
+    )
+    assert "truncation" not in below_file
+    assert len(below_file.get("suspicious_calls", [])) == 5
+
+    # 2. File payload: AT boundary (budget = exact_file_bytes)
+    at_file = _build_file_payload_summary(file_analysis, budget_bytes=exact_file_bytes)
+    assert "truncation" not in at_file
+    assert _calculate_json_bytes(at_file) == exact_file_bytes
+    assert len(at_file.get("suspicious_calls", [])) == 5
+
+    # 3. File payload: OVER boundary (budget = exact_file_bytes - 1)
+    over_file = _build_file_payload_summary(
+        file_analysis, budget_bytes=exact_file_bytes - 1
+    )
+    assert "truncation" in over_file
+    assert over_file["truncation"]["truncated"] is True
+    assert over_file["truncation"]["budget_bytes"] == exact_file_bytes - 1
+    assert over_file["truncation"]["before_bytes"] == exact_file_bytes
+    assert over_file["truncation"]["sent_bytes"] <= exact_file_bytes - 1
+    assert _calculate_json_bytes(over_file) <= exact_file_bytes - 1
+    assert over_file["truncation"]["omitted_count"] >= 1
+    assert (
+        over_file["truncation"]["included_count"]
+        + over_file["truncation"]["omitted_count"]
+        == 5
+    )
+
+    # Setup project analysis
+    proj_root = tmp_path / "proj"
+    proj_root.mkdir()
+    proj_file = proj_root / "sample.py"
+    proj_file_analysis = PythonAnalysis(
+        path=str(proj_file),
+        line_count=50,
+        suspicious_calls=calls,
+    )
+    proj_analysis = ProjectAnalysis(
+        root_path=str(proj_root),
+        file_results=[proj_file_analysis],
+        summary=ProjectSummary(
+            total_files=1,
+            analyzed_files=1,
+            skipped_files=0,
+            severity_counts={"high": 1, "medium": 4},
+            risk_level="high",
+        ),
+    )
+
+    unconstrained_proj = _build_project_payload_summary(
+        proj_analysis, budget_bytes=100_000
+    )
+    exact_proj_bytes = _calculate_json_bytes(unconstrained_proj)
+    assert "truncation" not in unconstrained_proj
+
+    # 4. Project payload: BELOW boundary (budget = exact_proj_bytes + 1)
+    below_proj = _build_project_payload_summary(
+        proj_analysis, budget_bytes=exact_proj_bytes + 1
+    )
+    assert "truncation" not in below_proj
+
+    # 5. Project payload: AT boundary (budget = exact_proj_bytes)
+    at_proj = _build_project_payload_summary(
+        proj_analysis, budget_bytes=exact_proj_bytes
+    )
+    assert "truncation" not in at_proj
+    assert _calculate_json_bytes(at_proj) == exact_proj_bytes
+
+    # 6. Project payload: OVER boundary (budget = exact_proj_bytes - 1)
+    over_proj = _build_project_payload_summary(
+        proj_analysis, budget_bytes=exact_proj_bytes - 1
+    )
+    assert "truncation" in over_proj
+    assert over_proj["truncation"]["truncated"] is True
+    assert over_proj["truncation"]["budget_bytes"] == exact_proj_bytes - 1
+    assert over_proj["truncation"]["before_bytes"] == exact_proj_bytes
+    assert over_proj["truncation"]["sent_bytes"] <= exact_proj_bytes - 1
+    assert _calculate_json_bytes(over_proj) <= exact_proj_bytes - 1
+    assert over_proj["truncation"]["omitted_count"] >= 1
+    assert (
+        over_proj["truncation"]["included_count"]
+        + over_proj["truncation"]["omitted_count"]
+        == 5
+    )
+
+
+def test_local_llm_request_failure_preserves_input_metadata(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from project_nurilab.llm.review import LocalLLMReviewClient
+    from project_nurilab.schemas import ProjectAnalysis, PythonAnalysis, SuspiciousCall
+
+    analysis = ProjectAnalysis(
+        root_path=str(tmp_path),
+        file_results=[
+            PythonAnalysis(
+                path=str(tmp_path / f"file_{i}.py"),
+                line_count=50,
+                suspicious_calls=[
+                    SuspiciousCall(
+                        name="eval",
+                        line=10,
+                        category="dynamic_execution",
+                        severity="high",
+                        reason="Dynamic execution of untrusted input",
+                    )
+                ],
+            )
+            for i in range(10)
+        ],
+    )
+
+    # Small budget so truncation triggers
+    client = LocalLLMReviewClient(
+        base_url="http://127.0.0.1:9999",
+        budget_bytes=500,
+    )
+
+    # Calling review on unreachable server should fail but preserve metadata
+    review = client.review(analysis)
+    assert review.risk_level == "unknown"
+    assert review.findings[0].title == "Local LLM connection failed"
+    assert review.input_metadata is not None
+    assert review.input_metadata["truncated"] is True
+    assert review.input_metadata["budget_bytes"] == 500
+    assert "before_bytes" in review.input_metadata
+    assert "sent_bytes" in review.input_metadata
+    assert "included_count" in review.input_metadata
+    assert "omitted_count" in review.input_metadata
+    assert review.input_metadata["sent_bytes"] <= 500
+
+    # Check serialization to dict
+    review_dict = review.to_dict()
+    assert "input_metadata" in review_dict
+    assert review_dict["input_metadata"]["truncated"] is True
+
+
+def test_report_generator_renders_input_metadata_views(tmp_path: Path) -> None:
+    from datetime import datetime, timezone
+    from project_nurilab import __version__
+    from project_nurilab.reports.generator import ReportGenerator
+    from project_nurilab.schemas import (
+        ProjectAnalysis,
+        ProjectReport,
+        ProjectSummary,
+        PythonAnalysis,
+        ReviewFinding,
+        ReviewResult,
+        SuspiciousCall,
+    )
+
+    proj_analysis = ProjectAnalysis(
+        root_path=str(tmp_path),
+        file_results=[
+            PythonAnalysis(
+                path=str(tmp_path / "app.py"),
+                line_count=20,
+                suspicious_calls=[
+                    SuspiciousCall(
+                        name="exec",
+                        line=5,
+                        category="dynamic_execution",
+                        severity="high",
+                        reason="Arbitrary execution",
+                    )
+                ],
+            )
+        ],
+        summary=ProjectSummary(
+            total_files=1,
+            analyzed_files=1,
+            skipped_files=0,
+            severity_counts={"high": 1},
+            risk_level="high",
+        ),
+    )
+
+    review_with_truncation = ReviewResult(
+        summary="Security review with budget truncation.",
+        risk_level="high",
+        findings=[
+            ReviewFinding(
+                title="Dynamic execution via exec",
+                severity="high",
+                file=str(tmp_path / "app.py"),
+                line=5,
+                reason="Dynamic code execution detected.",
+                recommendation="Avoid exec.",
+            )
+        ],
+        input_metadata={
+            "budget_bytes": 1024,
+            "before_bytes": 2048,
+            "sent_bytes": 950,
+            "included_count": 1,
+            "omitted_count": 3,
+            "truncated": True,
+        },
+    )
+
+    report = ProjectReport(
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        analyzer_version=__version__,
+        analysis=proj_analysis,
+        review=review_with_truncation,
+    )
+
+    generator = ReportGenerator()
+    out = generator.write(report, tmp_path, formats=["json", "html", "md"])
+
+    # 1. JSON representation
+    json_text = out["json"].read_text(encoding="utf-8")
+    json_data = json.loads(json_text)
+    assert json_data["review"]["input_metadata"] == {
+        "budget_bytes": 1024,
+        "before_bytes": 2048,
+        "sent_bytes": 950,
+        "included_count": 1,
+        "omitted_count": 3,
+        "truncated": True,
+    }
+
+    # 2. HTML representation
+    html_text = out["html"].read_text(encoding="utf-8")
+    assert "LLM Input Truncation" in html_text
+    assert "1,024 bytes" in html_text
+    assert "2,048 bytes" in html_text
+    assert "950 bytes" in html_text
+
+    # 3. Markdown representation
+    md_text = out["md"].read_text(encoding="utf-8")
+    assert "## LLM Input Truncation" in md_text
+    assert "- Budget Limit: `1,024 bytes`" in md_text
+    assert "- Before Truncation: `2,048 bytes`" in md_text
+    assert "- Sent Payload: `950 bytes`" in md_text
+    assert "- Signals Included: `1`" in md_text
+    assert "- Signals Omitted: `3`" in md_text
+    assert "- Truncated: `True`" in md_text
+
+
+def test_local_llm_review_success_records_input_metadata(monkeypatch) -> None:
+    from project_nurilab.llm.review import LocalLLMReviewClient
+    from project_nurilab.schemas import PythonAnalysis, SuspiciousCall
+
+    class ResponseStub:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "summary": "Review summary from LLM",
+                                    "risk_level": "medium",
+                                    "findings": [],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: ResponseStub())
+
+    calls = [
+        SuspiciousCall(
+            name=f"call_{i}",
+            line=i * 5,
+            category="command_execution",
+            severity="medium",
+            reason=f"Suspicious call {i}",
+        )
+        for i in range(20)
+    ]
+    analysis = PythonAnalysis(
+        path="app.py",
+        line_count=100,
+        suspicious_calls=calls,
+    )
+
+    client = LocalLLMReviewClient(base_url="http://localhost:8000/v1", budget_bytes=600)
+    review = client.review(analysis)
+
+    assert review.summary == "Review summary from LLM"
+    assert review.risk_level == "medium"
+    assert review.input_metadata is not None
+    assert review.input_metadata["truncated"] is True
+    assert review.input_metadata["budget_bytes"] == 600
+    assert review.input_metadata["before_bytes"] > 600
+    assert review.input_metadata["sent_bytes"] <= 600
+    assert review.input_metadata["included_count"] < 20
+    assert review.input_metadata["omitted_count"] > 0
