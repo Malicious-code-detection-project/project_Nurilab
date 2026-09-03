@@ -1469,6 +1469,131 @@ def test_file_payload_budget_truncation_atomic_signals() -> None:
         assert set(c.keys()) == {"name", "line", "category", "severity", "reason"}
 
 
+def test_payload_budget_boundaries_below_at_over(tmp_path: Path) -> None:
+    from project_nurilab.llm.review import (
+        _build_file_payload_summary,
+        _build_project_payload_summary,
+        _calculate_json_bytes,
+    )
+    from project_nurilab.schemas import (
+        ProjectAnalysis,
+        ProjectSummary,
+        PythonAnalysis,
+        SuspiciousCall,
+    )
+
+    # Setup file analysis with multiple signals
+    calls = [
+        SuspiciousCall(
+            name=f"call_{i}",
+            line=i * 10,
+            category="command_execution",
+            severity="high" if i == 0 else "medium",
+            reason=f"Suspicious invocation {i}",
+        )
+        for i in range(5)
+    ]
+    file_analysis = PythonAnalysis(
+        path="boundary_sample.py",
+        line_count=50,
+        suspicious_calls=calls,
+    )
+
+    # Calculate exact unconstrained before_bytes
+    unconstrained_file = _build_file_payload_summary(
+        file_analysis, budget_bytes=100_000
+    )
+    exact_file_bytes = _calculate_json_bytes(unconstrained_file)
+    assert "truncation" not in unconstrained_file
+
+    # 1. File payload: BELOW boundary (budget = exact_file_bytes + 1)
+    below_file = _build_file_payload_summary(
+        file_analysis, budget_bytes=exact_file_bytes + 1
+    )
+    assert "truncation" not in below_file
+    assert len(below_file.get("suspicious_calls", [])) == 5
+
+    # 2. File payload: AT boundary (budget = exact_file_bytes)
+    at_file = _build_file_payload_summary(file_analysis, budget_bytes=exact_file_bytes)
+    assert "truncation" not in at_file
+    assert _calculate_json_bytes(at_file) == exact_file_bytes
+    assert len(at_file.get("suspicious_calls", [])) == 5
+
+    # 3. File payload: OVER boundary (budget = exact_file_bytes - 1)
+    over_file = _build_file_payload_summary(
+        file_analysis, budget_bytes=exact_file_bytes - 1
+    )
+    assert "truncation" in over_file
+    assert over_file["truncation"]["truncated"] is True
+    assert over_file["truncation"]["budget_bytes"] == exact_file_bytes - 1
+    assert over_file["truncation"]["before_bytes"] == exact_file_bytes
+    assert over_file["truncation"]["sent_bytes"] <= exact_file_bytes - 1
+    assert _calculate_json_bytes(over_file) <= exact_file_bytes - 1
+    assert over_file["truncation"]["omitted_count"] >= 1
+    assert (
+        over_file["truncation"]["included_count"]
+        + over_file["truncation"]["omitted_count"]
+        == 5
+    )
+
+    # Setup project analysis
+    proj_root = tmp_path / "proj"
+    proj_root.mkdir()
+    proj_file = proj_root / "sample.py"
+    proj_file_analysis = PythonAnalysis(
+        path=str(proj_file),
+        line_count=50,
+        suspicious_calls=calls,
+    )
+    proj_analysis = ProjectAnalysis(
+        root_path=str(proj_root),
+        file_results=[proj_file_analysis],
+        summary=ProjectSummary(
+            total_files=1,
+            analyzed_files=1,
+            skipped_files=0,
+            severity_counts={"high": 1, "medium": 4},
+            risk_level="high",
+        ),
+    )
+
+    unconstrained_proj = _build_project_payload_summary(
+        proj_analysis, budget_bytes=100_000
+    )
+    exact_proj_bytes = _calculate_json_bytes(unconstrained_proj)
+    assert "truncation" not in unconstrained_proj
+
+    # 4. Project payload: BELOW boundary (budget = exact_proj_bytes + 1)
+    below_proj = _build_project_payload_summary(
+        proj_analysis, budget_bytes=exact_proj_bytes + 1
+    )
+    assert "truncation" not in below_proj
+
+    # 5. Project payload: AT boundary (budget = exact_proj_bytes)
+    at_proj = _build_project_payload_summary(
+        proj_analysis, budget_bytes=exact_proj_bytes
+    )
+    assert "truncation" not in at_proj
+    assert _calculate_json_bytes(at_proj) == exact_proj_bytes
+
+    # 6. Project payload: OVER boundary (budget = exact_proj_bytes - 1)
+    over_proj = _build_project_payload_summary(
+        proj_analysis, budget_bytes=exact_proj_bytes - 1
+    )
+    assert "truncation" in over_proj
+    assert over_proj["truncation"]["truncated"] is True
+    assert over_proj["truncation"]["budget_bytes"] == exact_proj_bytes - 1
+    assert over_proj["truncation"]["before_bytes"] == exact_proj_bytes
+    assert over_proj["truncation"]["sent_bytes"] <= exact_proj_bytes - 1
+    assert _calculate_json_bytes(over_proj) <= exact_proj_bytes - 1
+    assert over_proj["truncation"]["omitted_count"] >= 1
+    assert (
+        over_proj["truncation"]["included_count"]
+        + over_proj["truncation"]["omitted_count"]
+        == 5
+    )
+
+
 def test_local_llm_request_failure_preserves_input_metadata(
     monkeypatch, tmp_path: Path
 ) -> None:
