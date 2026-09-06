@@ -1286,20 +1286,41 @@ def test_calculate_json_bytes_utf8() -> None:
 
 
 def test_resolve_budget_bytes(monkeypatch) -> None:
-    from project_nurilab.config import DEFAULT_LLM_INPUT_BUDGET_BYTES
+    from project_nurilab.config import (
+        DEFAULT_LLM_INPUT_BUDGET_BYTES,
+        MIN_LLM_INPUT_BUDGET_BYTES,
+    )
     from project_nurilab.llm.review import _resolve_budget_bytes
 
     assert DEFAULT_LLM_INPUT_BUDGET_BYTES == 64 * 1024
+    assert MIN_LLM_INPUT_BUDGET_BYTES == 1024
     assert _resolve_budget_bytes(None) == 65536
     assert _resolve_budget_bytes(2048) == 2048
+    assert _resolve_budget_bytes(1024) == 1024
 
-    with pytest.raises(ValueError, match="positive integer"):
+    # Rejection of budgets below minimum (including reproduction values: 1, 64, 128)
+    with pytest.raises(ValueError, match="at least 1024"):
+        _resolve_budget_bytes(1023)
+    with pytest.raises(ValueError, match="at least 1024"):
+        _resolve_budget_bytes(128)
+    with pytest.raises(ValueError, match="at least 1024"):
+        _resolve_budget_bytes(64)
+    with pytest.raises(ValueError, match="at least 1024"):
+        _resolve_budget_bytes(1)
+    with pytest.raises(ValueError, match="at least 1024"):
         _resolve_budget_bytes(0)
-    with pytest.raises(ValueError, match="positive integer"):
+    with pytest.raises(ValueError, match="at least 1024"):
         _resolve_budget_bytes(-10)
 
     monkeypatch.setenv("NURILAB_LLM_INPUT_BUDGET_BYTES", "32768")
     assert _resolve_budget_bytes(None) == 32768
+
+    monkeypatch.setenv("NURILAB_LLM_INPUT_BUDGET_BYTES", "1024")
+    assert _resolve_budget_bytes(None) == 1024
+
+    monkeypatch.setenv("NURILAB_LLM_INPUT_BUDGET_BYTES", "512")
+    with pytest.raises(ValueError, match="at least 1024"):
+        _resolve_budget_bytes(None)
 
     monkeypatch.setenv("NURILAB_LLM_INPUT_BUDGET_BYTES", "invalid")
     with pytest.raises(ValueError, match="positive integer"):
@@ -1415,6 +1436,199 @@ def test_project_payload_budget_truncation_atomic_signals(tmp_path: Path) -> Non
             }
 
 
+def test_project_payload_truncation_global_severity_priority(tmp_path: Path) -> None:
+    from project_nurilab.llm.review import (
+        _build_project_payload_summary,
+        _calculate_json_bytes,
+    )
+    from project_nurilab.schemas import (
+        ProjectAnalysis,
+        ProjectSummary,
+        PythonAnalysis,
+        SuspiciousCall,
+    )
+
+    root = tmp_path / "priority_proj"
+    # file_a has 1 critical call and 10 low calls
+    file_a = PythonAnalysis(
+        path=str(root / "a_critical_and_lows.py"),
+        line_count=100,
+        suspicious_calls=[
+            SuspiciousCall(
+                name="crit_call",
+                line=1,
+                category="dynamic_execution",
+                severity="critical",
+                reason="Extremely dangerous dynamic code execution in file A.",
+            ),
+            *(
+                SuspiciousCall(
+                    name=f"low_call_{i}",
+                    line=10 + i,
+                    category="process",
+                    severity="low",
+                    reason=f"Low severity informational call {i} with sufficient text in file A.",
+                )
+                for i in range(10)
+            ),
+        ],
+    )
+    # file_b has 3 high calls
+    file_b = PythonAnalysis(
+        path=str(root / "b_high_signals.py"),
+        line_count=50,
+        suspicious_calls=[
+            SuspiciousCall(
+                name=f"high_call_{i}",
+                line=5 + i,
+                category="network",
+                severity="high",
+                reason=f"High risk exfiltration call {i} in file B.",
+            )
+            for i in range(3)
+        ],
+    )
+
+    analysis = ProjectAnalysis(
+        root_path=str(root),
+        file_results=[file_a, file_b],
+        summary=ProjectSummary(
+            total_files=2,
+            analyzed_files=2,
+            skipped_files=0,
+            severity_counts={"critical": 1, "high": 3, "low": 10},
+            risk_level="critical",
+        ),
+    )
+
+    full_payload = _build_project_payload_summary(analysis, budget_bytes=100_000)
+    full_bytes = _calculate_json_bytes(full_payload)
+    assert "truncation" not in full_payload
+    assert full_bytes > 1600
+
+    # Full payload exceeds budget. Set budget (1600) to fit critical + high signals,
+    # but not all low signals.
+    budget = 1600
+    payload = _build_project_payload_summary(analysis, budget_bytes=budget)
+
+    assert "truncation" in payload
+    assert payload["truncation"]["truncated"] is True
+    assert _calculate_json_bytes(payload) <= budget
+
+    files_in_payload = {fa["file"]: fa for fa in payload["file_analyses"]}
+    # Both files must be present because file_b has high-severity signals
+    assert "a_critical_and_lows.py" in files_in_payload
+    assert "b_high_signals.py" in files_in_payload
+
+    # The critical call in file A must be included
+    calls_a = [
+        c["name"]
+        for c in files_in_payload["a_critical_and_lows.py"].get("suspicious_calls", [])
+    ]
+    assert "crit_call" in calls_a
+
+    # All high calls in file B must be prioritized over low calls in file A
+    calls_b = [
+        c["name"]
+        for c in files_in_payload["b_high_signals.py"].get("suspicious_calls", [])
+    ]
+    assert set(calls_b) == {"high_call_0", "high_call_1", "high_call_2"}
+
+    # Total included signals should include critical + 3 highs, while low calls are omitted first
+    assert payload["truncation"]["omitted_count"] > 0
+    # Any omitted signal should be of low severity
+    assert payload["truncation"]["included_count"] >= 4  # 1 crit + 3 high
+
+
+def test_project_payload_truncation_cross_file_high_priority_over_same_file_low(
+    tmp_path: Path,
+) -> None:
+    """Verify THE-90 reproduction: cross-file global severity priority.
+
+    When a.py has high and low signals, and b.py has a high signal:
+    budget constraint must include a-high and b-high, omitting a-low.
+    """
+    from project_nurilab.llm.review import (
+        _build_project_payload_summary,
+        _calculate_json_bytes,
+    )
+    from project_nurilab.schemas import (
+        ProjectAnalysis,
+        ProjectSummary,
+        PythonAnalysis,
+        SuspiciousCall,
+    )
+
+    root = tmp_path / "cross_file_proj"
+    file_a = PythonAnalysis(
+        path=str(root / "a.py"),
+        line_count=50,
+        suspicious_calls=[
+            SuspiciousCall(
+                name="a_high_call",
+                line=10,
+                category="dynamic_execution",
+                severity="high",
+                reason="High severity call in file a.",
+            ),
+            SuspiciousCall(
+                name="a_low_call",
+                line=20,
+                category="process",
+                severity="low",
+                reason="Low severity call in file a that should not crowd out b's high.",
+            ),
+        ],
+    )
+    file_b = PythonAnalysis(
+        path=str(root / "b.py"),
+        line_count=50,
+        suspicious_calls=[
+            SuspiciousCall(
+                name="b_high_call",
+                line=15,
+                category="network",
+                severity="high",
+                reason="High severity call in file b.",
+            ),
+        ],
+    )
+
+    analysis = ProjectAnalysis(
+        root_path=str(root),
+        file_results=[file_a, file_b],
+        summary=ProjectSummary(
+            total_files=2,
+            analyzed_files=2,
+            skipped_files=0,
+            severity_counts={"high": 2, "low": 1},
+            risk_level="high",
+        ),
+    )
+
+    full_payload = _build_project_payload_summary(analysis, budget_bytes=100_000)
+    full_bytes = _calculate_json_bytes(full_payload)
+    assert "truncation" not in full_payload
+
+    # With full_bytes - 1 budget, exactly one signal (a_low_call) must be omitted,
+    # keeping a_high_call and b_high_call.
+    payload = _build_project_payload_summary(analysis, budget_bytes=full_bytes - 1)
+    assert payload["truncation"]["truncated"] is True
+    assert payload["truncation"]["included_count"] == 2
+    assert payload["truncation"]["omitted_count"] == 1
+
+    files = {fa["file"]: fa for fa in payload["file_analyses"]}
+    assert "a.py" in files
+    assert "b.py" in files
+
+    calls_a = [c["name"] for c in files["a.py"].get("suspicious_calls", [])]
+    calls_b = [c["name"] for c in files["b.py"].get("suspicious_calls", [])]
+
+    # a-high and b-high are included; a-low is omitted
+    assert calls_a == ["a_high_call"]
+    assert calls_b == ["b_high_call"]
+
+
 def test_file_payload_budget_truncation_atomic_signals() -> None:
     from project_nurilab.llm.review import (
         _build_file_payload_summary,
@@ -1439,7 +1653,7 @@ def test_file_payload_budget_truncation_atomic_signals() -> None:
         suspicious_calls=calls,
     )
 
-    budget = 800
+    budget = 1200
     payload1 = _build_file_payload_summary(analysis, budget_bytes=budget)
     payload2 = _build_file_payload_summary(analysis, budget_bytes=budget)
 
@@ -1482,16 +1696,16 @@ def test_payload_budget_boundaries_below_at_over(tmp_path: Path) -> None:
         SuspiciousCall,
     )
 
-    # Setup file analysis with multiple signals
+    # Setup file analysis with multiple signals (ensures exact_file_bytes > 1024)
     calls = [
         SuspiciousCall(
             name=f"call_{i}",
             line=i * 10,
             category="command_execution",
             severity="high" if i == 0 else "medium",
-            reason=f"Suspicious invocation {i}",
+            reason=f"Suspicious invocation {i} with detailed explanation text",
         )
-        for i in range(5)
+        for i in range(8)
     ]
     file_analysis = PythonAnalysis(
         path="boundary_sample.py",
@@ -1505,19 +1719,20 @@ def test_payload_budget_boundaries_below_at_over(tmp_path: Path) -> None:
     )
     exact_file_bytes = _calculate_json_bytes(unconstrained_file)
     assert "truncation" not in unconstrained_file
+    assert exact_file_bytes > 1024
 
     # 1. File payload: BELOW boundary (budget = exact_file_bytes + 1)
     below_file = _build_file_payload_summary(
         file_analysis, budget_bytes=exact_file_bytes + 1
     )
     assert "truncation" not in below_file
-    assert len(below_file.get("suspicious_calls", [])) == 5
+    assert len(below_file.get("suspicious_calls", [])) == 8
 
     # 2. File payload: AT boundary (budget = exact_file_bytes)
     at_file = _build_file_payload_summary(file_analysis, budget_bytes=exact_file_bytes)
     assert "truncation" not in at_file
     assert _calculate_json_bytes(at_file) == exact_file_bytes
-    assert len(at_file.get("suspicious_calls", [])) == 5
+    assert len(at_file.get("suspicious_calls", [])) == 8
 
     # 3. File payload: OVER boundary (budget = exact_file_bytes - 1)
     over_file = _build_file_payload_summary(
@@ -1533,8 +1748,21 @@ def test_payload_budget_boundaries_below_at_over(tmp_path: Path) -> None:
     assert (
         over_file["truncation"]["included_count"]
         + over_file["truncation"]["omitted_count"]
-        == 5
+        == 8
     )
+
+    # 4. File payload: EXACT MINIMUM boundary (budget = 1024)
+    min_file = _build_file_payload_summary(file_analysis, budget_bytes=1024)
+    assert "truncation" in min_file
+    assert min_file["truncation"]["truncated"] is True
+    assert min_file["truncation"]["budget_bytes"] == 1024
+    assert min_file["truncation"]["sent_bytes"] <= 1024
+    assert _calculate_json_bytes(min_file) <= 1024
+
+    # 5. File payload: BELOW MINIMUM boundary rejected
+    for invalid_b in (1023, 512, 128, 64, 1):
+        with pytest.raises(ValueError, match="at least 1024"):
+            _build_file_payload_summary(file_analysis, budget_bytes=invalid_b)
 
     # Setup project analysis
     proj_root = tmp_path / "proj"
@@ -1552,7 +1780,7 @@ def test_payload_budget_boundaries_below_at_over(tmp_path: Path) -> None:
             total_files=1,
             analyzed_files=1,
             skipped_files=0,
-            severity_counts={"high": 1, "medium": 4},
+            severity_counts={"high": 1, "medium": 7},
             risk_level="high",
         ),
     )
@@ -1562,21 +1790,22 @@ def test_payload_budget_boundaries_below_at_over(tmp_path: Path) -> None:
     )
     exact_proj_bytes = _calculate_json_bytes(unconstrained_proj)
     assert "truncation" not in unconstrained_proj
+    assert exact_proj_bytes > 1024
 
-    # 4. Project payload: BELOW boundary (budget = exact_proj_bytes + 1)
+    # 6. Project payload: BELOW boundary (budget = exact_proj_bytes + 1)
     below_proj = _build_project_payload_summary(
         proj_analysis, budget_bytes=exact_proj_bytes + 1
     )
     assert "truncation" not in below_proj
 
-    # 5. Project payload: AT boundary (budget = exact_proj_bytes)
+    # 7. Project payload: AT boundary (budget = exact_proj_bytes)
     at_proj = _build_project_payload_summary(
         proj_analysis, budget_bytes=exact_proj_bytes
     )
     assert "truncation" not in at_proj
     assert _calculate_json_bytes(at_proj) == exact_proj_bytes
 
-    # 6. Project payload: OVER boundary (budget = exact_proj_bytes - 1)
+    # 8. Project payload: OVER boundary (budget = exact_proj_bytes - 1)
     over_proj = _build_project_payload_summary(
         proj_analysis, budget_bytes=exact_proj_bytes - 1
     )
@@ -1590,8 +1819,21 @@ def test_payload_budget_boundaries_below_at_over(tmp_path: Path) -> None:
     assert (
         over_proj["truncation"]["included_count"]
         + over_proj["truncation"]["omitted_count"]
-        == 5
+        == 8
     )
+
+    # 9. Project payload: EXACT MINIMUM boundary (budget = 1024)
+    min_proj = _build_project_payload_summary(proj_analysis, budget_bytes=1024)
+    assert "truncation" in min_proj
+    assert min_proj["truncation"]["truncated"] is True
+    assert min_proj["truncation"]["budget_bytes"] == 1024
+    assert min_proj["truncation"]["sent_bytes"] <= 1024
+    assert _calculate_json_bytes(min_proj) <= 1024
+
+    # 10. Project payload: BELOW MINIMUM boundary rejected
+    for invalid_b in (1023, 512, 128, 64, 1):
+        with pytest.raises(ValueError, match="at least 1024"):
+            _build_project_payload_summary(proj_analysis, budget_bytes=invalid_b)
 
 
 def test_local_llm_request_failure_preserves_input_metadata(
@@ -1620,10 +1862,10 @@ def test_local_llm_request_failure_preserves_input_metadata(
         ],
     )
 
-    # Small budget so truncation triggers
+    # Minimum budget so truncation triggers
     client = LocalLLMReviewClient(
         base_url="http://127.0.0.1:9999",
-        budget_bytes=500,
+        budget_bytes=1024,
     )
 
     # Calling review on unreachable server should fail but preserve metadata
@@ -1632,12 +1874,12 @@ def test_local_llm_request_failure_preserves_input_metadata(
     assert review.findings[0].title == "Local LLM connection failed"
     assert review.input_metadata is not None
     assert review.input_metadata["truncated"] is True
-    assert review.input_metadata["budget_bytes"] == 500
+    assert review.input_metadata["budget_bytes"] == 1024
     assert "before_bytes" in review.input_metadata
     assert "sent_bytes" in review.input_metadata
     assert "included_count" in review.input_metadata
     assert "omitted_count" in review.input_metadata
-    assert review.input_metadata["sent_bytes"] <= 500
+    assert review.input_metadata["sent_bytes"] <= 1024
 
     # Check serialization to dict
     review_dict = review.to_dict()
@@ -1793,15 +2035,17 @@ def test_local_llm_review_success_records_input_metadata(monkeypatch) -> None:
         suspicious_calls=calls,
     )
 
-    client = LocalLLMReviewClient(base_url="http://localhost:8000/v1", budget_bytes=600)
+    client = LocalLLMReviewClient(
+        base_url="http://localhost:8000/v1", budget_bytes=1024
+    )
     review = client.review(analysis)
 
     assert review.summary == "Review summary from LLM"
     assert review.risk_level == "medium"
     assert review.input_metadata is not None
     assert review.input_metadata["truncated"] is True
-    assert review.input_metadata["budget_bytes"] == 600
-    assert review.input_metadata["before_bytes"] > 600
-    assert review.input_metadata["sent_bytes"] <= 600
+    assert review.input_metadata["budget_bytes"] == 1024
+    assert review.input_metadata["before_bytes"] > 1024
+    assert review.input_metadata["sent_bytes"] <= 1024
     assert review.input_metadata["included_count"] < 20
     assert review.input_metadata["omitted_count"] > 0

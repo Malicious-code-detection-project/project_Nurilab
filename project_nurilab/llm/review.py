@@ -22,6 +22,7 @@ from project_nurilab.config import (
     DEFAULT_LLM_MODEL,
     DEFAULT_LLM_TEMPERATURE,
     DEFAULT_LLM_TIMEOUT_SECONDS,
+    MIN_LLM_INPUT_BUDGET_BYTES,
 )
 from project_nurilab.schemas import (
     ProjectAnalysis,
@@ -620,13 +621,35 @@ def _finalize_truncation_metadata(
     }
     payload["truncation"] = meta
     meta["sent_bytes"] = _calculate_json_bytes(payload)
-    meta["sent_bytes"] = _calculate_json_bytes(payload)
+
+
+def _format_truncated_file_summary(raw_d: dict[str, Any]) -> dict[str, Any]:
+    """Return a cleanly formatted, canonical dictionary for a truncated file summary."""
+    clean_d: dict[str, Any] = {
+        "file": raw_d["file"],
+        "line_count": raw_d["line_count"],
+    }
+    if raw_d.get("skipped"):
+        clean_d["skipped"] = True
+        if raw_d.get("skip_reason") is not None:
+            clean_d["skip_reason"] = raw_d["skip_reason"]
+    if raw_d.get("syntax_error") is not None:
+        clean_d["syntax_error"] = raw_d["syntax_error"]
+    if raw_d.get("suspicious_calls"):
+        clean_d["suspicious_calls"] = raw_d["suspicious_calls"]
+    if raw_d.get("secrets"):
+        clean_d["secrets"] = raw_d["secrets"]
+    if raw_d.get("ruff_findings"):
+        clean_d["ruff_findings"] = raw_d["ruff_findings"]
+    return clean_d
 
 
 def _build_project_payload_summary(
     analysis: ProjectAnalysis,
     budget_bytes: int = DEFAULT_LLM_INPUT_BUDGET_BYTES,
 ) -> dict[str, Any]:
+    budget_bytes = _resolve_budget_bytes(budget_bytes)
+
     # 1. Resolve all file results paths
     file_results_resolved = {}
     for r in analysis.file_results:
@@ -792,165 +815,138 @@ def _build_project_payload_summary(
     if before_bytes <= budget_bytes:
         return full_payload
 
-    # Truncate without cutting signals in the middle
+    # Truncate without cutting signals in the middle, prioritizing signals
+    # globally by severity across all files in the project.
     total_signals = sum(_count_file_signals(entry[1]) for entry in file_entries)
 
-    included_files: list[dict[str, Any]] = []
-    included_signals = 0
+    all_signals: list[
+        tuple[
+            tuple[int, str, str, int, str],  # canonical sort key
+            str,  # rel_path
+            int,  # line_count
+            str,  # sig_type
+            Any,  # serialized signal or value
+        ]
+    ] = []
 
     for _, file_summary in file_entries:
-        # 1. Try adding the entire file
-        test_files = list(included_files) + [file_summary]
-        test_payload = {
-            "root_path": analysis.root_path,
-            "summary": summary_dict,
-            "file_analyses": test_files,
-            "truncation": {
-                "budget_bytes": budget_bytes,
-                "before_bytes": before_bytes,
-                "sent_bytes": budget_bytes,
-                "included_count": included_signals + _count_file_signals(file_summary),
-                "omitted_count": total_signals
-                - (included_signals + _count_file_signals(file_summary)),
-                "truncated": True,
-            },
-        }
-        if _calculate_json_bytes(test_payload) <= budget_bytes:
-            included_files.append(file_summary)
-            included_signals += _count_file_signals(file_summary)
-            continue
+        rel_path = file_summary["file"]
+        line_count = file_summary.get("line_count", 0)
 
-        # 2. Entire file does not fit. Try adding skeleton and individual signals
-        skeleton: dict[str, Any] = {
-            "file": file_summary["file"],
-            "line_count": file_summary["line_count"],
-        }
-        if "skipped" in file_summary:
-            skeleton["skipped"] = file_summary["skipped"]
-            skeleton["skip_reason"] = file_summary.get("skip_reason")
-        if "syntax_error" in file_summary:
-            skeleton["syntax_error"] = file_summary["syntax_error"]
+        if file_summary.get("skipped"):
+            k = _signal_sort_key("info", "input", rel_path, 0, "skipped")
+            all_signals.append(
+                (k, rel_path, line_count, "skipped", file_summary.get("skip_reason"))
+            )
+        if file_summary.get("syntax_error"):
+            k = _signal_sort_key("medium", "ast", rel_path, 0, "syntax_error")
+            all_signals.append(
+                (k, rel_path, line_count, "syntax_error", file_summary["syntax_error"])
+            )
+        for call in file_summary.get("suspicious_calls", []):
+            k = _signal_sort_key(
+                call["severity"], "pattern", rel_path, call["line"], call["name"]
+            )
+            all_signals.append((k, rel_path, line_count, "suspicious_calls", call))
+        for secret in file_summary.get("secrets", []):
+            k = _signal_sort_key(
+                secret["severity"], "secret", rel_path, secret["line"], secret["kind"]
+            )
+            all_signals.append((k, rel_path, line_count, "secrets", secret))
+        for ruff in file_summary.get("ruff_findings", []):
+            k = _signal_sort_key(
+                ruff["severity"], "ruff", rel_path, ruff["line"], ruff["rule_id"]
+            )
+            all_signals.append((k, rel_path, line_count, "ruff_findings", ruff))
 
-        skeleton_signals = (1 if "skipped" in skeleton else 0) + (
-            1 if "syntax_error" in skeleton else 0
+    all_signals.sort(key=lambda s: s[0])
+
+    included_files_data: dict[str, dict[str, Any]] = {}
+    file_top_keys: dict[str, tuple[int, str, str, int, str]] = {}
+    included_signals = 0
+
+    for sort_key, rel_path, line_count, sig_type, sig_data in all_signals:
+        trial_files_data = {
+            path: {
+                "file": d["file"],
+                "line_count": d["line_count"],
+                "skipped": d.get("skipped"),
+                "skip_reason": d.get("skip_reason"),
+                "syntax_error": d.get("syntax_error"),
+                "suspicious_calls": list(d.get("suspicious_calls", [])),
+                "secrets": list(d.get("secrets", [])),
+                "ruff_findings": list(d.get("ruff_findings", [])),
+            }
+            for path, d in included_files_data.items()
+        }
+        trial_top_keys = dict(file_top_keys)
+
+        if rel_path not in trial_files_data:
+            trial_files_data[rel_path] = {
+                "file": rel_path,
+                "line_count": line_count,
+                "suspicious_calls": [],
+                "secrets": [],
+                "ruff_findings": [],
+            }
+            trial_top_keys[rel_path] = sort_key
+
+        target_file = trial_files_data[rel_path]
+
+        if sig_type == "skipped":
+            target_file["skipped"] = True
+            if sig_data is not None:
+                target_file["skip_reason"] = sig_data
+        elif sig_type == "syntax_error":
+            target_file["syntax_error"] = sig_data
+        elif sig_type == "suspicious_calls":
+            target_file["suspicious_calls"].append(sig_data)
+        elif sig_type == "secrets":
+            target_file["secrets"].append(sig_data)
+        elif sig_type == "ruff_findings":
+            target_file["ruff_findings"].append(sig_data)
+
+        sorted_file_paths = sorted(
+            trial_files_data.keys(), key=lambda p: trial_top_keys[p]
         )
+        test_file_analyses = [
+            _format_truncated_file_summary(trial_files_data[p])
+            for p in sorted_file_paths
+        ]
 
-        test_files = list(included_files) + [skeleton]
-        test_payload = {
+        test_payload: dict[str, Any] = {
             "root_path": analysis.root_path,
             "summary": summary_dict,
-            "file_analyses": test_files,
+            "file_analyses": test_file_analyses,
             "truncation": {
                 "budget_bytes": budget_bytes,
                 "before_bytes": before_bytes,
                 "sent_bytes": budget_bytes,
-                "included_count": included_signals + skeleton_signals,
-                "omitted_count": total_signals - (included_signals + skeleton_signals),
+                "included_count": included_signals + 1,
+                "omitted_count": total_signals - (included_signals + 1),
                 "truncated": True,
             },
         }
-        if _calculate_json_bytes(test_payload) > budget_bytes:
-            # Even skeleton cannot fit; stop
+
+        if _calculate_json_bytes(test_payload) <= budget_bytes:
+            included_files_data = trial_files_data
+            file_top_keys = trial_top_keys
+            included_signals += 1
+        else:
             break
 
-        # Collect and sort signals for this file
-        file_signals: list[
-            tuple[tuple[int, str, str, int, str], str, dict[str, Any]]
-        ] = []
-        for c in file_summary.get("suspicious_calls", []):
-            k = _signal_sort_key(
-                c["severity"],
-                "pattern",
-                file_summary["file"],
-                c["line"],
-                c["name"],
-            )
-            file_signals.append((k, "suspicious_calls", c))
-        for s in file_summary.get("secrets", []):
-            k = _signal_sort_key(
-                s["severity"],
-                "secret",
-                file_summary["file"],
-                s["line"],
-                s["kind"],
-            )
-            file_signals.append((k, "secrets", s))
-        for r in file_summary.get("ruff_findings", []):
-            k = _signal_sort_key(
-                r["severity"],
-                "ruff",
-                file_summary["file"],
-                r["line"],
-                r["rule_id"],
-            )
-            file_signals.append((k, "ruff_findings", r))
-
-        file_signals.sort(key=lambda item: item[0])
-
-        candidate_file = dict(skeleton)
-        calls_list: list[dict[str, Any]] = []
-        secrets_list: list[dict[str, Any]] = []
-        ruff_list: list[dict[str, Any]] = []
-        added_file_signals = skeleton_signals
-
-        for _, sig_type, sig_dict in file_signals:
-            if sig_type == "suspicious_calls":
-                calls_list.append(sig_dict)
-            elif sig_type == "secrets":
-                secrets_list.append(sig_dict)
-            elif sig_type == "ruff_findings":
-                ruff_list.append(sig_dict)
-
-            temp_file = dict(candidate_file)
-            if calls_list:
-                temp_file["suspicious_calls"] = calls_list
-            if secrets_list:
-                temp_file["secrets"] = secrets_list
-            if ruff_list:
-                temp_file["ruff_findings"] = ruff_list
-
-            test_files = list(included_files) + [temp_file]
-            test_payload = {
-                "root_path": analysis.root_path,
-                "summary": summary_dict,
-                "file_analyses": test_files,
-                "truncation": {
-                    "budget_bytes": budget_bytes,
-                    "before_bytes": before_bytes,
-                    "sent_bytes": budget_bytes,
-                    "included_count": included_signals + added_file_signals + 1,
-                    "omitted_count": total_signals
-                    - (included_signals + added_file_signals + 1),
-                    "truncated": True,
-                },
-            }
-            if _calculate_json_bytes(test_payload) <= budget_bytes:
-                added_file_signals += 1
-            else:
-                if sig_type == "suspicious_calls":
-                    calls_list.pop()
-                elif sig_type == "secrets":
-                    secrets_list.pop()
-                elif sig_type == "ruff_findings":
-                    ruff_list.pop()
-                break
-
-        if calls_list or secrets_list or ruff_list or skeleton_signals > 0:
-            if calls_list:
-                skeleton["suspicious_calls"] = calls_list
-            if secrets_list:
-                skeleton["secrets"] = secrets_list
-            if ruff_list:
-                skeleton["ruff_findings"] = ruff_list
-            included_files.append(skeleton)
-            included_signals += added_file_signals
-
-        break
+    sorted_file_paths = sorted(
+        included_files_data.keys(), key=lambda p: file_top_keys[p]
+    )
+    final_file_analyses = [
+        _format_truncated_file_summary(included_files_data[p])
+        for p in sorted_file_paths
+    ]
 
     final_payload: dict[str, Any] = {
         "root_path": analysis.root_path,
         "summary": summary_dict,
-        "file_analyses": included_files,
+        "file_analyses": final_file_analyses,
     }
     _finalize_truncation_metadata(
         final_payload,
@@ -966,6 +962,7 @@ def _build_file_payload_summary(
     analysis: PythonAnalysis,
     budget_bytes: int = DEFAULT_LLM_INPUT_BUDGET_BYTES,
 ) -> dict[str, Any]:
+    budget_bytes = _resolve_budget_bytes(budget_bytes)
     rel_path = analysis.path
     sorted_calls = sorted(
         analysis.suspicious_calls,
@@ -1356,18 +1353,22 @@ def _resolve_timeout(timeout: float | None) -> float:
 
 def _resolve_budget_bytes(budget_bytes: int | None) -> int:
     if budget_bytes is not None:
-        if budget_bytes <= 0:
-            raise ValueError("budget_bytes must be a positive integer.")
+        if budget_bytes < MIN_LLM_INPUT_BUDGET_BYTES:
+            raise ValueError(
+                f"budget_bytes must be at least {MIN_LLM_INPUT_BUDGET_BYTES} bytes (got {budget_bytes})."
+            )
         return budget_bytes
     configured_budget = os.getenv("NURILAB_LLM_INPUT_BUDGET_BYTES")
     if configured_budget:
         try:
             val = int(configured_budget)
-            if val <= 0:
-                raise ValueError
-            return val
         except ValueError as exc:
             raise ValueError(
                 "NURILAB_LLM_INPUT_BUDGET_BYTES must be a positive integer."
             ) from exc
+        if val < MIN_LLM_INPUT_BUDGET_BYTES:
+            raise ValueError(
+                f"NURILAB_LLM_INPUT_BUDGET_BYTES must be at least {MIN_LLM_INPUT_BUDGET_BYTES} bytes (got {val})."
+            )
+        return val
     return DEFAULT_LLM_INPUT_BUDGET_BYTES
