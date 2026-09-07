@@ -1836,6 +1836,62 @@ def test_payload_budget_boundaries_below_at_over(tmp_path: Path) -> None:
             _build_project_payload_summary(proj_analysis, budget_bytes=invalid_b)
 
 
+def test_truncation_metadata_uses_exact_final_payload_size() -> None:
+    from project_nurilab.llm.review import (
+        _build_file_payload_summary,
+        _calculate_json_bytes,
+    )
+    from project_nurilab.schemas import PythonAnalysis, SuspiciousCall
+
+    analysis = PythonAnalysis(
+        path="single.py",
+        line_count=100,
+        suspicious_calls=[
+            SuspiciousCall(
+                name=f"call_{index}",
+                line=index + 1,
+                category="command_execution",
+                severity="high" if index < 3 else "low",
+                reason="Detailed signal reason " + ("x" * 80),
+            )
+            for index in range(20)
+        ],
+    )
+
+    payload = _build_file_payload_summary(analysis, budget_bytes=1024)
+
+    assert payload["truncation"]["sent_bytes"] == _calculate_json_bytes(payload)
+    assert payload["truncation"]["sent_bytes"] <= 1024
+
+
+def test_minimum_budget_rejects_input_dependent_payload_overhead() -> None:
+    from project_nurilab.llm.review import (
+        _build_file_payload_summary,
+        _build_project_payload_summary,
+    )
+    from project_nurilab.schemas import ProjectAnalysis, PythonAnalysis
+
+    long_path = "/tmp/" + "/".join(["segment"] * 180) + "/sample.py"
+
+    with pytest.raises(
+        ValueError,
+        match="too small for the final normalized JSON payload",
+    ):
+        _build_file_payload_summary(
+            PythonAnalysis(path=long_path, line_count=1),
+            budget_bytes=1024,
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="too small for the final normalized JSON payload",
+    ):
+        _build_project_payload_summary(
+            ProjectAnalysis(root_path=long_path, file_results=[]),
+            budget_bytes=1024,
+        )
+
+
 def test_local_llm_request_failure_preserves_input_metadata(
     monkeypatch, tmp_path: Path
 ) -> None:

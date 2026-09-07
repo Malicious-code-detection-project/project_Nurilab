@@ -620,7 +620,23 @@ def _finalize_truncation_metadata(
         "truncated": True,
     }
     payload["truncation"] = meta
-    meta["sent_bytes"] = _calculate_json_bytes(payload)
+    # sent_bytes contributes to the serialized size it reports. Recalculate
+    # until that self-referential value reaches a stable fixed point.
+    for _ in range(10):
+        actual_bytes = _calculate_json_bytes(payload)
+        if meta["sent_bytes"] == actual_bytes:
+            break
+        meta["sent_bytes"] = actual_bytes
+    else:  # pragma: no cover - decimal digit widths converge in a few passes.
+        raise RuntimeError("Unable to stabilize truncation sent_bytes metadata.")
+
+    actual_bytes = _calculate_json_bytes(payload)
+    if actual_bytes > budget_bytes:
+        raise ValueError(
+            "budget_bytes is too small for the final normalized JSON payload: "
+            f"requires at least {actual_bytes} bytes for mandatory fields and "
+            f"truncation metadata (got {budget_bytes})."
+        )
 
 
 def _format_truncated_file_summary(raw_d: dict[str, Any]) -> dict[str, Any]:
