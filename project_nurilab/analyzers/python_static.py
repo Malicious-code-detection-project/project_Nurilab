@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 
-from project_nurilab.analyzers.patterns import SUSPICIOUS_CALL_RULES
+from project_nurilab.analyzers.patterns import SUSPICIOUS_CALL_RULES, SuspiciousCallRule
 from project_nurilab.analyzers.secrets import find_potential_secrets
 from project_nurilab.input.manager import LoadedPythonFile
 from project_nurilab.schemas import (
@@ -115,13 +115,14 @@ class _PythonSignalVisitor(ast.NodeVisitor):
         )
         rule = SUSPICIOUS_CALL_RULES.get(call_name)
         if rule:
+            severity, reason = _refine_call_context(node, call_name, rule)
             self.suspicious_calls.append(
                 SuspiciousCall(
                     name=call_name,
                     line=node.lineno,
                     category=rule.category,
-                    severity=rule.severity,
-                    reason=rule.reason,
+                    severity=severity,
+                    reason=reason,
                 )
             )
         self.generic_visit(node)
@@ -161,3 +162,120 @@ def _canonicalize_call_name(call_name: str, import_bindings: dict[str, str]) -> 
     if not separator:
         return canonical_root
     return f"{canonical_root}.{remainder}"
+
+
+def _get_keyword_arg(node: ast.Call, arg_name: str) -> ast.AST | None:
+    """Return the AST expression for a keyword argument, if present."""
+    for kw in node.keywords:
+        if kw.arg == arg_name:
+            return kw.value
+    return None
+
+
+def _get_call_arg(node: ast.Call, position: int, arg_name: str) -> ast.AST | None:
+    """Return argument at position or via keyword name."""
+    if len(node.args) > position:
+        return node.args[position]
+    return _get_keyword_arg(node, arg_name)
+
+
+def _is_dynamic_expression(node: ast.AST) -> bool:
+    """Check if an expression is dynamic (variable, call, f-string, concatenation)."""
+    if isinstance(
+        node, (ast.Name, ast.JoinedStr, ast.Call, ast.Subscript, ast.Attribute)
+    ):
+        return True
+    if isinstance(node, ast.BinOp):
+        return True
+    if isinstance(node, (ast.List, ast.Tuple)):
+        return any(_is_dynamic_expression(elt) for elt in node.elts)
+    return False
+
+
+def _extract_constant_str(node: ast.AST | None) -> str | None:
+    """Return the string value if node is a string constant."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _refine_call_context(
+    node: ast.Call,
+    call_name: str,
+    base_rule: SuspiciousCallRule,
+) -> tuple[str, str]:
+    """Refine severity and reason based on call arguments and execution context.
+
+    Returns:
+        A tuple of (severity, reason).
+    """
+    if call_name in ("subprocess.run", "subprocess.Popen"):
+        shell_node = _get_keyword_arg(node, "shell")
+        has_shell_true = (
+            isinstance(shell_node, ast.Constant) and bool(shell_node.value) is True
+        )
+        if has_shell_true:
+            return (
+                "high",
+                f"{call_name} executed with shell=True; "
+                "command injection risk if input is untrusted.",
+            )
+
+        cmd_arg = _get_call_arg(node, 0, "args")
+        if cmd_arg is not None and _is_dynamic_expression(cmd_arg):
+            return (
+                "medium",
+                f"{call_name} starts external process with dynamic arguments.",
+            )
+        return (base_rule.severity, base_rule.reason)
+
+    if call_name == "os.system":
+        cmd_arg = _get_call_arg(node, 0, "command")
+        if cmd_arg is not None and _is_dynamic_expression(cmd_arg):
+            return (
+                "high",
+                "os.system executes shell command with dynamic input; "
+                "high risk of command injection.",
+            )
+        return (base_rule.severity, base_rule.reason)
+
+    if call_name in ("requests.get", "requests.post"):
+        url_arg = _get_call_arg(node, 0, "url")
+        if url_arg is not None and _is_dynamic_expression(url_arg):
+            return (
+                "medium",
+                f"{call_name} called with dynamic URL; "
+                "destination should be reviewed for untrusted network access.",
+            )
+        return (base_rule.severity, base_rule.reason)
+
+    if call_name == "open":
+        path_arg = _get_call_arg(node, 0, "file")
+        if path_arg is not None and _is_dynamic_expression(path_arg):
+            return (
+                "medium",
+                "open called with dynamic file path; risk of path traversal or unintended file access.",
+            )
+
+        mode_arg = _get_call_arg(node, 1, "mode")
+        mode_str = _extract_constant_str(mode_arg) if mode_arg is not None else "r"
+
+        if mode_str is not None:
+            if any(c in mode_str for c in ("w", "a", "x", "+")):
+                return (
+                    "medium",
+                    f"open called with write/modify permissions (mode='{mode_str}').",
+                )
+            return (
+                "low",
+                "open called for read-only access.",
+            )
+
+        if mode_arg is not None and _is_dynamic_expression(mode_arg):
+            return (
+                "medium",
+                "open called with dynamic mode parameter.",
+            )
+        return (base_rule.severity, base_rule.reason)
+
+    return (base_rule.severity, base_rule.reason)
