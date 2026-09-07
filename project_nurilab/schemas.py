@@ -160,11 +160,15 @@ class ReviewResult:
     summary: str
     risk_level: str
     findings: list[ReviewFinding] = field(default_factory=list)
+    input_metadata: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation."""
 
-        return asdict(self)
+        data = asdict(self)
+        if self.input_metadata is None:
+            data.pop("input_metadata", None)
+        return data
 
 
 @dataclass(slots=True)

@@ -8,6 +8,10 @@ DEFAULT_LLM_BASE_URL = "http://localhost:8000/v1"
 DEFAULT_LLM_MODEL = "openai/gpt-oss-20b"
 DEFAULT_LLM_TIMEOUT_SECONDS = 120.0
 DEFAULT_LLM_TEMPERATURE = 0.1
+DEFAULT_LLM_INPUT_BUDGET_BYTES = 64 * 1024  # 64 KiB
+MIN_LLM_INPUT_BUDGET_BYTES = (
+    1024  # 1 KiB: minimum viable budget for payload skeleton, metadata, and signals
+)
 DEFAULT_EXCLUDED_DIRS = frozenset(
     {
         ".git",
