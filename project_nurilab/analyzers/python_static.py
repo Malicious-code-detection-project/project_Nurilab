@@ -180,16 +180,12 @@ def _get_call_arg(node: ast.Call, position: int, arg_name: str) -> ast.AST | Non
 
 
 def _is_dynamic_expression(node: ast.AST) -> bool:
-    """Check if an expression is dynamic (variable, call, f-string, concatenation)."""
-    if isinstance(
-        node, (ast.Name, ast.JoinedStr, ast.Call, ast.Subscript, ast.Attribute)
-    ):
-        return True
-    if isinstance(node, ast.BinOp):
-        return True
+    """Treat an expression as static only when its value is provably literal."""
+    if isinstance(node, ast.Constant):
+        return False
     if isinstance(node, (ast.List, ast.Tuple)):
         return any(_is_dynamic_expression(elt) for elt in node.elts)
-    return False
+    return True
 
 
 def _extract_constant_str(node: ast.AST | None) -> str | None:
@@ -251,30 +247,38 @@ def _refine_call_context(
 
     if call_name == "open":
         path_arg = _get_call_arg(node, 0, "file")
-        if path_arg is not None and _is_dynamic_expression(path_arg):
-            return (
-                "medium",
-                "open called with dynamic file path; risk of path traversal or unintended file access.",
-            )
-
+        path_is_dynamic = path_arg is not None and _is_dynamic_expression(path_arg)
         mode_arg = _get_call_arg(node, 1, "mode")
         mode_str = _extract_constant_str(mode_arg) if mode_arg is not None else "r"
+        mode_is_dynamic = (
+            mode_arg is not None
+            and mode_str is None
+            and _is_dynamic_expression(mode_arg)
+        )
+        mode_is_writable = mode_str is not None and any(
+            c in mode_str for c in ("w", "a", "x", "+")
+        )
+
+        contexts: list[str] = []
+        if path_is_dynamic:
+            contexts.append("dynamic file path")
+        if mode_is_writable:
+            contexts.append(f"write/modify permissions (mode='{mode_str}')")
+        elif mode_is_dynamic:
+            contexts.append("dynamic mode parameter")
+
+        if contexts:
+            path_risk = (
+                "; risk of path traversal or unintended file access"
+                if path_is_dynamic
+                else ""
+            )
+            return ("medium", f"open called with {' and '.join(contexts)}{path_risk}.")
 
         if mode_str is not None:
-            if any(c in mode_str for c in ("w", "a", "x", "+")):
-                return (
-                    "medium",
-                    f"open called with write/modify permissions (mode='{mode_str}').",
-                )
             return (
                 "low",
                 "open called for read-only access.",
-            )
-
-        if mode_arg is not None and _is_dynamic_expression(mode_arg):
-            return (
-                "medium",
-                "open called with dynamic mode parameter.",
             )
         return (base_rule.severity, base_rule.reason)
 

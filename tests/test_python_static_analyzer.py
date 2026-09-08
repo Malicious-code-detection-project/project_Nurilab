@@ -338,3 +338,80 @@ def test_python_static_analyzer_context_with_import_aliases(tmp_path: Path) -> N
     assert calls[3].name == "os.system"
     assert calls[3].severity == "high"
     assert "dynamic input" in calls[3].reason
+
+
+def test_python_static_analyzer_treats_unproven_expressions_as_dynamic(
+    tmp_path: Path,
+) -> None:
+    sample = tmp_path / "dynamic_expressions.py"
+    sample.write_text(
+        "\n".join(
+            [
+                "import requests",
+                "import subprocess",
+                "flag = True",
+                "primary = 'https://primary.example'",
+                "fallback = 'https://fallback.example'",
+                "args = ['echo', 'dynamic']",
+                "requests.get(primary if flag else fallback)",
+                "requests.post(primary or fallback)",
+                "open('data.txt', 'w' if flag else 'r')",
+                "open(primary if flag else fallback)",
+                "subprocess.run([*args])",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    analysis = PythonStaticAnalyzer().analyze(PythonFileLoader().load(sample))
+    calls = analysis.suspicious_calls
+    assert len(calls) == 5
+
+    assert calls[0].name == "requests.get"
+    assert calls[0].severity == "medium"
+    assert "dynamic URL" in calls[0].reason
+
+    assert calls[1].name == "requests.post"
+    assert calls[1].severity == "medium"
+    assert "dynamic URL" in calls[1].reason
+
+    assert calls[2].name == "open"
+    assert calls[2].severity == "medium"
+    assert "dynamic mode parameter" in calls[2].reason
+
+    assert calls[3].name == "open"
+    assert calls[3].severity == "medium"
+    assert "dynamic file path" in calls[3].reason
+
+    assert calls[4].name == "subprocess.run"
+    assert calls[4].severity == "medium"
+    assert "dynamic arguments" in calls[4].reason
+
+
+def test_python_static_analyzer_combines_open_path_and_mode_context(
+    tmp_path: Path,
+) -> None:
+    sample = tmp_path / "combined_open_context.py"
+    sample.write_text(
+        "\n".join(
+            [
+                "target = 'user_file.txt'",
+                "mode = 'w'",
+                "open(target, 'w')",
+                "open(target, mode)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    analysis = PythonStaticAnalyzer().analyze(PythonFileLoader().load(sample))
+    calls = analysis.suspicious_calls
+    assert len(calls) == 2
+
+    assert calls[0].severity == "medium"
+    assert "dynamic file path" in calls[0].reason
+    assert "write/modify permissions" in calls[0].reason
+
+    assert calls[1].severity == "medium"
+    assert "dynamic file path" in calls[1].reason
+    assert "dynamic mode parameter" in calls[1].reason
