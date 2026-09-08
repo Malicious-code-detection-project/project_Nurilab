@@ -290,7 +290,7 @@ def test_pipeline_project_summary_aggregates_all_signal_severities(
         encoding="utf-8",
     )
     network_file.write_text(
-        "import requests\n\n\ndef fetch(url):\n    return requests.get(url)\n",
+        "import requests\n\n\ndef fetch():\n    return requests.get('https://example.com')\n",
         encoding="utf-8",
     )
     secret_file.write_text(

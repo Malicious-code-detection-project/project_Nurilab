@@ -1,5 +1,5 @@
 import requests
 
 
-def fetch_status(url: str):
-    return requests.get(url, timeout=5)
+def fetch_status():
+    return requests.get("https://example.com/status", timeout=5)
