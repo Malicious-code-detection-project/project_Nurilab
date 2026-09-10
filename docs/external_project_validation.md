@@ -290,6 +290,42 @@ Notes:
 - 39개 파일은 현재 파일 로딩 정책에 따라 skipped result로 report에 남았다.
 - 후속 외부 프로젝트 실행은 `click`, `requests` 순서로 확장한다.
 
+### 2026-09-10 - Phase 4 Automated Regression Baseline Generation
+
+환경:
+
+- OS: Ubuntu 24.04 LTS (WSL)
+- Python: `3.12.3`
+- pytest: `9.0.3`
+- External source path: `NURILAB_EXTERNAL_REGRESSION_ROOT` (로컬 지정 경로)
+- Report artifact path: 생성 후 제외 (Mock 출력물을 기반으로 정규화된 `*_expected.json`만 저장소에 커밋)
+- 테스트 방식: `pytest tests/test_external_regression.py`를 통한 자동화된 검증
+  - 실행 명령어 (환경 변수에 타겟 폴더 경로 주입):
+    ```bash
+    NURILAB_EXTERNAL_REGRESSION_ROOT=/tmp/nurilab-external-targets uv run pytest tests/test_external_regression.py
+    ```
+
+대상 (THE-92 확정 기준선):
+
+1. `pypa/packaging`
+   - Repository: <https://github.com/pypa/packaging>
+   - Commit: `053c884615f2e83d80705251b447769ec2599653`
+   - License: Apache/BSD dual license
+2. `pallets/click`
+   - Repository: <https://github.com/pallets/click>
+   - Commit: `2c8cd3ac958a7eb316d67f2d316c27086c4c0369`
+   - License: BSD-style license
+3. `psf/requests`
+   - Repository: <https://github.com/psf/requests>
+   - Commit: `6af0b94158bbe10c45e754e85f9701f401e6aa9c`
+   - License: Apache-2.0
+
+결과:
+
+- `packaging`, `click`, `requests` 세 프로젝트에 대해 Ruff ON/OFF 조합(총 6개)의 정규화된 정답지(Expected Baseline)가 `tests/fixtures/external_regression/` 경로에 영구적으로 고정됨.
+- 모든 타겟에서 HTML 및 JSON 리포트 생성 정상 동작 확인 완료.
+- 가변 필드(`generated_at`, 절대 경로)를 제외한 결정론적 채점(Deterministic Assertion) 100% 통과 확인 완료.
+
 ## 다음 작업 연결
 
 - THE-16: 외부 프로젝트 분석 실행 절차 문서화
