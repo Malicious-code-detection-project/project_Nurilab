@@ -22,7 +22,7 @@ Relates to <THE-YY, optional>
 
 <이 PR이 해결하는 문제와 의도를 설명합니다.>
 
-현재 Phase: <Phase 3>
+관련 목표: <현재 Linear 상위 이슈와 작업 목적>
 작업 범위: <docs/input/analyzer/aggregation/llm/report/test/etc.>
 
 ## 구현
@@ -71,7 +71,7 @@ Relates to <THE-YY, optional>
 
 - [ ] `git fetch origin` 후 최신 기준 확인
 - [ ] 브랜치명이 `AGENTS.md` 네이밍 표준을 따름
-- [ ] PR 제목이 `[Phase 3] <summary>` 형식을 따름
+- [ ] PR 제목이 `[Phase <번호>] <summary>` 형식을 따름 (현재 명명 관례는 Phase 4)
 - [ ] 실제 악성 샘플, secrets, 민감 데이터 미포함
 - [ ] Local LLM 서버를 앱 내부에서 자동 실행하지 않음
 - [ ] schema/CLI/report/prompt 변경 시 문서와 테스트 함께 갱신

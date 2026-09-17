@@ -111,17 +111,17 @@ baseline failure를 기록합니다.
 
 | 변경 종류 | 형식 | 예시 |
 | --- | --- | --- |
-| 기능 | `feat/phase3-<topic>` | `feat/phase3-project-summary` |
-| 버그 수정 | `fix/phase3-<topic>` | `fix/phase3-local-llm-timeout` |
-| 테스트 | `test/phase3-<topic>` | `test/phase3-large-input` |
-| 리팩터링 | `refactor/phase3-<topic>` | `refactor/phase3-report-ordering` |
-| 문서 | `docs/phase3-<topic>` | `docs/phase3-documentation-alignment` |
+| 기능 | `feat/phase4-<topic>` | `feat/phase4-project-summary` |
+| 버그 수정 | `fix/phase4-<topic>` | `fix/phase4-local-llm-timeout` |
+| 테스트 | `test/phase4-<topic>` | `test/phase4-large-input` |
+| 리팩터링 | `refactor/phase4-<topic>` | `refactor/phase4-report-ordering` |
+| 문서 | `docs/phase4-<topic>` | `docs/phase4-documentation-alignment` |
 | 실험 | `experiment/<topic>` | `experiment/gpt-oss-review` |
 
 담당 작업을 명확히 할 필요가 있으면 Linear identifier를 포함합니다.
 
 ```text
-docs/phase3-the-76-documentation-alignment
+docs/phase4-the-76-documentation-alignment
 ```
 
 `main`에 직접 commit하거나 push하지 않습니다.
@@ -135,7 +135,7 @@ docs/phase3-the-76-documentation-alignment
 - schema, CLI, report, prompt, 문서 영향 확인
 - `project_nurilab/`의 기존 책임 경계 확인
 - 필요한 최소 test 범위 확인
-- 현재 Phase 범위에 포함되는지 확인
+- 최신 사용자 결정과 선택한 Linear 이슈 범위에 포함되는지 확인
 
 모듈별 책임:
 
@@ -203,8 +203,8 @@ tests/test_review_and_report.py
 
 문서별 정본과 언어 정책은 [`README.md`](README.md)를 따릅니다.
 
-- 현재 동작, command, 환경변수, 출력, 사용자에게 보이는 한계는
-  `../README.md`에 기록합니다.
+- 제품 소개·현재 지원 범위·빠른 시작은 `../README.md`, 상세 command·환경변수와
+  사용법은 [USAGE.md](USAGE.md), 내부 계약은 [ARCHITECTURE.md](ARCHITECTURE.md)에 기록합니다.
 - 저장소 정책은 `../AGENTS.md`에 기록합니다.
 - 팀 workflow는 이 문서에 기록합니다.
 - 현재 운영 문서의 본문은 한국어로 작성하되 code identifier, CLI option,
@@ -215,6 +215,8 @@ tests/test_review_and_report.py
 - 과거 계획과 오래된 결과는 이력을 지우지 않고 현재 적용 여부를 표시합니다.
 - 문서를 이동하거나 이름을 바꾸면 relative Markdown link를 검증합니다.
 - 한글/영문 병행본은 같은 PR에서 함께 갱신합니다.
+- 공유 하네스 참고·과거 문서는 [references/harness](../references/harness/README.md)에
+  두고 현재 규칙과 구분합니다. 개인 V3와 로컬 skill은 설치·공유의 필수 조건이 아닙니다.
 
 ## 검증
 
@@ -268,7 +270,7 @@ test: 프로젝트 json 보고서 계약 검증
 PR 제목:
 
 ```text
-[Phase 3] <요약>
+[Phase 4] <요약>
 ```
 
 PR 본문은 [`PR_DESCRIPTION.md`](PR_DESCRIPTION.md)를 사용하며 다음 내용을
