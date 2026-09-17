@@ -1,5 +1,11 @@
 # GPT-OSS-20B Fine-Tuning Experiment Plan (English Companion)
 
+> **Historical planning snapshot — superseded on 2026-09-17.**
+> Fine-tuning direction is being reconsidered in a separate project. Model choices,
+> training steps and schedules below are not current commitments. NuriLab retains
+> only future API integration work in THE-80; see [current plan](PLAN.md).
+
+
 > **Separate-project handoff document**
 >
 > This is a planning snapshot, not the current Project NuriLab implementation

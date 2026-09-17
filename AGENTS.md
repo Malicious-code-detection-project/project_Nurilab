@@ -12,7 +12,8 @@ PR 리뷰와 최종 병합 판단은 Repository Owner가 담당한다.
 
 | 알고 싶은 것 | 정본 위치 |
 | --- | --- |
-| 프로젝트 소개, 현재 Phase, 실행 방법 | `README.md` |
+| 프로젝트 소개, 현재 기능, 빠른 시작 | `README.md` |
+| 상세 CLI·Local LLM 설정 | `docs/USAGE.md` |
 | 전체 문서 지도, 문서별 상태, 언어 정책 | `docs/README.md` |
 | 팀 기여 절차, 브랜치, 커밋, 테스트 규칙 | `docs/CONTRIBUTING.md` |
 | 에이전트/개발자 공통 운영 규칙 | `AGENTS.md` |
@@ -43,27 +44,33 @@ git status
 
 이 프로젝트는 로컬 환경에서 동작하는 LLM 기반 악성코드/의심 파일 분석 자동화 시스템이다.
 
-현재 우선순위는 활성 상위 이슈 `THE-150`의 1개월 MVP다. 실제 진행 상태는 Linear
-`Nurilab` 프로젝트를 기준으로 확인한다. 과거 Phase는 구현 이력이고, 이전 Phase의
-종료 조건은 이 MVP의 선행 gate가 아니다. `phase4` 표기는 기존 branch와 PR 관례로
-유지한다.
+현재 우선순위는 `THE-150`의 외부 MCP 클라이언트 연결이다. 실제 작업 상태와
+담당자는 Linear `Nurilab` 프로젝트에서 확인한다. 기존 Phase 순차 종료 조건은
+선행 gate가 아니며, `phase4`는 브랜치·PR 명명 관례로 유지한다.
 
-MVP는 기존 Python 정적 분석과 `ReviewClient`/`LocalLLMReviewClient` 경계를 유지해
-외부 Sandbox, 별도 AegisLM serving, versioned local RAG, 외부 MCP server의
-allowlist된 read-only tool 하나를 연동한다. 실제 범위와 주차별 완료 조건은
-[`docs/PLAN.md`](docs/PLAN.md)를 따른다.
+연결 대상은 사용자가 선정한 `jadx-ai-mcp`다. 계약 확인 → 실제 연결 → 결과 보고와
+실패 검증 순서로 진행하며 아직 제공 중인 기능으로 문서화하지 않는다.
+실제 범위와 완료 기준은 [실행 계획](docs/PLAN.md)을 따른다.
 
-파인튜닝 실행과 model artifact 생성은 별도 AegisLM 프로젝트의 책임이다.
-Project NuriLab에는 model weight, adapter, dataset, checkpoint를 저장하지 않는다.
-MVP는 무해한 입력 유형 하나와 외부 Sandbox guest profile 하나로 한정한다.
-정적 분석은 Python만 지원하며 다른 유형은 unsupported로 표시한다. 새 언어/형식
-analyzer, 멀티모달, 실제 악성 샘플 실행, remediation 생성은 범위 밖이다.
+RAG와 Sandbox 구축·연동은 현재 범위에서 제외한다. 파인튜닝 방향과 실행, 모델
+산출물과 서빙 준비는 별도 프로젝트에서 관리한다. NuriLab에는 준비된 외부 모델의
+API 연결 과정만 후속 `THE-80`으로 남기며 MCP의 선행 조건으로 두지 않는다.
+model weight, adapter, dataset, checkpoint는 이 저장소에 저장하지 않는다.
+새 형식의 정적 analyzer, 실제 악성 샘플 실행, remediation 생성은 범위 밖이다.
+
+프로젝트 규칙인 이 문서와 `.ai_rules/`는 현 위치를 유지한다. 공통 하네스 참고·과거
+자료는 [references/harness](references/harness/README.md)에 모은다.
+`.ai_rules/`의 기존 Phase·범위 문구가 충돌하면 최신 사용자 결정과 이 문서,
+`docs/PLAN.md`를 우선하며 과거 Phase 지시를 적용하지 않는다.
+개인 `references/이정민/`와 로컬 skill은 선택 사항이며 Git 공유나 설치를 요구하지
+않는다. 참고·과거 자료는 현재 협업 규칙을 대체하지 않는다.
 
 ---
 
 ## 3. 작업 선택 규칙
 
-작업은 Linear `Nurilab` 프로젝트의 `THE-150` 범위에서 선택하고 다음 순서를 지킨다.
+작업은 Linear `Nurilab` 프로젝트의 현재 우선순위와 선택한 이슈 범위에서 진행한다.
+다음 개발은 `THE-150`이며, 기존 회귀 검증과 승인된 문서 정리는 해당 이슈를 따른다.
 
 ```text
 Linear Issue 생성 또는 선택
@@ -83,7 +90,7 @@ Linear Issue 생성 또는 선택
 
 - [ ] Linear Issue에서 작업 목적과 완료 조건이 분명한가?
 - [ ] 같은 작업을 다른 사람이 진행 중이지 않은가?
-- [ ] `THE-150`과 선택한 하위 이슈 범위에 맞는가?
+- [ ] 최신 사용자 결정과 선택한 Linear 이슈 범위에 맞는가?
 - [ ] 스키마, CLI, 보고서 출력에 영향이 있는가?
 - [ ] 영향이 있다면 테스트와 문서 갱신 계획이 있는가?
 
@@ -92,8 +99,7 @@ Linear Issue 생성 또는 선택
 - 입력 수집 변경 전: `input/`과 `schemas.py` 영향 확인
 - analyzer 변경 전: `tests/test_python_static_analyzer.py` 영향 확인
 - AegisLM/Local LLM 변경 전: 기존 Mock 회귀 경로와 실제 endpoint 실패 처리 유지
-- Sandbox/MCP 변경 전: 외부 server identity, 인증, allowlist, timeout, 입력·응답 크기 확인
-- RAG 변경 전: corpus version, 출처, license, citation 출력 영향 확인
+- MCP 변경 전: 외부 server identity, 인증, allowlist, timeout, 입력·응답 크기 확인
 - report 변경 전: HTML + JSON 기본 출력 유지
 
 ---
@@ -145,7 +151,7 @@ Linear Issue 생성 또는 선택
 - Local LLM 서버를 앱 내부에서 자동 실행하지 않는다.
 - Ruff를 핵심 파이프라인의 필수 조건으로 만들지 않는다.
 - LLM 응답을 최종 판단 기준으로 삼지 않는다.
-- 선택한 `THE-150` 하위 이슈 밖의 항목을 논의 없이 구현에 섞지 않는다.
+- 선택한 Linear 이슈 밖의 항목을 논의 없이 구현에 섞지 않는다.
 - 지정된 대상 파일 외의 파일을 임의로 변경하거나 프로젝트 전체에
   `ruff format` 또는 `ruff check --fix`를 적용하지 않는다.
 
@@ -161,14 +167,13 @@ Linear Issue 생성 또는 선택
 - Local LLM review는 `--review-client local`을 명시한 경우에만 이미 실행 중인 vLLM OpenAI-compatible API를 호출한다.
 - Local LLM 관련 변경은 `tests/test_tools_and_llm.py`, `tests/test_pipeline.py`, `tests/test_review_and_report.py` 중 영향 범위에 맞는 테스트로 검증한다.
 
-**외부 MVP 연동 기준**
+**외부 MCP 및 후속 모델 연동 기준**
 
-- NuriLab은 Sandbox 또는 MCP server를 제공·자동 실행하지 않는다.
-- Sandbox, AegisLM, RAG, MCP 실패는 blind resubmit이나 성공 Mock으로 감추지 않고
-  report finding으로 보존한다. deterministic 정적 결과와 HTML/JSON report는 유지한다.
-- MCP는 확정된 외부 server의 allowlist된 read-only tool 하나만 순차 호출한다.
-- VMware의 Ubuntu 후보는 host/guest topology, 분석 guest 분리, snapshot 생성·복구를
-  검증하기 전에는 Sandbox 실행 환경으로 간주하지 않는다.
+- NuriLab은 외부 MCP 또는 모델 서버를 앱 내부에서 자동 실행하지 않는다.
+- 외부 연결 실패를 성공 Mock으로 감추지 않고 상태와 근거를 보고서에 남긴다.
+  deterministic 정적 결과와 HTML/JSON 보고서를 보존한다.
+- MCP는 계약에서 확인한 외부 서버의 허용된 읽기 전용 tool부터 연결한다.
+- 미지원 입력 형식에 정적 분석 성공이나 안전 판정을 만들지 않는다.
 
 ---
 
@@ -239,7 +244,7 @@ PR 본문에는 다음을 포함한다.
 
 ## 9. 거버넌스
 
-- `README.md`는 프로젝트 소개, 현재 Phase, 실행 방법의 정본이다.
+- `README.md`는 프로젝트 소개·지원 범위·빠른 시작의 정본이다. 상세 사용법은 `docs/USAGE.md`에 둔다.
 - `AGENTS.md`는 작업 규칙과 에이전트 행동 기준의 정본이다.
 - `docs/CONTRIBUTING.md`는 팀원이 PR을 올리기 위한 절차 문서다.
 - `docs/PR_DESCRIPTION.md`는 PR 본문 작성 참고 템플릿이다.
@@ -254,6 +259,6 @@ PR 본문에는 다음을 포함한다.
 
 ## 10. 유지보수 TODO
 
-- `THE-150` 4주 MVP의 실제 외부 Sandbox, AegisLM, local RAG, MCP 통합 및 freeze
-- 4주 MVP 이후 CI, CODEOWNERS, branch protection 적용 여부 검토
+- `THE-150`의 jadx-ai-mcp 계약·연결·결과 보고 검증
+- 외부 모델 API가 준비된 뒤 `THE-80`의 연결 과정 검토
 - README와 `docs/PLAN.md`의 제공 기능과 계획 상태 주기적 정리
