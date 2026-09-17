@@ -1,5 +1,7 @@
 # AI_RULES.md - AI Code Generation Guidelines
 
+> Historical guidance only; not active instructions. Original path: `docs/AI_RULES.md`. Current rules: [AGENTS.md](../../../AGENTS.md).
+
 > **Legacy guidance**
 >
 > `AGENTS.md` is the current repository-wide authority for both people and
