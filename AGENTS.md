@@ -43,34 +43,27 @@ git status
 
 이 프로젝트는 로컬 환경에서 동작하는 LLM 기반 악성코드/의심 파일 분석 자동화 시스템이다.
 
-현재는 Phase 3 종료 검증 단계다. 새로운 작업 우선순위와 진행 상태는 Linear
-`Nurilab` 프로젝트를 기준으로 확인한다.
+현재 우선순위는 활성 상위 이슈 `THE-150`의 1개월 MVP다. 실제 진행 상태는 Linear
+`Nurilab` 프로젝트를 기준으로 확인한다. 과거 Phase는 구현 이력이고, 이전 Phase의
+종료 조건은 이 MVP의 선행 gate가 아니다. `phase4` 표기는 기존 branch와 PR 관례로
+유지한다.
 
-- 기본 Local LLM과 strict JSON review 계약 확정
-- 실제 vLLM 선택형 통합 테스트
-- 외부 실제 Python 프로젝트 최신 `main` 재검증
-- 문서, 테스트, Linear 상태의 종료 기준선 확정
-
-후속 개발은 의존성 순서를 바꾸지 않는다.
-
-```text
-Phase 3 종료 검증
--> Phase 4 분석 신뢰성
--> Phase 5 운영 제품화
--> Phase 6 AegisLM 연동
--> Phase 7 오프라인 우선 RAG
-```
+MVP는 기존 Python 정적 분석과 `ReviewClient`/`LocalLLMReviewClient` 경계를 유지해
+외부 Sandbox, 별도 AegisLM serving, versioned local RAG, 외부 MCP server의
+allowlist된 read-only tool 하나를 연동한다. 실제 범위와 주차별 완료 조건은
+[`docs/PLAN.md`](docs/PLAN.md)를 따른다.
 
 파인튜닝 실행과 model artifact 생성은 별도 AegisLM 프로젝트의 책임이다.
 Project NuriLab에는 model weight, adapter, dataset, checkpoint를 저장하지 않는다.
-Python 외 언어, 멀티모달, 실제 악성 샘플 실행, 동적 분석, remediation 생성은
-번호가 지정된 Phase가 아니라 연구 백로그로 관리한다.
+MVP는 무해한 입력 유형 하나와 외부 Sandbox guest profile 하나로 한정한다.
+정적 분석은 Python만 지원하며 다른 유형은 unsupported로 표시한다. 새 언어/형식
+analyzer, 멀티모달, 실제 악성 샘플 실행, remediation 생성은 범위 밖이다.
 
 ---
 
 ## 3. 작업 선택 규칙
 
-작업은 Linear `Nurilab` 프로젝트에서 자유롭게 선택하되, 다음 순서를 지킨다.
+작업은 Linear `Nurilab` 프로젝트의 `THE-150` 범위에서 선택하고 다음 순서를 지킨다.
 
 ```text
 Linear Issue 생성 또는 선택
@@ -90,7 +83,7 @@ Linear Issue 생성 또는 선택
 
 - [ ] Linear Issue에서 작업 목적과 완료 조건이 분명한가?
 - [ ] 같은 작업을 다른 사람이 진행 중이지 않은가?
-- [ ] 현재 Phase와 선택한 상위 이슈 범위에 맞는가?
+- [ ] `THE-150`과 선택한 하위 이슈 범위에 맞는가?
 - [ ] 스키마, CLI, 보고서 출력에 영향이 있는가?
 - [ ] 영향이 있다면 테스트와 문서 갱신 계획이 있는가?
 
@@ -98,7 +91,9 @@ Linear Issue 생성 또는 선택
 
 - 입력 수집 변경 전: `input/`과 `schemas.py` 영향 확인
 - analyzer 변경 전: `tests/test_python_static_analyzer.py` 영향 확인
-- Local LLM 변경 전: Mock 경로와 실패 처리 유지
+- AegisLM/Local LLM 변경 전: 기존 Mock 회귀 경로와 실제 endpoint 실패 처리 유지
+- Sandbox/MCP 변경 전: 외부 server identity, 인증, allowlist, timeout, 입력·응답 크기 확인
+- RAG 변경 전: corpus version, 출처, license, citation 출력 영향 확인
 - report 변경 전: HTML + JSON 기본 출력 유지
 
 ---
@@ -150,7 +145,7 @@ Linear Issue 생성 또는 선택
 - Local LLM 서버를 앱 내부에서 자동 실행하지 않는다.
 - Ruff를 핵심 파이프라인의 필수 조건으로 만들지 않는다.
 - LLM 응답을 최종 판단 기준으로 삼지 않는다.
-- 선택한 Phase와 상위 Linear 이슈 밖의 항목을 논의 없이 구현에 섞지 않는다.
+- 선택한 `THE-150` 하위 이슈 밖의 항목을 논의 없이 구현에 섞지 않는다.
 - 지정된 대상 파일 외의 파일을 임의로 변경하거나 프로젝트 전체에
   `ruff format` 또는 `ruff check --fix`를 적용하지 않는다.
 
@@ -165,6 +160,15 @@ Linear Issue 생성 또는 선택
 - Mock review는 기본 회귀 검증 경로이며 Local LLM 서버 없이 동작해야 한다.
 - Local LLM review는 `--review-client local`을 명시한 경우에만 이미 실행 중인 vLLM OpenAI-compatible API를 호출한다.
 - Local LLM 관련 변경은 `tests/test_tools_and_llm.py`, `tests/test_pipeline.py`, `tests/test_review_and_report.py` 중 영향 범위에 맞는 테스트로 검증한다.
+
+**외부 MVP 연동 기준**
+
+- NuriLab은 Sandbox 또는 MCP server를 제공·자동 실행하지 않는다.
+- Sandbox, AegisLM, RAG, MCP 실패는 blind resubmit이나 성공 Mock으로 감추지 않고
+  report finding으로 보존한다. deterministic 정적 결과와 HTML/JSON report는 유지한다.
+- MCP는 확정된 외부 server의 allowlist된 read-only tool 하나만 순차 호출한다.
+- VMware의 Ubuntu 후보는 host/guest topology, 분석 guest 분리, snapshot 생성·복구를
+  검증하기 전에는 Sandbox 실행 환경으로 간주하지 않는다.
 
 ---
 
@@ -250,10 +254,6 @@ PR 본문에는 다음을 포함한다.
 
 ## 10. 유지보수 TODO
 
-- GitHub Actions 기반 CI 추가 검토
-- CODEOWNERS 도입 여부 검토
-- branch protection 설정 검토
-- Phase 3 실제 vLLM 및 외부 프로젝트 종료 검증
-- Phase 4 내장 analyzer 정확도 개선
-- Phase 5 CI, CODEOWNERS, branch protection 적용
-- README와 `docs/PLAN.md`의 Phase 상태 주기적 정리
+- `THE-150` 4주 MVP의 실제 외부 Sandbox, AegisLM, local RAG, MCP 통합 및 freeze
+- 4주 MVP 이후 CI, CODEOWNERS, branch protection 적용 여부 검토
+- README와 `docs/PLAN.md`의 제공 기능과 계획 상태 주기적 정리

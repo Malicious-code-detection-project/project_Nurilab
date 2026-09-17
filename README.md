@@ -6,10 +6,11 @@ Project NuriLab은 단일 Python 파일 또는 Python 프로젝트 디렉터리�
 재현 가능한 정적 분석 신호를 추출하고, 선택적으로 로컬에서 서빙되는 LLM이 해당
 신호를 해석하도록 요청한 뒤 HTML과 JSON 보고서를 생성합니다.
 
-현재 프로젝트는 **Phase 3 종료 검증 단계**입니다. 주요 기능 구현은 완료됐으며,
-기본 Local LLM 전환, 실제 vLLM 검증, 외부 프로젝트 재검증, 문서와 운영 기준선
-확정을 진행하고 있습니다. 실제 작업 상태는 Linear의 `Nurilab` 프로젝트에서
-관리합니다.
+현재 구현은 Python 정적 분석과 선택적 OpenAI-compatible Local LLM review입니다.
+다음 4주 MVP에서는 이 경계를 유지한 채 외부 Sandbox, 별도 AegisLM serving,
+versioned local RAG, 기존 외부 MCP server의 read-only tool 하나를 실제 흐름으로
+연결할 계획입니다. 이 기능들은 아직 구현·제공되지 않으며 실제 작업 상태는
+Linear의 `Nurilab` 프로젝트에서 관리합니다.
 
 ## 동작 개요
 
@@ -331,37 +332,28 @@ uv run mypy .
 
 ## Roadmap
 
-작업 순서와 상세 범위는 [docs/PLAN.md](docs/PLAN.md), 실제 상태는 Linear
-`Nurilab` 프로젝트를 기준으로 합니다.
+상세 순서와 완료 기준은 [docs/PLAN.md](docs/PLAN.md), 실제 상태는 Linear
+`Nurilab` 프로젝트를 기준으로 합니다. 과거 Phase 1~3은 현재 기반 기능의 이력이며
+새 MVP의 순차 gate가 아닙니다. `phase4`는 branch와 PR 이름에서만 계속 사용합니다.
 
-| Phase | 목표 | 현재 상태 |
+| 기간 | 계획 | 현재 상태 |
 | --- | --- | --- |
-| Phase 1 | 단일 Python 파일 분석 MVP | 완료 |
-| Phase 2 | Python 프로젝트 단위 정적 분석 | 완료 |
-| Phase 3 | Local LLM과 보고서 파이프라인 종료 검증 | 완료 |
-| Phase 4 | Python 정적 분석 정확도와 대규모 입력 안정성 | 진행 중 |
-| Phase 5 | 설치·배포·재현·운영 가능한 제품화 | 예정 |
-| Phase 6 | AegisLM 모델 연동과 기준 모델 비교 | 예정 |
-| Phase 7 | 오프라인 우선 보안 지식 RAG와 근거 추적 | 예정 |
+| 현재 | Python static analysis, Mock/Local LLM review, HTML/JSON report | 제공 중 |
+| 1주차 | 무해 입력 유형·guest profile·외부 API 계약, VMware feasibility, AegisLM smoke | 계획 |
+| 2주차 | 외부 Sandbox adapter, 최소 local RAG, MCP read-only tool, 실제 AegisLM endpoint | 계획 |
+| 3주차 | static, Sandbox, RAG, AegisLM, MCP를 같은 입력의 HTML/JSON report로 통합 | 계획 |
+| 4주차 | 실패 사례 검증, 반복 demo, 계약 freeze | 계획 |
 
-Phase 3은 다음 조건을 모두 충족한 뒤 종료합니다.
+AegisLM의 학습 코드, 데이터셋, adapter, checkpoint, model weight와 실험 로그는
+별도 프로젝트에서 관리합니다. NuriLab은 이미 실행 중인 endpoint를 기존
+OpenAI-compatible review 경계로 호출합니다. Sandbox도 외부 서비스이며 NuriLab은
+이를 제공하지 않습니다. MCP 역시 NuriLab server를 만들지 않고, identity와 인증을
+확정한 외부 server의 allowlist된 read-only tool 하나만 사용합니다.
 
-- 기본 Local LLM을 `openai/gpt-oss-20b` 기준으로 전환
-- strict JSON review 계약과 비정상 응답 처리 검증
-- 선택형 실제 vLLM 통합 테스트 기록
-- `packaging`, `click`, `requests` 외부 프로젝트 재검증
-- 문서, Linear, 테스트 결과의 정합성 확인
-
-파인튜닝 코드, 데이터셋, adapter, checkpoint, 실험 로그는 별도 AegisLM
-프로젝트에서 관리합니다. Project NuriLab은 Phase 6에서 이미 서빙 중인 모델을
-OpenAI-compatible API로 호출하고 비교·추적하는 제품 연동만 담당합니다.
-
-다음 항목은 번호가 지정된 Phase에 포함하지 않고 연구 백로그로 유지합니다.
-
-- remediation snippet 또는 전체 patched code
-- Python 이외 언어
-- 멀티모달 및 실행 파일 입력
-- 실제 악성코드 실행 또는 동적 분석
+4주 일정은 VM과 실제 모델 API가 제때 준비될 때의 목표입니다. 상세 준비 기준과
+지연 시 판단은 [실행 계획](docs/PLAN.md)을 따릅니다. 시연은 무해한 입력 유형 하나로
+제한하고, Python 이외 유형의 정적 분석은 unsupported로 표시할 계획입니다.
+새 정적 analyzer, 실제 악성 샘플 실행, remediation 생성은 범위 밖입니다.
 
 ## 보안
 

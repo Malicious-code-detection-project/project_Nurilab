@@ -61,8 +61,8 @@ Phase1Pipeline
 ```
 
 `Phase1Pipeline`이 현재 전체 흐름을 조정합니다. 이름은 초기 Phase의 흔적이지만
-현재는 단일 파일과 프로젝트 입력을 모두 처리합니다. Phase 5의 `THE-99`에서
-`AnalysisPipeline` 명칭과 이전 import 호환성을 정리할 예정입니다.
+현재는 단일 파일과 프로젝트 입력을 모두 처리합니다. 향후 계획은 이 명칭 변경을
+약속하지 않으며, 기존 import와 실행 계약은 구현 변경 전까지 유지합니다.
 
 ## 실행 경로
 
@@ -236,14 +236,36 @@ project_nurilab/
 
 새 모듈은 이 책임 경계에 들어갈 수 없는 경우에만 추가합니다.
 
-## 향후 확장 지점
+## 1개월 MVP의 향후 연동 경계
 
-다음은 현재 구현이 아니라 [`PLAN.md`](PLAN.md)에 정의된 예정 구조입니다.
+다음은 현재 구현이 아니라 [`PLAN.md`](PLAN.md)의 `THE-150` 계획입니다. 실제
+schema와 모듈 책임은 구현과 테스트가 병합된 뒤 이 문서의 현재 구조에 반영합니다.
 
-- Phase 4: `analyzers/`의 alias·문맥 분석과 Local LLM payload budget
-- Phase 5: 설치형 CLI, report provenance, pipeline 명칭 정리
-- Phase 6: `llm/`의 serving contract를 유지한 AegisLM 모델 비교
-- Phase 7: versioned local knowledge index와 finding evidence 결합
+```text
+static signals (supported inputs) + external Sandbox evidence
+  + versioned local RAG context and citations
+  + one allowlisted read-only external MCP tool response
+  -> bounded review context
+  -> existing ReviewClient / LocalLLMReviewClient -> external AegisLM endpoint
+  -> HTML / JSON report (signals, evidence, review, connector status)
+```
 
-예정 기능을 현재 모듈처럼 문서화하지 않습니다. 각 Phase의 schema와 책임 경계는
-해당 Linear 이슈에서 구현과 테스트가 병합된 뒤 이 문서에 반영합니다.
+- **AegisLM:** 별도 프로젝트가 학습·서빙한 48 GB 환경의 endpoint를 기존
+  `LocalLLMReviewClient`의 OpenAI-compatible strict JSON contract로 호출합니다.
+  endpoint, timeout, HTTP, JSON/schema 오류는 현재 Local LLM failure finding처럼
+  처리하며 static analysis를 대체하지 않습니다.
+- **Sandbox:** NuriLab은 외부 Sandbox API에 계약에서 선택한 무해 입력을 전달하고
+  제출/조회 결과와 provenance를 report에 보존합니다. Sandbox 구현, guest 관리,
+  VM 생성, 실제 악성 샘플 실행은 NuriLab 경계 밖입니다. VMware Ubuntu 후보는
+  topology, 별도 분석 guest, snapshot 생성·복구가 검증된 경우에만 사용합니다.
+- **Local RAG:** 작고 versioned된 curated corpus를 local SQLite FTS5 lexical index로
+  검색합니다. 실제 retrieved context와 document ID/citation/corpus version을
+  AegisLM 요청과 HTML/JSON에 남깁니다. 검색 누락·empty result·index 오류는
+  deterministic finding을 지우지 않습니다.
+- **MCP:** NuriLab은 MCP server를 구현하지 않습니다. identity와 인증을 먼저
+  확정한 기존 외부 server의 allowlist된 read-only tool 하나를 순차 호출합니다.
+  arbitrary tool discovery, autonomous tool choice, 연쇄 실행은 범위 밖입니다.
+
+각 연동은 bounded timeout과 입력·응답 크기 제한을 가져야 합니다. 실패를 blind
+resubmit하거나 Mock 성공으로 표시하지 않으며, 실패 metadata는 static 결과와 함께
+보고서에 남겨야 합니다.
