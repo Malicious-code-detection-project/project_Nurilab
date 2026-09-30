@@ -12,6 +12,11 @@ DEFAULT_LLM_INPUT_BUDGET_BYTES = 64 * 1024  # 64 KiB
 MIN_LLM_INPUT_BUDGET_BYTES = (
     1024  # 1 KiB: minimum viable budget for payload skeleton, metadata, and signals
 )
+# jadx-ai-mcp external tool contract (THE-151).
+JADX_MCP_ALLOWED_TOOLS = frozenset({"get_class_source"})
+JADX_MCP_EXPECTED_RELEASE = "jadx-ai-mcp V6.4.1"
+JADX_MCP_CLASS_NAME_MAX_LENGTH = 512
+JADX_MCP_MAX_CONTENT_BYTES = 1024 * 1024  # 1 MiB
 DEFAULT_EXCLUDED_DIRS = frozenset(
     {
         ".git",
