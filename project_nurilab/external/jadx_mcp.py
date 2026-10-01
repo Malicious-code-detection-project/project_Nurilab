@@ -24,6 +24,10 @@ _CLASS_NAME_PATTERN = re.compile(r"[A-Za-z0-9_$.]+")
 _NOT_FOUND_PREFIX = "HTTP error 404"
 _UNAVAILABLE_MARKER = "Cannot connect to JADX plugin"
 _TIMEOUT_MARKER = "Request to JADX plugin timed out"
+# Marks failures the MCP server framework reported with ``isError: true``
+# before or outside the jadx tool code, so they stay distinguishable from
+# ``tool_error`` payloads that jadx itself returned.
+MCP_TOOL_ERROR_PREFIX = "MCP tool error: "
 
 
 @dataclass(slots=True, frozen=True)
@@ -109,6 +113,16 @@ def classify_payload(payload: object) -> ClassifiedPayload:
 
     return ClassifiedPayload(
         status="malformed", reason="Tool result has neither 'response' nor 'error'."
+    )
+
+
+def classify_is_error(message: str | None) -> ClassifiedPayload:
+    """Classify an ``isError: true`` MCP result as a prefixed ``tool_error``."""
+
+    detail = message.strip() if message else ""
+    return ClassifiedPayload(
+        status="tool_error",
+        reason=MCP_TOOL_ERROR_PREFIX + (detail or "(no message)"),
     )
 
 

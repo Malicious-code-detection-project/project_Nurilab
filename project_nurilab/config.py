@@ -17,6 +17,9 @@ JADX_MCP_ALLOWED_TOOLS = frozenset({"get_class_source"})
 JADX_MCP_EXPECTED_RELEASE = "jadx-ai-mcp V6.4.1"
 JADX_MCP_CLASS_NAME_MAX_LENGTH = 512
 JADX_MCP_MAX_CONTENT_BYTES = 1024 * 1024  # 1 MiB
+DEFAULT_JADX_MCP_URL = "http://127.0.0.1:8651/mcp"
+JADX_MCP_CONNECT_TIMEOUT_SECONDS = 10.0  # connect + initialize + list_tools
+JADX_MCP_CALL_TIMEOUT_SECONDS = 15.0
 DEFAULT_EXCLUDED_DIRS = frozenset(
     {
         ".git",

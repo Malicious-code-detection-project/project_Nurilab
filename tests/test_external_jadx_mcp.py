@@ -1,18 +1,31 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import asynccontextmanager
 
+import anyio
 import pytest
+from mcp import types
 
 from project_nurilab.config import (
+    DEFAULT_JADX_MCP_URL,
     JADX_MCP_CLASS_NAME_MAX_LENGTH,
+    JADX_MCP_EXPECTED_RELEASE,
     JADX_MCP_MAX_CONTENT_BYTES,
 )
 from project_nurilab.external.jadx_mcp import (
+    MCP_TOOL_ERROR_PREFIX,
     check_tool_allowed,
+    classify_is_error,
     classify_payload,
     extract_payload,
     validate_class_name,
+)
+from project_nurilab.external.jadx_mcp_client import (
+    JadxMcpClient,
+    McpSession,
+    SessionFactory,
 )
 from project_nurilab.schemas import (
     ALLOWED_EXTERNAL_TOOL_CALL_STATUSES,
@@ -274,3 +287,292 @@ def test_classify_payload_does_not_raise_on_lone_surrogate() -> None:
     result = classify_payload({"response": "class A {} \ud800"})
 
     assert result.status == "success"
+
+
+def test_classify_is_error_prefixes_reason_with_mcp_source() -> None:
+    """isError results become tool_error with a prefix marking the MCP source."""
+
+    message = (
+        "1 validation error for call[get_class_source]\n"
+        "class_name\n  Missing required argument"
+    )
+
+    result = classify_is_error(message)
+
+    assert result.status == "tool_error"
+    assert result.reason == MCP_TOOL_ERROR_PREFIX + message
+    assert result.content is None
+
+
+@pytest.mark.parametrize("message", [None, "", "   "])
+def test_classify_is_error_handles_missing_message(message: str | None) -> None:
+    """An isError result without text still records a readable reason."""
+
+    result = classify_is_error(message)
+
+    assert result.reason == MCP_TOOL_ERROR_PREFIX + "(no message)"
+
+
+def test_jadx_tool_error_payload_is_not_prefixed() -> None:
+    """tool_error reported by jadx itself keeps the server message unprefixed."""
+
+    message = "HTTP error 500: Internal error retrieving class source"
+
+    result = classify_payload({"error": message})
+
+    assert result.status == "tool_error"
+    assert result.reason == message
+
+
+# --- JadxMcpClient with fake MCP sessions -----------------------------------
+# Fakes return the same SDK objects the real server produced (THE-151 6.1).
+
+SERVER_NAME = "JADX-AI-MCP Plugin Reverse Engineering Server"
+
+
+def _text_result(
+    payload: dict[str, str] | None, *, text: str | None = None, is_error: bool = False
+) -> types.CallToolResult:
+    body = text if text is not None else json.dumps(payload)
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=body)],
+        structured_content=payload,
+        is_error=is_error,
+    )
+
+
+class FakeSession:
+    def __init__(
+        self,
+        result: object = None,
+        *,
+        tool_pages: Sequence[Sequence[str]] = (("get_class_source",),),
+        initialize_delay: float = 0.0,
+        call_delay: float = 0.0,
+        call_error: Exception | None = None,
+    ) -> None:
+        self.result = result
+        self.tool_pages = tool_pages
+        self.initialize_delay = initialize_delay
+        self.call_delay = call_delay
+        self.call_error = call_error
+        self.calls: list[tuple[str, dict[str, object] | None]] = []
+
+    async def initialize(self) -> types.InitializeResult:
+        await anyio.sleep(self.initialize_delay)
+        return types.InitializeResult(
+            protocol_version="2025-11-25",
+            capabilities=types.ServerCapabilities(),
+            server_info=types.Implementation(name=SERVER_NAME, version="3.0.2"),
+        )
+
+    async def list_tools(
+        self, *, params: types.PaginatedRequestParams | None = None
+    ) -> types.ListToolsResult:
+        page = int(params.cursor) if params and params.cursor else 0
+        has_next = page + 1 < len(self.tool_pages)
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(name=name, input_schema={"type": "object"})
+                for name in self.tool_pages[page]
+            ],
+            next_cursor=str(page + 1) if has_next else None,
+        )
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, object] | None = None
+    ) -> object:
+        self.calls.append((name, arguments))
+        await anyio.sleep(self.call_delay)
+        if self.call_error is not None:
+            raise self.call_error
+        return self.result
+
+
+def _factory(session: McpSession, opened: list[str]) -> SessionFactory:
+    @asynccontextmanager
+    async def factory(url: str) -> AsyncGenerator[McpSession, None]:
+        opened.append(url)
+        yield session
+
+    return factory
+
+
+def _client(session: McpSession, opened: list[str], **kwargs: float) -> JadxMcpClient:
+    return JadxMcpClient(
+        url=SERVER_URL, session_factory=_factory(session, opened), **kwargs
+    )
+
+
+@pytest.mark.parametrize(
+    ("tool", "class_name", "expected_status"),
+    [
+        ("rename_class", "com.example.Main", "not_allowed"),
+        ("get_class_source", "com/example/Main", "invalid_input"),
+    ],
+)
+def test_client_rejects_before_opening_a_session(
+    tool: str, class_name: str, expected_status: str
+) -> None:
+    """Allowlist and input checks run first, so nothing reaches the server."""
+
+    opened: list[str] = []
+    session = FakeSession()
+
+    call = _client(session, opened).call_tool(tool, class_name)
+
+    assert call.status == expected_status
+    assert call.reason
+    assert opened == []
+    assert session.calls == []
+
+
+def test_client_records_success_with_provenance() -> None:
+    """A successful call records content plus server, SDK, timing, and inputs."""
+
+    opened: list[str] = []
+    session = FakeSession(_text_result({"response": "class MainActivity {}"}))
+
+    call = _client(session, opened).call_tool(
+        "get_class_source",
+        "com.nurilab.mcpprobe.MainActivity",
+        target="mcpprobe-debug.apk",
+    )
+
+    assert call.status == "success"
+    assert call.content == "class MainActivity {}"
+    assert call.server_url == SERVER_URL
+    assert call.server_name == SERVER_NAME
+    assert call.server_version == "3.0.2"
+    assert call.expected_release == JADX_MCP_EXPECTED_RELEASE
+    assert call.client_sdk is not None and call.client_sdk.startswith("mcp ")
+    assert call.duration_ms is not None and call.duration_ms >= 0
+    assert call.arguments == {"class_name": "com.nurilab.mcpprobe.MainActivity"}
+    assert call.target == "mcpprobe-debug.apk"
+    assert opened == [SERVER_URL]
+    assert session.calls == [
+        ("get_class_source", {"class_name": "com.nurilab.mcpprobe.MainActivity"})
+    ]
+
+
+def test_client_falls_back_to_text_without_structured_content() -> None:
+    """Without structuredContent the JSON text block is used instead."""
+
+    result = _text_result(None, text=json.dumps({"error": NOT_FOUND_ERROR}))
+
+    call = _client(FakeSession(result), []).call_tool("get_class_source", "A")
+
+    assert call.status == "not_found"
+    assert call.reason == NOT_FOUND_ERROR
+
+
+def test_client_maps_is_error_result_to_prefixed_tool_error() -> None:
+    """An isError result from the MCP framework becomes a prefixed tool_error."""
+
+    result = _text_result(None, text="Missing required argument", is_error=True)
+
+    call = _client(FakeSession(result), []).call_tool("get_class_source", "A")
+
+    assert call.status == "tool_error"
+    assert call.reason == MCP_TOOL_ERROR_PREFIX + "Missing required argument"
+
+
+def test_client_reports_unavailable_when_tool_is_not_provided() -> None:
+    """Capability check: a server without the tool is unavailable and not called."""
+
+    session = FakeSession(tool_pages=(("get_all_classes",),))
+
+    call = _client(session, []).call_tool("get_class_source", "A")
+
+    assert call.status == "unavailable"
+    assert call.reason is not None and "does not provide" in call.reason
+    assert call.server_version == "3.0.2"
+    assert session.calls == []
+
+
+def test_client_finds_tool_on_a_later_tools_page() -> None:
+    """The capability check follows list_tools pagination."""
+
+    session = FakeSession(
+        _text_result({"response": "class A {}"}),
+        tool_pages=(("get_all_classes",), ("get_class_source",)),
+    )
+
+    call = _client(session, []).call_tool("get_class_source", "A")
+
+    assert call.status == "success"
+
+
+def test_client_reports_unavailable_on_connection_error() -> None:
+    """A transport error group becomes unavailable with the leaf cause as reason."""
+
+    @asynccontextmanager
+    async def refusing_factory(url: str) -> AsyncGenerator[McpSession, None]:
+        raise ExceptionGroup("transport", [ConnectionError("connection refused")])
+        yield FakeSession()  # pragma: no cover - makes this an async generator
+
+    client = JadxMcpClient(url=SERVER_URL, session_factory=refusing_factory)
+
+    call = client.call_tool("get_class_source", "A")
+
+    assert call.status == "unavailable"
+    assert call.reason == "connect failed: ConnectionError: connection refused"
+    assert call.server_name is None
+
+
+def test_client_reports_tool_error_when_call_raises() -> None:
+    """An exception during the tool call is a tool_error, not a crash."""
+
+    session = FakeSession(call_error=RuntimeError("stream closed"))
+
+    call = _client(session, []).call_tool("get_class_source", "A")
+
+    assert call.status == "tool_error"
+    assert call.reason == "call failed: RuntimeError: stream closed"
+
+
+def test_client_times_out_during_initialize() -> None:
+    """A slow handshake hits the connect limit and records a timeout."""
+
+    session = FakeSession(initialize_delay=1.0)
+
+    call = _client(session, [], connect_timeout=0.01).call_tool("get_class_source", "A")
+
+    assert call.status == "timeout"
+    assert call.reason is not None and call.reason.startswith("connect exceeded")
+    assert session.calls == []
+
+
+def test_client_times_out_during_call_and_keeps_server_info() -> None:
+    """A slow tool call hits the call limit after the handshake was recorded."""
+
+    session = FakeSession(_text_result({"response": "x"}), call_delay=1.0)
+
+    call = _client(session, [], call_timeout=0.01).call_tool("get_class_source", "A")
+
+    assert call.status == "timeout"
+    assert call.reason is not None and call.reason.startswith("call exceeded")
+    assert call.server_version == "3.0.2"
+
+
+def test_client_reports_malformed_for_unexpected_result_type() -> None:
+    """A non-CallToolResult response is recorded as malformed."""
+
+    session = FakeSession(types.InputRequiredResult(request_state="pending"))
+
+    call = _client(session, []).call_tool("get_class_source", "A")
+
+    assert call.status == "malformed"
+
+
+def test_client_url_comes_from_env_then_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The endpoint follows argument, then NURILAB_JADX_MCP_URL, then default."""
+
+    monkeypatch.delenv("NURILAB_JADX_MCP_URL", raising=False)
+    assert JadxMcpClient().url == DEFAULT_JADX_MCP_URL
+
+    monkeypatch.setenv("NURILAB_JADX_MCP_URL", "http://127.0.0.1:9999/mcp")
+    assert JadxMcpClient().url == "http://127.0.0.1:9999/mcp"
+    assert JadxMcpClient(url=SERVER_URL).url == SERVER_URL
