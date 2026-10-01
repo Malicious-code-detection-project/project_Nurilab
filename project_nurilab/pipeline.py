@@ -9,12 +9,18 @@ from project_nurilab import __version__
 from project_nurilab.aggregation.result_aggregator import ResultAggregator
 from project_nurilab.analyzers.python_static import PythonStaticAnalyzer
 from project_nurilab.analyzers.tools import RuffToolCollector
-from project_nurilab.config import DEFAULT_REPORT_DIR
+from project_nurilab.config import DEFAULT_REPORT_DIR, JADX_MCP_CLASS_SOURCE_TOOL
+from project_nurilab.external.jadx_mcp_client import JadxMcpClient
 from project_nurilab.input.collector import InputCollector
 from project_nurilab.input.manager import PythonFileLoader
 from project_nurilab.llm.review import MockReviewClient, ReviewClient
 from project_nurilab.reports.generator import ReportGenerator
-from project_nurilab.schemas import AnalysisReport, ProjectReport, PythonAnalysis
+from project_nurilab.schemas import (
+    AnalysisReport,
+    ExternalToolCall,
+    ProjectReport,
+    PythonAnalysis,
+)
 
 
 class Phase1Pipeline:
@@ -30,6 +36,7 @@ class Phase1Pipeline:
         review_client: ReviewClient | None = None,
         report_generator: ReportGenerator | None = None,
         use_ruff: bool = True,
+        jadx_mcp_client: JadxMcpClient | None = None,
     ) -> None:
         self.loader = loader or PythonFileLoader()
         self.collector = collector or InputCollector()
@@ -39,14 +46,21 @@ class Phase1Pipeline:
         self.review_client = review_client or MockReviewClient()
         self.report_generator = report_generator or ReportGenerator()
         self.use_ruff = use_ruff
+        self.jadx_mcp_client = jadx_mcp_client
 
     def run(
         self,
         input_path: str | Path,
         output_dir: str | Path = DEFAULT_REPORT_DIR,
         formats: list[str] | tuple[str, ...] | None = None,
+        jadx_mcp_class: str | None = None,
+        jadx_mcp_target: str | None = None,
     ) -> tuple[AnalysisReport | ProjectReport, dict[str, Path]]:
-        """Execute the pipeline and return report payload plus output paths."""
+        """Execute the pipeline and return report payload plus output paths.
+
+        ``jadx_mcp_class`` opts in to one jadx-ai-mcp ``get_class_source`` call.
+        Its record is attached to the report but never feeds review or risk.
+        """
 
         target = Path(input_path).expanduser().resolve()
         collected_input = self.collector.collect(target)
@@ -65,6 +79,9 @@ class Phase1Pipeline:
                 analyzer_version=__version__,
                 analysis=analysis,
                 review=review,
+                external_tool_calls=self._call_jadx_mcp(
+                    jadx_mcp_class, jadx_mcp_target
+                ),
             )
             output_paths = self.report_generator.write(
                 single_file_report,
@@ -86,11 +103,22 @@ class Phase1Pipeline:
             analyzer_version=__version__,
             analysis=project_analysis,
             review=review,
+            external_tool_calls=self._call_jadx_mcp(jadx_mcp_class, jadx_mcp_target),
         )
         output_paths = self.report_generator.write(
             project_report, output_dir, formats=formats
         )
         return project_report, output_paths
+
+    def _call_jadx_mcp(
+        self, class_name: str | None, target: str | None
+    ) -> list[ExternalToolCall]:
+        """Run the opt-in jadx-ai-mcp call; failures come back as records."""
+
+        if class_name is None:
+            return []
+        client = self.jadx_mcp_client or JadxMcpClient()
+        return [client.call_tool(JADX_MCP_CLASS_SOURCE_TOOL, class_name, target=target)]
 
     def _skipped_file(self, target: Path) -> PythonAnalysis:
         return PythonAnalysis(

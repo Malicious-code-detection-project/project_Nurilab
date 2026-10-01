@@ -179,6 +179,9 @@ class AnalysisReport:
     analyzer_version: str
     analysis: PythonAnalysis
     review: ReviewResult
+    # External MCP call records handed to THE-155. Not serialized by to_dict()
+    # yet, so JSON/HTML output is unchanged until THE-155 adds the section.
+    external_tool_calls: list[ExternalToolCall] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation."""
@@ -253,6 +256,9 @@ class ProjectReport:
     analyzer_version: str
     analysis: ProjectAnalysis
     review: ReviewResult
+    # External MCP call records handed to THE-155. Not serialized by to_dict()
+    # yet, so JSON/HTML output is unchanged until THE-155 adds the section.
+    external_tool_calls: list[ExternalToolCall] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation."""
