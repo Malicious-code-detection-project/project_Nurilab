@@ -185,6 +185,7 @@ Linear Issue 생성 또는 선택
 | `project_nurilab/analyzers/` | Python AST, rule, secret 등 deterministic signal 생성 |
 | `project_nurilab/aggregation/` | 프로젝트 단위 결과 집계 |
 | `project_nurilab/llm/` | Mock / Local LLM review client |
+| `project_nurilab/external/` | 외부 MCP 도구 계약 판정과 client (jadx-ai-mcp) |
 | `project_nurilab/reports/` | HTML / JSON / optional Markdown 보고서 생성 |
 | `project_nurilab/schemas.py` | 분석, 리뷰, 보고서 데이터 계약 |
 | `tests/` | 회귀 테스트와 fixture |
@@ -211,6 +212,7 @@ uv run mypy .
 - pipeline 변경: `tests/test_pipeline.py`
 - report 변경: `tests/test_review_and_report.py`
 - Local LLM parsing 변경: `tests/test_tools_and_llm.py`
+- 외부 MCP 변경: `tests/test_external_jadx_mcp.py` (실제 서버는 `tests/test_jadx_mcp_integration.py`)
 
 Local LLM 관련 기능은 실제 vLLM 서버 없이도 mock 테스트가 가능해야 한다.
 

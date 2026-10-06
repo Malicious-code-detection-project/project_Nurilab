@@ -43,6 +43,9 @@ uv run python main.py analyze tests
 | `--review-client mock\|local` | `mock` | review backend 선택 |
 | `--no-ruff` | 사용 안 함 | Ruff JSON finding 수집 비활성화 |
 | `--max-lines <n>` | 없음 | 하위 호환용 deprecated no-op. 파일 줄 수를 제한하지 않음 |
+| `--jadx-mcp-class <class>` | 사용 안 함 | 실험적(THE-154). 주면 jadx-ai-mcp `get_class_source`를 한 번 호출 |
+| `--jadx-mcp-url <url>` | `http://127.0.0.1:8651/mcp` | 실험적. jadx-mcp-server endpoint. `--jadx-mcp-class` 필요 |
+| `--jadx-mcp-target <name>` | 없음 | 실험적. 기록할 대상 식별자(예: APK 파일명). 검증하지 않음. `--jadx-mcp-class` 필요 |
 
 예시:
 
@@ -142,6 +145,60 @@ JSON/schema 파싱 실패 시에는 응답 content의 최대 200자 preview가 �
 요청 후의 API 실패와 구분해야 합니다. 실제 서버 검증 방법과 환경 기록은
 [Local LLM 통합 테스트](LOCAL_LLM_INTEGRATION_TEST.md)를 참조하세요.
 `NURILAB_RUN_LOCAL_LLM=1`을 설정하지 않은 기본 pytest는 해당 테스트를 생략합니다.
+
+## jadx-ai-mcp 연결 (실험적)
+
+THE-154에서 구현한 실험적 연결입니다. 결과를 JSON/HTML 보고서에 표시하는 작업은
+THE-155에서 진행하므로, 현재는 아래 터미널 출력으로만 확인할 수 있습니다. 계약과 실측
+기록은 [THE-151 연결 계약](THE-151_jadx_mcp_contract.md)을 참조하세요.
+
+`--jadx-mcp-class`는 이미 실행 중인 `jadx-mcp-server`에만 접속합니다. NuriLab은
+서버나 JADX-GUI를 설치하거나 시작·종료하지 않습니다. 서버 설치와 버전 고정 방법은
+계약 문서 2절을 따르며, 별도 터미널에서 서버를 실행합니다.
+
+```bash
+cd ~/tools/jadx-mcp-server-6.4.1 && .venv/bin/python jadx_mcp_server.py --http
+```
+
+분석 환경에서 클래스 이름을 지정해 호출을 명시적으로 선택합니다.
+
+```bash
+uv run python main.py analyze tests \
+  --jadx-mcp-class com.nurilab.mcpprobe.MainActivity \
+  --jadx-mcp-target mcpprobe-debug.apk
+```
+
+호출하면 기존 출력 뒤에 상태 한 줄이 추가됩니다.
+
+```text
+JADX MCP get_class_source: success (12,345 bytes)
+JADX MCP get_class_source: unavailable - Cannot connect to JADX plugin at http://127.0.0.1:8650. ...
+```
+
+- 서버 미실행, 시간 초과, 오류 응답은 상태 값으로 기록되고 분석과 보고서 생성은
+  계속됩니다. MCP 결과와 관계없이 종료 코드는 `0`입니다.
+- `--jadx-mcp-target`은 JADX-GUI에 실제로 열린 APK와 일치하는지 검증하지 않습니다.
+
+상태 값과 사유 형식은 계약 문서 5.3절을 참조하세요.
+
+### MCP 연결 환경변수
+
+| 환경변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `NURILAB_JADX_MCP_URL` | `http://127.0.0.1:8651/mcp` | `--jadx-mcp-url`을 주지 않을 때 쓰는 endpoint |
+
+### MCP 실제 서버 선택형 테스트
+
+기본 pytest는 가짜 MCP session으로 검증하며 서버가 필요하지 않습니다. 실행 중인
+서버에 실제로 접속하는 테스트는 환경변수를 설정했을 때만 실행됩니다.
+
+```bash
+NURILAB_RUN_JADX_MCP=1 uv run pytest tests/test_jadx_mcp_integration.py
+```
+
+`NURILAB_JADX_MCP_CLASS`로 조회할 클래스를 바꿀 수 있습니다. 기본값은 존재하지 않는
+`com.nurilab.dummy.TestClass`이며, 서버가 jadx 응답(`success`, `empty`, `not_found`,
+`unavailable`)을 돌려주는지와 연결·호출 시간 제한이 `timeout`으로 기록되는지 확인합니다.
 
 ## Ruff
 
