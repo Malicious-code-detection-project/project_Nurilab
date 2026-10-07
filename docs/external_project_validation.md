@@ -1,15 +1,13 @@
 # External Python Project Validation Workflow
 
-> **Status: procedure plus historical result**
+> **상태: Phase 3 과거 기록과 Phase 4 자동 회귀 검증**
 >
-> 실행 절차는 현재도 참고할 수 있지만, 아래 `pypa/packaging` 결과는
-> Project NuriLab commit `7c23d9c`에서 수집한 기록이다. 이 기록은 Python
-> 파일 라인 수 제한 제거 이전 결과이므로 현재 `main`의 안정성 증거로 사용하지
-> 않는다. 최신 결론이 필요하면 대상 commit, Project NuriLab commit, 실행 환경을
-> 다시 기록하고 전체 절차를 재실행한다. `click`과 `requests` 결과는 아직
-> 기록되지 않았다.
+> `7c23d9c`의 packaging 결과는 파일 라인 수 제한 제거 이전의 과거 기록이며
+> 현재 `main`의 안정성 증거가 아니다. packaging·click·requests의 최신 고정 기준선,
+> 실행 조건과 재검증 결과는 아래 **Phase 4 고정 외부 회귀 검증 (THE-92)** 절을 따른다.
+> 이후 코드나 도구가 바뀌면 대상 commit·NuriLab commit·환경을 기록하고 다시 검증한다.
 
-이 문서는 Phase 3 안정성 검증에 사용할 외부 Python 프로젝트 후보와 로컬 분석 절차를 정리한다.
+이 문서는 외부 Python 프로젝트의 로컬 분석 절차, Phase 3 과거 기록과 Phase 4 회귀 검증을 정리한다.
 
 외부 프로젝트 원본, dependency cache, HTML/JSON report artifact는 Project NuriLab 저장소에 커밋하지 않는다.
 
@@ -289,6 +287,74 @@ Notes:
 - `--no-ruff`와 Ruff collection 경로의 요약 수치는 동일했다.
 - 39개 파일은 현재 파일 로딩 정책에 따라 skipped result로 report에 남았다.
 - 후속 외부 프로젝트 실행은 `click`, `requests` 순서로 확장한다.
+
+## Phase 4 고정 외부 회귀 검증 (THE-92)
+
+이 절은 PR #54의 자동 회귀 절차와 2026-09-17 재검증 결과다. 위 Phase 3 기록과
+분리해서 해석한다. 제품 코드 기준은 `main`의
+`694d2ee2c2a560befb959e249b3511f7e0eb5be7`이며, 이 PR은 제품 코드를 변경하지 않는다.
+
+### 고정 대상과 환경
+
+`tests/fixtures/external_regression/targets.json`이 아래 커밋을 고정한다.
+외부 소스는 별도로 준비한 깨끗한 Git checkout이어야 한다. 외부 프로젝트의 패키지를
+설치하거나 테스트·소스를 실행하지 않는다.
+
+| 대상 | Repository | 고정 commit | License |
+| --- | --- | --- | --- |
+| packaging | <https://github.com/pypa/packaging> | `053c884615f2e83d80705251b447769ec2599653` | Apache-2.0 / BSD 이중 라이선스 (`LICENSE`) |
+| click | <https://github.com/pallets/click> | `2c8cd3ac958a7eb316d67f2d316c27086c4c0369` | BSD-3-Clause (`LICENSE.txt`) |
+| requests | <https://github.com/psf/requests> | `6af0b94158bbe10c45e754e85f9701f401e6aa9c` | Apache-2.0 (`LICENSE`) |
+
+재검증 환경은 Linux x86_64 / WSL2 (`6.6.87.2-microsoft-standard-WSL2`),
+Python `3.12.13`, pytest `9.0.3`, Ruff `0.15.11`, mypy `2.1.0`이다.
+NuriLab의 `uv.lock` 기준 환경에서 저장소 루트를 작업 디렉터리로 사용한다.
+Ruff 버전·외부 설정·Python 버전이 다르면 결과도 달라질 수 있다.
+
+### 실행과 실패 조건
+
+기본 `uv run pytest`에서는 외부 회귀 6개가 skip되고 작은 검증 로직 테스트는 실행된다.
+외부 소스 경로를 지정하면 세 대상의 Mock no-Ruff / Mock Ruff 조합을 모두 검증한다.
+
+```bash
+NURILAB_EXTERNAL_REGRESSION_ROOT=/tmp/nurilab-external-targets \
+  uv run pytest tests/test_external_regression.py
+```
+
+지정한 디렉터리 아래에는 `packaging`, `click`, `requests` checkout이 있어야 한다.
+`~` 경로도 확장한다. 명시한 경로가 비었거나 유효하지 않으면 skip 대신 실패한다.
+대상 누락, 부모 저장소를 잘못 가리키는 경로, 다른 SHA, 수정·추가된 파일 또는 ignored
+파일이 있는 checkout도 실패한다. 환경·캐시·분석 산출물은 대상 checkout 밖에 둔다.
+테스트는 네트워크, 자동 clone/download, Local LLM을 사용하지 않는다.
+
+Ruff 조합은 테스트 전용 collector에서 설치된 Ruff를 현재 Python interpreter로
+실행하고, 기존 collector의 finding 변환과 실제 pipeline을 사용한다.
+`--no-fix --no-fix-only --no-cache`를 명시하므로 외부 프로젝트의 `fix = true` 설정이
+있어도 소스를 수정하지 않는다. 실행·JSON 오류는 기준선 비교 전 실패한다.
+이는 이번 회귀 테스트의 실행 조건이며 제품 CLI의 기본 Ruff 실행 방식을 변경하지 않는다.
+기본 collector의 오류 변환은 기존 `tests/test_tools_and_llm.py`에서 별도로 검증한다.
+
+HTML·JSON 생성, 반환 report와 저장 JSON의 일치, 최종 정규화 JSON을 검증한다.
+정규화는 top-level `generated_at`을 제거하고 외부 root 경로만 `<ROOT>`로 치환한다.
+그 외 분석·리뷰 필드와 신호는 유지하며 원래 report 객체를 변경하지 않는다.
+
+### 재검증 결과와 기준선 유지
+
+| 대상 | 분석 Python 파일 | skipped | Mock findings | Ruff findings | 두 조합 기준선 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| packaging | 74 | 0 | 64 | 0 | 일치 |
+| click | 79 | 0 | 27 | 0 | 일치 |
+| requests | 37 | 0 | 137 | 0 | 일치 |
+
+세 대상 모두 실제 Ruff 결과가 0건이므로 현재 Ruff/no-Ruff JSON 쌍은 동일하다.
+Ruff 실행 누락과 이를 혼동하지 않도록 작은 양성 사례에서 finding 생성과 소스 보존을
+별도로 검사한다. 6개 조합에서 HTML·JSON이 생성됐고 외부 checkout은 깨끗하게 유지됐다.
+실제 vLLM 및 다른 OS에서의 재현 검증은 이 결과에 포함하지 않는다.
+
+`*_expected.json`은 검토된 정규화 fixture다. 누락·손상 시 테스트는 실패하며 파일을
+자동 생성하거나 덮어쓰지 않는다. 기준선 갱신은 별도 변경으로 생성 결과의 차이와
+고정 커밋·도구 버전·실행 근거를 검토한 뒤 반영한다. 외부 원본과 생성된 HTML/JSON
+보고서는 계속 저장소 밖에 둔다.
 
 ## 다음 작업 연결
 
