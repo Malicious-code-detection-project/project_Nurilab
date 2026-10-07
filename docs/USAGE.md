@@ -153,11 +153,13 @@ THE-155에서 진행하므로, 현재는 아래 터미널 출력으로만 확인
 기록은 [THE-151 연결 계약](THE-151_jadx_mcp_contract.md)을 참조하세요.
 
 `--jadx-mcp-class`는 이미 실행 중인 `jadx-mcp-server`에만 접속합니다. NuriLab은
-서버나 JADX-GUI를 설치하거나 시작·종료하지 않습니다. 서버 설치와 버전 고정 방법은
-계약 문서 2절을 따르며, 별도 터미널에서 서버를 실행합니다.
+서버나 JADX-GUI를 설치하거나 시작·종료하지 않습니다. 서버·JADX-GUI·플러그인의 설치와
+버전 고정 방법은 계약 문서 2절을 따르며, 별도 터미널에서 서버를 실행합니다. 클래스
+소스를 받으려면 JADX-GUI에 대상 APK가 열려 있어야 합니다.
 
 ```bash
 cd ~/tools/jadx-mcp-server-6.4.1 && .venv/bin/python jadx_mcp_server.py --http
+~/tools/jadx-1.5.6/bin/jadx-gui <apk 경로>
 ```
 
 분석 환경에서 클래스 이름을 지정해 호출을 명시적으로 선택합니다.

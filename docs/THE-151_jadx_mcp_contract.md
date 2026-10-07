@@ -27,8 +27,8 @@
 * **기준 버전**: `jadx-ai-mcp` 릴리즈 **`V6.4.1`** (2026-08-06)
   * 릴리즈 파일: `jadx-ai-mcp-6.4.1.jar`(JADX 플러그인), `jadx-mcp-server-6.4.1.zip`(MCP 서버)
 * **확인 방법**: 2026-09-27 기준 릴리즈 zip의 서버 소스와 `V6.4.1` 태그의 플러그인 소스를
-  직접 읽어 확인했습니다. 실제 실행 확인은 THE-154에서 수행하며, 실행 전까지 연결 가능한
-  상태라고 가정하지 않습니다.
+  직접 읽어 확인했습니다. 실제 실행 확인은 THE-154에서 수행했으며 결과는 6절에
+  기록합니다.
 
 ## 2. 환경과 연결 구성 (완료 조건 1)
 
@@ -68,8 +68,10 @@ NuriLab (MCP client)
   * 최초 1회 설치(릴리즈 zip SHA-256:
     `e7cf0fa756b817cde3d3a2b6c04a6a6eb8546298eaff6a957e711fb68e53b532`):
     ```bash
-    gh release download V6.4.1 -R zinja-coder/jadx-ai-mcp -p 'jadx-mcp-server-6.4.1.zip'
-    # zip을 ~/tools/jadx-mcp-server-6.4.1/ 로 압축 해제
+    gh release download V6.4.1 -R zinja-coder/jadx-ai-mcp -p 'jadx-mcp-server-6.4.1.zip' -D ~/tools/downloads
+    # zip 안의 jadx-mcp-server/ 폴더를 버전이 붙은 이름으로 옮깁니다.
+    python3 -c "import zipfile,os; zipfile.ZipFile(os.path.expanduser('~/tools/downloads/jadx-mcp-server-6.4.1.zip')).extractall(os.path.expanduser('~/tools'))"
+    mv ~/tools/jadx-mcp-server ~/tools/jadx-mcp-server-6.4.1
     cd ~/tools/jadx-mcp-server-6.4.1
     uv venv --python 3.12 .venv
     uv pip install --python .venv/bin/python "fastmcp==3.0.2" "mcp==1.26.0" "httpx>=0.28.1" "requests>=2.32.3"
@@ -92,7 +94,25 @@ NuriLab (MCP client)
   기준으로 합니다. JADX-GUI는 그래픽 세션이 필요합니다.
   * NuriLab은 MCP 서버 주소를 설정값으로 받으며, 실행 환경에 따른 코드 분기를 두지
     않습니다.
-  * 검증을 수행할 PC와 환경별 실행 방법은 THE-154에서 확인 후 기록합니다.
+  * THE-154 검증은 개인 PC의 WSL2(Ubuntu 24.04) 안에서 세 구성요소를 모두 실행하고,
+    JADX-GUI 창은 WSLg로 띄웠습니다(6.3).
+* **JADX-GUI와 플러그인 설치(버전 고정)**: Java 11 이상(64비트)이 필요합니다.
+  * JADX는 릴리즈 `v1.5.6`의 `jadx-1.5.6.zip`을 저장소 밖 `~/tools/jadx-1.5.6/`에 풀어
+    사용합니다. `unzip`이 없는 환경을 고려해 Python `zipfile`로 풀며, `zipfile`은 실행
+    권한을 보존하지 않으므로 `bin/` 스크립트에 실행 권한을 다시 줍니다.
+  * 플러그인 설치에 README의 `jadx plugins --install "github:zinja-coder:jadx-ai-mcp"`는
+    항상 최신 버전을 받으므로 사용하지 않고, `V6.4.1` 릴리즈 jar를 파일로 지정합니다.
+    ```bash
+    sudo apt install -y openjdk-17-jre
+    gh release download v1.5.6 -R skylot/jadx -p 'jadx-1.5.6.zip' -D ~/tools/downloads
+    python3 -c "import zipfile,os; zipfile.ZipFile(os.path.expanduser('~/tools/downloads/jadx-1.5.6.zip')).extractall(os.path.expanduser('~/tools/jadx-1.5.6'))"
+    chmod +x ~/tools/jadx-1.5.6/bin/*
+    gh release download V6.4.1 -R zinja-coder/jadx-ai-mcp -p 'jadx-ai-mcp-6.4.1.jar' -D ~/tools/downloads
+    ~/tools/jadx-1.5.6/bin/jadx plugins --install-jar ~/tools/downloads/jadx-ai-mcp-6.4.1.jar
+    ~/tools/jadx-1.5.6/bin/jadx plugins --list
+    ```
+  * 실행: `~/tools/jadx-1.5.6/bin/jadx-gui <apk 경로>`. 플러그인은 `8650` 포트에서
+    대기합니다.
 
 ## 3. Tool과 테스트 입력 (완료 조건 2)
 
@@ -174,8 +194,10 @@ NuriLab (MCP client)
 | 없는 클래스 | 같은 APK 로드 상태 | `com.nurilab.dummy.TestClass` | `not_found` |
 | 연결 실패 | `jadx-mcp-server` 미실행 또는 JADX-GUI 종료 | 성공 사례와 동일 | `unavailable` |
 
-* **무해 APK**: Android Studio에서 새 프로젝트(기본 Activity 템플릿)를 만들어 빌드한
-  debug APK를 사용합니다. application ID는 `com.nurilab.mcpprobe`를 권장합니다.
+* **무해 APK**: Android Studio에서 새 프로젝트(Empty Views Activity, Java)를 만들어
+  수정 없이 빌드한 debug APK를 사용합니다. application ID는 `com.nurilab.mcpprobe`,
+  성공 사례의 클래스는 `com.nurilab.mcpprobe.MainActivity`입니다. 사용한 APK의
+  SHA-256은 6.3절에 기록합니다.
 * APK 파일은 저장소에 커밋하지 않습니다. 생성 방법, application ID, 사용한 클래스 이름,
   APK SHA-256만 검증 기록에 남깁니다.
 * 실제 악성 샘플이나 출처가 불분명한 외부 APK는 사용하지 않습니다.
@@ -272,7 +294,7 @@ NuriLab (MCP client)
 * 기존 정적 분석, Mock/Local LLM review, HTML/JSON 출력은 MCP 결과와 무관하게 그대로
   완료됩니다.
 * 테스트용 가짜(fake) 클라이언트 결과는 실제 연결 증거로 쓰지 않습니다. 실제 연결 증거는
-  THE-155에서 실제 서버 대상 실행 기록으로 남깁니다.
+  6절의 실제 서버 실측 기록이며, 보고서 기반 반복 검증 기록은 THE-155에서 남깁니다.
 
 ## 6. THE-154 실측 기록
 
@@ -308,8 +330,29 @@ curl `initialize` 요청의 `protocolVersion`은 NuriLab 클라이언트와 같�
 | CLI `analyze ... --jadx-mcp-class com.nurilab.dummy.TestClass` | `JADX MCP get_class_source: unavailable - Cannot connect to JADX plugin at ...`, 종료 코드 0, JSON 최상위 키는 기존과 동일 |
 | 서버가 없는 주소(`127.0.0.1:8659`) | `unavailable`, `connect failed: ConnectError: All connection attempts failed` |
 
-### 6.3 남은 확정 항목
+### 6.3 JADX-GUI 연동 실측 (2026-10-06)
 
-* 검증 PC와 JADX-GUI 실행 방법
-* 무해 APK의 application ID, 클래스 이름, SHA-256
-* `success`, `not_found` 실제 호출 결과
+무해 APK를 JADX-GUI에 열고 3.4절의 테스트 입력을 실행했습니다.
+
+* 환경: 개인 PC의 WSL2(Ubuntu 24.04.4), JADX-GUI는 WSLg 창으로 실행
+* 버전: OpenJDK `17.0.20.1`, JADX `1.5.6`, 플러그인 `jadx-ai-mcp-6.4.1.jar`
+  (SHA-256 `df7040ee4bc724c132635e8ad906b0961829db09a35da3365cbc46a761bed983`, 공식
+  `V6.4.1` 릴리즈 파일과 동일), 서버·클라이언트는 6.1·6.2와 동일
+* APK: `mcpprobe-debug.apk`(Empty Views Activity, Java, debug 빌드), application ID
+  `com.nurilab.mcpprobe`, SHA-256
+  `8d7c6b56f9f32dce4cfdf216e1c2b06bcfa52c036678d3be05f7d335634d4260`
+* 플러그인 HTTP 서버는 `*:8650`(모든 인터페이스)에 바인드되었고 `/health`는 HTTP 200을
+  반환했습니다.
+
+| 사례 | 실행 | 결과 |
+| --- | --- | --- |
+| 성공 | CLI `--jadx-mcp-class com.nurilab.mcpprobe.MainActivity --jadx-mcp-target mcpprobe-debug.apk` | `success (1,573 bytes)`, 종료 코드 0. 받은 소스는 `package com.nurilab.mcpprobe;`로 시작하는 32줄, `truncated=false`, 약 0.2초 |
+| 없는 클래스 | 같은 명령, `--jadx-mcp-class com.nurilab.dummy.TestClass` | `not_found - HTTP error 404: {"error":"Class com.nurilab.dummy.TestClass not found"}` |
+| 연결 실패 | JADX-GUI 종료 후 성공 명령 | `unavailable - Cannot connect to JADX plugin at http://127.0.0.1:8650. ...`, 종료 코드 0 |
+| 통합 테스트 | `NURILAB_RUN_JADX_MCP=1 NURILAB_JADX_MCP_CLASS=com.nurilab.mcpprobe.MainActivity uv run pytest tests/test_jadx_mcp_integration.py` | 3 passed. 기본 호출 `status=success`, `response_size_bytes=1573` |
+| 기존 출력 보존 | 성공 실행의 JSON 보고서 | 최상위 키 `generated_at`, `analyzer_version`, `analysis`, `review`로 기존과 동일 |
+
+### 6.4 남은 항목과 제한
+
+* 1 MiB 절삭은 무해 APK의 클래스가 작아 실제 서버로 재현하지 않았습니다. 절삭 규칙은
+  단위 테스트로 검증하며, 실제 서버 확인 필요 여부는 THE-155에서 판단합니다.
