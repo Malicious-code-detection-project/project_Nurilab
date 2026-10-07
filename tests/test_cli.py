@@ -258,3 +258,69 @@ def test_cli_jadx_mcp_options_require_class(
 
     assert exc_info.value.code == 2
     assert "require --jadx-mcp-class" in capsys.readouterr().err
+
+
+def test_cli_escapes_control_characters_in_external_reason(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Terminal control codes from an MCP server are printed as visible escapes."""
+
+    record = ExternalToolCall(
+        server_url="http://127.0.0.1:8651/mcp",
+        tool="get_class_source",
+        status="tool_error",
+        called_at="2026-10-07T00:00:00+00:00",
+        reason="\x1b[2J\x1b[31mFAKE: all clear",
+    )
+    monkeypatch.setattr(
+        "project_nurilab.cli.JadxMcpClient", _fake_jadx_mcp_client(record, [])
+    )
+
+    main(
+        [
+            "analyze",
+            str(FIXTURES / "clean_sample.py"),
+            "--out",
+            str(tmp_path),
+            "--no-ruff",
+            "--jadx-mcp-class",
+            "A",
+        ]
+    )
+
+    last_line = capsys.readouterr().out.rstrip().splitlines()[-1]
+    assert "\x1b" not in last_line
+    assert last_line.endswith("tool_error - \\x1b[2J\\x1b[31mFAKE: all clear")
+
+
+def test_cli_keeps_jadx_mcp_url_for_empty_class_name(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An empty --jadx-mcp-class still uses the given URL so the record is accurate."""
+
+    record = ExternalToolCall(
+        server_url="http://127.0.0.1:9000/mcp",
+        tool="get_class_source",
+        status="invalid_input",
+        called_at="2026-10-07T00:00:00+00:00",
+    )
+    seen_urls: list[str | None] = []
+    monkeypatch.setattr(
+        "project_nurilab.cli.JadxMcpClient", _fake_jadx_mcp_client(record, seen_urls)
+    )
+
+    main(
+        [
+            "analyze",
+            str(FIXTURES / "clean_sample.py"),
+            "--out",
+            str(tmp_path),
+            "--no-ruff",
+            "--jadx-mcp-class",
+            "",
+            "--jadx-mcp-url",
+            "http://127.0.0.1:9000/mcp",
+        ]
+    )
+
+    assert seen_urls == ["http://127.0.0.1:9000/mcp"]

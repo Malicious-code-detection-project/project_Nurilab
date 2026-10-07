@@ -8,6 +8,7 @@ including connection failures and timeouts, is returned as an
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from collections.abc import AsyncGenerator, Callable
@@ -110,6 +111,13 @@ class JadxMcpClient:
             if rejection is not None:
                 outcome = _CallOutcome(
                     ClassifiedPayload("invalid_input", reason=rejection)
+                )
+            elif _event_loop_running():
+                outcome = _CallOutcome(
+                    ClassifiedPayload(
+                        "unavailable",
+                        reason="Cannot call MCP from inside a running event loop.",
+                    )
                 )
             else:
                 outcome = anyio.run(self._call_async, tool, class_name)
@@ -228,6 +236,17 @@ def _describe(exc: BaseException) -> str:
 
     message = str(exc).strip()
     return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
+
+
+def _event_loop_running() -> bool:
+    """Return whether this thread already runs an event loop (e.g. Jupyter)."""
+
+    # anyio.run raises RuntimeError there, which would break the never-raise contract.
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
 
 
 def _client_sdk() -> str:

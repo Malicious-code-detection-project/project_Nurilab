@@ -87,6 +87,10 @@ NuriLab (MCP client)
   `is_error`처럼 snake_case 속성) 버전을 올릴 때는 클라이언트 테스트로 확인합니다.
 * **접근과 인증**: 서버와 플러그인 모두 인증이 없습니다. 따라서 `jadx-mcp-server`는
   `--host 127.0.0.1`(기본값)을 유지하고 `0.0.0.0` 바인드를 사용하지 않습니다.
+  * 플러그인은 바인드 주소를 바꿀 수 없어 `8650` 포트가 모든 인터페이스에 열리며(6.3),
+    `rename_*` 같은 쓰기 기능도 HTTP GET으로 노출됩니다. 일반 Linux에서는 방화벽으로 외부
+    접근을 막고(예: `sudo ufw deny 8650`) 신뢰할 수 있는 네트워크에서만 JADX-GUI를
+    실행합니다.
 * **서버 시작과 연결 상태**: `jadx-mcp-server`는 시작 시 플러그인 health check에 실패해도
   로그만 남기고 계속 실행됩니다. 즉 JADX-GUI가 꺼져 있어도 MCP 연결·초기화는 성공할 수
   있으며, 플러그인 연결 실패는 tool 호출 결과에서 드러납니다(5절 상태 표 참고).
@@ -133,7 +137,7 @@ NuriLab (MCP client)
 
 1. 입력 하나로 조회 대상을 지정하고 기록·검증할 수 있다(입력 식별자, `invalid_input`).
 2. 입력만 바꿔 성공과 실패(`not_found`)를 재현할 수 있다.
-3. 응답이 15초 안에 끝나고, 1 MiB 크기 제한을 실제로 검증할 수 있을 만큼 클 수 있다.
+3. 응답이 15초 안에 끝나고, 응답 크기 제한(5.1)을 실제로 검증할 수 있을 만큼 클 수 있다.
 4. 응답이 텍스트 하나로 와서 현재 판정 규칙(`{"response"}` / `{"error"}`)을 그대로 쓴다.
 
 **사용 가능한 읽기 전용 후보와 판단** (V6.4.1 서버·플러그인 소스 기준)
@@ -142,7 +146,7 @@ NuriLab (MCP client)
 | --- | --- | --- | --- | --- |
 | 클래스 단위 조회 | `get_class_source` | `class_name` | 디컴파일된 Java 소스 텍스트 | **선정**. 기준 1~4를 모두 충족 |
 | | `get_smali_of_class` | `class_name` | smali 텍스트 | 기준은 충족하나 같은 클래스의 저수준 바이트코드 표현이라 Java 소스보다 사람이 확인하기 어려움 |
-| | `get_methods_of_class`, `get_fields_of_class` | `class_name` | 메서드·필드 목록 텍스트 | 응답이 작아 1 MiB 크기 제한을 검증할 수 없음(기준 3) |
+| | `get_methods_of_class`, `get_fields_of_class` | `class_name` | 메서드·필드 목록 텍스트 | 응답이 작아 크기 제한을 검증할 수 없음(기준 3) |
 | 입력 없는 조회 | `get_main_activity_class`, `get_android_manifest` | 없음 | `{"name", "type", "content"}` JSON | 입력이 없어 `invalid_input`·`not_found`를 입력으로 재현할 수 없고(기준 1·2), 응답 형식이 달라 판정 규칙을 추가해야 함(기준 4) |
 | | `get_package_tree`, `get_main_application_classes_names` | 없음 | 패키지·클래스 목록 JSON | 입력이 없고(기준 1·2) 구조화된 목록이라 판정 규칙이 다름(기준 4) |
 | 목록·페이지 조회 | `get_all_classes`, `get_strings`, `get_all_resource_file_names`, `get_main_application_classes_code` | `offset`, `count` | 페이지 단위 목록(`count=0`이면 전체) | 응답 크기가 APK 크기에 비례하고 페이지 처리가 필요함(기준 3·4) |
@@ -181,6 +185,10 @@ NuriLab (MCP client)
 * 이 dict는 `structuredContent`와 `content[0].text`(JSON 문자열)에 **모두** 담겨 옵니다
   (fastmcp 3.0.2 실측). FastMCP 버전에 따라 `structuredContent`가 빠질 수 있으므로
   클라이언트는 `structuredContent`를 우선 사용하고, 없으면 `text`를 JSON으로 파싱합니다.
+  * 단, 서버가 tool의 outputSchema를 선언했는데 `structuredContent`가 없으면 MCP SDK
+    검증이 먼저 실패해 `tool_error`(`call failed: RuntimeError: ...`)로 기록되며 `text`
+    대체는 쓰이지 않습니다. V6.4.1 서버는 항상 `structuredContent`를 보내므로 해당하지
+    않습니다.
 * 위 표의 오류는 모두 `isError: false`로 옵니다. 반면 서버 측 인자 검증 실패(예: 필수
   인자 누락)는 `isError: true`와 JSON이 아닌 오류 문장만 `text`로 옵니다. 클라이언트는
   `isError: true`를 `tool_error`로 기록하고, jadx가 반환한 `tool_error`와 구분되도록
@@ -244,7 +252,8 @@ NuriLab (MCP client)
 | `class_name` | 최대 512자, `[A-Za-z0-9_$.]`만 허용 | 위반 시 호출하지 않고 `invalid_input` |
 | 연결 + initialize + tool 목록 확인 | 10초 | 초과 시 `timeout` |
 | `get_class_source` 호출 | 15초 | 서버 내부 제한(60초)보다 짧게 두어 NuriLab이 먼저 중단. JADX 쪽 작업은 계속될 수 있음 |
-| 응답 소스 크기 | 1 MiB (UTF-8 바이트) | 초과 시 앞부분 1 MiB만 보존하고 `truncated=true`, 원본 크기 기록 |
+| 응답 소스 크기 | 256 KiB (UTF-8 바이트) | 초과 시 앞부분 256 KiB만 보존하고 `truncated=true`, 원본 크기 기록 |
+| 전송 한계 | 약 381 KiB (Java 형태 소스, 6.2 실측) | MCP SDK가 응답 이벤트를 1 MiB까지만 받고 서버가 소스를 이스케이프해 두 번 보내므로, 이를 넘는 소스는 받지 못해 `tool_error`(`call failed: MCPError: SSE stream ended without a response`)로 기록되고 원본 크기도 남지 않음. NuriLab에서 바꿀 수 없는 한계 |
 
 ### 5.2 출처(provenance) 기록 항목
 
@@ -257,7 +266,7 @@ NuriLab (MCP client)
 | `client_sdk` | `mcp <설치 버전>` |
 | `target` | 사용자가 지정한 대상 식별자(`--jadx-mcp-target`), 없으면 비어 있음 |
 | `arguments` | 서버에 보낸(또는 거부되어 보내지 않은) 인자. `{"class_name": "<클래스 이름>"}` |
-| `content` | `success`일 때 받은 소스(비신뢰 데이터, 1 MiB 초과 시 절삭) |
+| `content` | `success`일 때 받은 소스(비신뢰 데이터, 256 KiB 초과 시 절삭) |
 | `status`, `reason` | 5.3 상태 값과 사유 |
 | `called_at`, `duration_ms` | 호출 시각과 소요 시간 |
 | `response_size_bytes`, `truncated` | 응답 크기와 절삭 여부 |
@@ -329,6 +338,7 @@ curl `initialize` 요청의 `protocolVersion`은 NuriLab 클라이언트와 같�
 | 실제 서버 통합 테스트 `NURILAB_RUN_JADX_MCP=1 uv run pytest tests/test_jadx_mcp_integration.py` | 3 passed (2026-10-02). 기본 호출은 `status=unavailable`, `server_version=3.0.2`, `client_sdk=mcp 2.2.0`. 연결·호출 제한을 극단적으로 줄인 두 테스트는 실제 SDK 연결에서도 각각 `timeout`으로 기록됨 |
 | CLI `analyze ... --jadx-mcp-class com.nurilab.dummy.TestClass` | `JADX MCP get_class_source: unavailable - Cannot connect to JADX plugin at ...`, 종료 코드 0, JSON 최상위 키는 기존과 동일 |
 | 서버가 없는 주소(`127.0.0.1:8659`) | `unavailable`, `connect failed: ConnectError: All connection attempts failed` |
+| 응답 크기 한계 (2026-10-07, 같은 `fastmcp 3.0.2`로 띄운 임시 가짜 서버가 지정 크기의 소스를 반환) | 받을 수 있는 최대 소스: 순수 문자 약 512 KiB, Java 형태 텍스트 약 381 KiB. 그 이상은 `tool_error`. 상한 256 KiB 적용 후 300·380 KiB 소스는 `success`, `truncated=true`, 원본 크기 기록, 400 KiB는 `tool_error` |
 
 ### 6.3 JADX-GUI 연동 실측 (2026-10-06)
 
@@ -354,5 +364,8 @@ curl `initialize` 요청의 `protocolVersion`은 NuriLab 클라이언트와 같�
 
 ### 6.4 남은 항목과 제한
 
-* 1 MiB 절삭은 무해 APK의 클래스가 작아 실제 서버로 재현하지 않았습니다. 절삭 규칙은
-  단위 테스트로 검증하며, 실제 서버 확인 필요 여부는 THE-155에서 판단합니다.
+* 절삭은 무해 APK의 클래스가 작아 jadx 실제 서버로는 재현하지 않았고, 실제 SDK 연결
+  경로는 임시 가짜 서버로 확인했습니다(6.2). 단위 테스트는 가짜 session을 써서 전송
+  단계를 거치지 않으므로 판정 규칙만 검증합니다.
+* 약 381 KiB를 넘는 클래스 소스는 받을 수 없고 원인이 드러나지 않는 `tool_error`로
+  남습니다(5.1). 보고서에서 이를 어떻게 안내할지는 THE-155에서 판단합니다.

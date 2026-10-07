@@ -109,7 +109,9 @@ def main(argv: list[str] | None = None) -> int:
         LocalLLMReviewClient() if args.review_client == "local" else MockReviewClient()
     )
     jadx_mcp_client = (
-        JadxMcpClient(url=args.jadx_mcp_url) if args.jadx_mcp_class else None
+        JadxMcpClient(url=args.jadx_mcp_url)
+        if args.jadx_mcp_class is not None
+        else None
     )
     pipeline = Phase1Pipeline(
         review_client=review_client,
@@ -146,4 +148,10 @@ def _format_external_tool_call(call: ExternalToolCall) -> str:
         truncated = ", truncated" if call.truncated else ""
         return f"{prefix} ({call.response_size_bytes:,} bytes{truncated})"
     reason = (call.reason or "").strip().splitlines()
-    return f"{prefix} - {reason[0]}" if reason else prefix
+    return f"{prefix} - {_escape_control_chars(reason[0])}" if reason else prefix
+
+
+def _escape_control_chars(text: str) -> str:
+    """Render control characters from external servers as escapes."""
+
+    return "".join(char if char.isprintable() else repr(char)[1:-1] for char in text)

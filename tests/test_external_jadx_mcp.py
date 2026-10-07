@@ -257,7 +257,7 @@ def test_classify_payload_records_success_content_and_size() -> None:
 
 
 def test_classify_payload_keeps_content_at_exact_limit() -> None:
-    """A source of exactly 1 MiB is not truncated."""
+    """A source exactly at the content limit is not truncated."""
 
     source = "a" * JADX_MCP_MAX_CONTENT_BYTES
 
@@ -268,9 +268,9 @@ def test_classify_payload_keeps_content_at_exact_limit() -> None:
 
 
 def test_classify_payload_truncates_without_splitting_multibyte_char() -> None:
-    """Over 1 MiB is cut on a character boundary and the original size is kept."""
+    """Over the limit is cut on a character boundary; the original size is kept."""
 
-    # "가" is 3 UTF-8 bytes, so it straddles the 1 MiB cut and must be dropped.
+    # "가" is 3 UTF-8 bytes, so it straddles the cut and must be dropped.
     source = "a" * (JADX_MCP_MAX_CONTENT_BYTES - 1) + "가"
 
     result = classify_payload({"response": source})
@@ -576,3 +576,19 @@ def test_client_url_comes_from_env_then_default(
     monkeypatch.setenv("NURILAB_JADX_MCP_URL", "http://127.0.0.1:9999/mcp")
     assert JadxMcpClient().url == "http://127.0.0.1:9999/mcp"
     assert JadxMcpClient(url=SERVER_URL).url == SERVER_URL
+
+
+def test_client_records_unavailable_inside_running_event_loop() -> None:
+    """Inside a running loop (e.g. Jupyter) the call is recorded, never raised."""
+
+    opened: list[str] = []
+    client = _client(FakeSession(), opened)
+
+    async def call_from_loop() -> ExternalToolCall:
+        return client.call_tool("get_class_source", "A")
+
+    call = anyio.run(call_from_loop)
+
+    assert call.status == "unavailable"
+    assert call.reason is not None and "running event loop" in call.reason
+    assert opened == []
