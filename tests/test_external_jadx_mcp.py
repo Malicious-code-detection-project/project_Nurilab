@@ -131,6 +131,21 @@ def test_external_tool_call_to_dict_is_json_serializable() -> None:
     }
 
 
+def test_external_tool_call_repr_hides_untrusted_content() -> None:
+    """repr() omits the returned source so logs and assertion output never show it."""
+
+    call = ExternalToolCall(
+        server_url=SERVER_URL,
+        tool="get_class_source",
+        status="success",
+        called_at=CALLED_AT,
+        content="SYNTHETIC_SOURCE_MARKER",
+    )
+
+    assert "SYNTHETIC_SOURCE_MARKER" not in repr(call)
+    assert call.to_dict()["content"] == "SYNTHETIC_SOURCE_MARKER"
+
+
 def test_external_tool_call_rejects_unknown_status() -> None:
     """An unknown status is a NuriLab bug, so construction fails loudly."""
 

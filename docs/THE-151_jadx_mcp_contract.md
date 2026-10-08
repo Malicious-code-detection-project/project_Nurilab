@@ -253,7 +253,7 @@ NuriLab (MCP client)
 | 연결 + initialize + tool 목록 확인 | 10초 | 초과 시 `timeout` |
 | `get_class_source` 호출 | 15초 | 서버 내부 제한(60초)보다 짧게 두어 NuriLab이 먼저 중단. JADX 쪽 작업은 계속될 수 있음 |
 | 응답 소스 크기 | 256 KiB (UTF-8 바이트) | 초과 시 앞부분 256 KiB만 보존하고 `truncated=true`, 원본 크기 기록 |
-| 전송 한계 | 약 381 KiB (Java 형태 소스, 6.2 실측) | MCP SDK가 응답 이벤트를 1 MiB까지만 받고 서버가 소스를 이스케이프해 두 번 보내므로, 이를 넘는 소스는 받지 못해 `tool_error`(`call failed: MCPError: SSE stream ended without a response`)로 기록되고 원본 크기도 남지 않음. NuriLab에서 바꿀 수 없는 한계 |
+| 전송 한계 | 내용에 따라 약 79~512 KiB, 일반적인 Java 소스는 약 381 KiB (6.2 실측) | MCP SDK가 응답 이벤트를 1 MiB까지만 받고 서버가 소스를 이스케이프해 두 번 보내므로, 이스케이프가 많은 문자(따옴표, 백슬래시, 제어 문자)일수록 한계가 낮아짐. 따옴표·백슬래시만으로 된 소스는 약 171 KiB이며, 백슬래시는 Java 문자열의 `"\n"`나 정규식처럼 실제 소스에도 흔함. jadx는 문자열 안의 제어 문자를 `\u0001` 같은 일반 문자로 출력하므로 최저 경우는 실제 소스에서 거의 나오지 않음. 한계를 넘는 소스는 받지 못해 `tool_error`(`call failed: MCPError: SSE stream ended without a response`)로 기록되고 원본 크기도 남지 않음. NuriLab에서 바꿀 수 없는 한계 |
 
 ### 5.2 출처(provenance) 기록 항목
 
@@ -296,6 +296,7 @@ NuriLab (MCP client)
 | 연결·호출 중 예외 | `connect failed: ConnectError: ...`, `call failed: <예외 종류>: <메시지>` |
 | 클라이언트 제한 초과 | `connect exceeded 10s limit.`, `call exceeded 15s limit.` |
 | capability 확인 실패 | `Server does not provide tool 'get_class_source'.` |
+| 실행 중인 이벤트 루프 안에서 호출 | `Cannot call MCP from inside a running event loop.` (상태 `unavailable`, 서버에 연결하지 않음) |
 
 ### 5.4 실패 경계 (Fail-safe)
 
@@ -335,10 +336,10 @@ curl `initialize` 요청의 `protocolVersion`은 NuriLab 클라이언트와 같�
 | 확인 | 결과 |
 | --- | --- |
 | 합의된 프로토콜 버전 | `2025-11-25` |
-| 실제 서버 통합 테스트 `NURILAB_RUN_JADX_MCP=1 uv run pytest tests/test_jadx_mcp_integration.py` | 3 passed (2026-10-02). 기본 호출은 `status=unavailable`, `server_version=3.0.2`, `client_sdk=mcp 2.2.0`. 연결·호출 제한을 극단적으로 줄인 두 테스트는 실제 SDK 연결에서도 각각 `timeout`으로 기록됨 |
+| 실제 서버 통합 테스트 `NURILAB_RUN_JADX_MCP=1 uv run pytest tests/test_jadx_mcp_integration.py` | 3 passed (2026-10-02). 기본 호출은 `status=unavailable`, `server_version=3.0.2`, `client_sdk=mcp 2.2.0`. 연결·호출 제한을 극단적으로 줄인 두 테스트는 실제 SDK 연결에서도 각각 `timeout`으로 기록됨. 2026-10-08 판정 강화 후 재실행: 실제 서버 테스트 3개 통과. 플러그인 연결 실패 사유의 `unavailable`만 jadx 응답으로 인정하며, 연결 시간 초과 테스트에 서버 응답 사전 확인을 추가해 MCP 서버가 없으면 실제 서버 테스트 3개가 모두 실패함 |
 | CLI `analyze ... --jadx-mcp-class com.nurilab.dummy.TestClass` | `JADX MCP get_class_source: unavailable - Cannot connect to JADX plugin at ...`, 종료 코드 0, JSON 최상위 키는 기존과 동일 |
 | 서버가 없는 주소(`127.0.0.1:8659`) | `unavailable`, `connect failed: ConnectError: All connection attempts failed` |
-| 응답 크기 한계 (2026-10-07, 같은 `fastmcp 3.0.2`로 띄운 임시 가짜 서버가 지정 크기의 소스를 반환) | 받을 수 있는 최대 소스: 순수 문자 약 512 KiB, Java 형태 텍스트 약 381 KiB. 그 이상은 `tool_error`. 상한 256 KiB 적용 후 300·380 KiB 소스는 `success`, `truncated=true`, 원본 크기 기록, 400 KiB는 `tool_error` |
+| 응답 크기 한계 (2026-10-07, 같은 `fastmcp 3.0.2`로 띄운 임시 가짜 서버가 지정 크기의 소스를 반환) | 받을 수 있는 최대 소스: 순수 문자·한글 약 512 KiB, Java 형태 텍스트 약 381 KiB, 따옴표만 약 171 KiB, 제어 문자만 약 79 KiB(2026-10-08 추가 측정). 그 이상은 `tool_error`. 상한 256 KiB 적용 후 300·380 KiB 소스는 `success`, `truncated=true`, 원본 크기 기록, 400 KiB는 `tool_error` |
 
 ### 6.3 JADX-GUI 연동 실측 (2026-10-06)
 
@@ -359,7 +360,7 @@ curl `initialize` 요청의 `protocolVersion`은 NuriLab 클라이언트와 같�
 | 성공 | CLI `--jadx-mcp-class com.nurilab.mcpprobe.MainActivity --jadx-mcp-target mcpprobe-debug.apk` | `success (1,573 bytes)`, 종료 코드 0. 받은 소스는 `package com.nurilab.mcpprobe;`로 시작하는 32줄, `truncated=false`, 약 0.2초 |
 | 없는 클래스 | 같은 명령, `--jadx-mcp-class com.nurilab.dummy.TestClass` | `not_found - HTTP error 404: {"error":"Class com.nurilab.dummy.TestClass not found"}` |
 | 연결 실패 | JADX-GUI 종료 후 성공 명령 | `unavailable - Cannot connect to JADX plugin at http://127.0.0.1:8650. ...`, 종료 코드 0 |
-| 통합 테스트 | `NURILAB_RUN_JADX_MCP=1 NURILAB_JADX_MCP_CLASS=com.nurilab.mcpprobe.MainActivity uv run pytest tests/test_jadx_mcp_integration.py` | 3 passed. 기본 호출 `status=success`, `response_size_bytes=1573` |
+| 통합 테스트 | `NURILAB_RUN_JADX_MCP=1 NURILAB_JADX_MCP_CLASS=com.nurilab.mcpprobe.MainActivity uv run pytest tests/test_jadx_mcp_integration.py` | 3 passed. 기본 호출 `status=success`, `response_size_bytes=1573`. 2026-10-08 판정 강화 후 재실행: 실제 서버 테스트 3개 통과. 같은 상태에서 `NURILAB_JADX_MCP_CLASS` 없이 기본 클래스(`com.nurilab.dummy.TestClass`)로 별도 실행한 기본 호출 테스트는 `not_found`로 통과 |
 | 기존 출력 보존 | 성공 실행의 JSON 보고서 | 최상위 키 `generated_at`, `analyzer_version`, `analysis`, `review`로 기존과 동일 |
 
 ### 6.4 남은 항목과 제한

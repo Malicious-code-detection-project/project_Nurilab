@@ -199,8 +199,12 @@ NURILAB_RUN_JADX_MCP=1 uv run pytest tests/test_jadx_mcp_integration.py
 ```
 
 `NURILAB_JADX_MCP_CLASS`로 조회할 클래스를 바꿀 수 있습니다. 기본값은 존재하지 않는
-`com.nurilab.dummy.TestClass`이며, 서버가 jadx 응답(`success`, `empty`, `not_found`,
-`unavailable`)을 돌려주는지와 연결·호출 시간 제한이 `timeout`으로 기록되는지 확인합니다.
+`com.nurilab.dummy.TestClass`이며, `get_class_source`가 실제로 호출되어 jadx가 응답했는지와
+연결·호출 시간 제한이 `timeout`으로 기록되는지 확인합니다. jadx 응답으로 인정하는 상태는
+`success`, `empty`, `not_found`와, 사유가 플러그인 연결 실패(`Cannot connect to JADX plugin`)인
+`unavailable`뿐입니다. 서버 연결 실패나 tool 미제공처럼 호출 전에 멈춘 경우는 실패로
+판정합니다. 진단 출력은 상태·사유 분류 이름·서버 버전·응답 크기·절삭 여부·소요 시간만
+남기며 소스, 접속 정보, 사유 원문은 출력하지 않습니다.
 
 ## Ruff
 

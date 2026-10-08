@@ -305,7 +305,8 @@ class ExternalToolCall:
     expected_release: str | None = None
     client_sdk: str | None = None
     duration_ms: int | None = None
-    content: str | None = None
+    # repr=False keeps untrusted source out of logs and pytest assertion output.
+    content: str | None = field(default=None, repr=False)
     response_size_bytes: int | None = None
     truncated: bool = False
 
