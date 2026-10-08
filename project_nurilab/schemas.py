@@ -179,6 +179,9 @@ class AnalysisReport:
     analyzer_version: str
     analysis: PythonAnalysis
     review: ReviewResult
+    # External MCP call records handed to THE-155. Not serialized by to_dict()
+    # yet, so JSON/HTML output is unchanged until THE-155 adds the section.
+    external_tool_calls: list[ExternalToolCall] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation."""
@@ -253,6 +256,9 @@ class ProjectReport:
     analyzer_version: str
     analysis: ProjectAnalysis
     review: ReviewResult
+    # External MCP call records handed to THE-155. Not serialized by to_dict()
+    # yet, so JSON/HTML output is unchanged until THE-155 adds the section.
+    external_tool_calls: list[ExternalToolCall] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation."""
@@ -263,3 +269,54 @@ class ProjectReport:
             "analysis": self.analysis.to_dict(),
             "review": self.review.to_dict(),
         }
+
+
+ALLOWED_EXTERNAL_TOOL_CALL_STATUSES = {
+    "success",
+    "empty",
+    "not_found",
+    "unavailable",
+    "timeout",
+    "tool_error",
+    "malformed",
+    "invalid_input",
+    "not_allowed",
+}
+
+
+@dataclass(slots=True)
+class ExternalToolCall:
+    """One call to an external MCP tool with its provenance and call status.
+
+    ``content`` is untrusted data returned by the external tool. It is recorded
+    as-is (possibly truncated) and is never used as a rule signal, risk input,
+    or Local LLM review input.
+    """
+
+    server_url: str
+    tool: str
+    status: str
+    called_at: str
+    arguments: dict[str, str] = field(default_factory=dict)
+    target: str | None = None
+    reason: str | None = None
+    server_name: str | None = None
+    server_version: str | None = None
+    expected_release: str | None = None
+    client_sdk: str | None = None
+    duration_ms: int | None = None
+    # repr=False keeps untrusted source out of logs and pytest assertion output.
+    content: str | None = field(default=None, repr=False)
+    response_size_bytes: int | None = None
+    truncated: bool = False
+
+    def __post_init__(self) -> None:
+        # status is set by NuriLab code, not by the external server, so an
+        # unknown value is a programming error rather than input to normalize.
+        if self.status not in ALLOWED_EXTERNAL_TOOL_CALL_STATUSES:
+            raise ValueError(f"Unknown external tool call status: {self.status!r}")
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable representation."""
+
+        return asdict(self)

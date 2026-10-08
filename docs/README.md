@@ -23,6 +23,7 @@
 | --- | --- |
 | [외부 프로젝트 검증](external_project_validation.md) | 실행 절차와 당시 코드·대상 버전에 대한 검증 기록 |
 | [Local LLM 통합 테스트](LOCAL_LLM_INTEGRATION_TEST.md) | 실제 서버 선택형 테스트와 당시 환경·결과 |
+| [THE-151 jadx-ai-mcp 연결 계약](THE-151_jadx_mcp_contract.md) | MCP 연결 계약, 서버 버전 고정 방법, 당시 환경의 실측 기록 |
 | [PR 작성 참고](PR_DESCRIPTION.md) | PR 본문 설명 |
 | [PR 양식](../.github/PULL_REQUEST_TEMPLATE.md) | GitHub 기본 PR form |
 | [Legacy Issue 양식](../.github/ISSUE_TEMPLATE/task.md) | Owner가 요청할 때 쓰는 GitHub Issue 양식; 상태 정본은 Linear |
