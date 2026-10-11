@@ -185,7 +185,12 @@ class JadxMcpClient:
             )
             return outcome
 
-        outcome.classified = _classify_result(result)
+        try:
+            outcome.classified = _classify_result(result)
+        except Exception as exc:  # e.g. RecursionError on deeply nested JSON text
+            outcome.classified = ClassifiedPayload(
+                "malformed", reason=f"classify failed: {_describe(exc)}"
+            )
         return outcome
 
 

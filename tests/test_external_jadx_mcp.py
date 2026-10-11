@@ -580,6 +580,21 @@ def test_client_reports_malformed_for_unexpected_result_type() -> None:
     assert call.status == "malformed"
 
 
+def test_client_records_malformed_when_classification_raises() -> None:
+    """Deeply nested JSON text makes json.loads raise; it is malformed, not a crash."""
+
+    nested = "[" * 10_000 + "0" + "]" * 10_000
+    result = types.CallToolResult(content=[types.TextContent(type="text", text=nested)])
+
+    call = _client(FakeSession(result), []).call_tool("get_class_source", "A")
+
+    assert call.status == "malformed"
+    assert call.reason is not None
+    assert call.reason.startswith("classify failed: RecursionError")
+    assert call.server_name == SERVER_NAME
+    assert call.server_version == "3.0.2"
+
+
 def test_client_url_comes_from_env_then_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -281,7 +281,7 @@ NuriLab (MCP client)
 | `unavailable` | MCP 서버 접속·initialize 실패, 서버가 허용 tool을 제공하지 않음(capability 확인 실패), 또는 `error`가 플러그인 연결 불가 |
 | `timeout` | 클라이언트 제한 초과, 또는 `error`가 서버 측 시간 초과 |
 | `tool_error` | 위에 해당하지 않는 `error`, 또는 MCP 결과가 `isError: true` |
-| `malformed` | `response`와 `error`가 모두 없거나 형식이 예상과 다름 |
+| `malformed` | `response`와 `error`가 모두 없거나 형식이 예상과 다름, 또는 응답을 판정하는 중 예외가 남(예: 지나치게 깊게 중첩된 JSON 텍스트에서 `RecursionError`). 이때도 받은 서버 정보는 유지 |
 | `invalid_input` | `class_name` 검증 실패로 호출하지 않음 |
 | `not_allowed` | 허용 목록 밖 tool 요청으로 호출하지 않음 |
 
@@ -297,6 +297,7 @@ NuriLab (MCP client)
 | 클라이언트 제한 초과 | `connect exceeded 10s limit.`, `call exceeded 15s limit.` |
 | capability 확인 실패 | `Server does not provide tool 'get_class_source'.` |
 | 실행 중인 이벤트 루프 안에서 호출 | `Cannot call MCP from inside a running event loop.` (상태 `unavailable`, 서버에 연결하지 않음) |
+| 응답 판정 중 예외 | `classify failed: RecursionError: ...` (상태 `malformed`) |
 
 ### 5.4 실패 경계 (Fail-safe)
 

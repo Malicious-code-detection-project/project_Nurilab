@@ -56,6 +56,7 @@ _REASON_CATEGORIES = (
     ("Server does not provide tool", "tool_missing"),
     ("Cannot call MCP from inside a running event loop", "event_loop"),
     ("MCP tool error", "mcp_tool_error"),
+    ("classify failed", "classify_failed"),
 )
 
 
@@ -271,6 +272,7 @@ def test_diagnostic_summary_excludes_source_and_connection_details() -> None:
             "Request to JADX plugin timed out after 60.0s for endpoint 'class-source'.",
             "jadx_timeout",
         ),
+        ("classify failed: RecursionError: maximum recursion depth", "classify_failed"),
     ],
 )
 def test_reason_category_names_failures_without_raw_text(
@@ -361,6 +363,13 @@ def _client_reason(scenario: str) -> ExternalToolCall:
                 is_error=True,
             )
         )
+    elif scenario == "classify_failed":
+        nested = "[" * 10_000 + "0" + "]" * 10_000
+        session = _ScriptedSession(
+            result=types.CallToolResult(
+                content=[types.TextContent(type="text", text=nested)]
+            )
+        )
 
     @asynccontextmanager
     async def factory(url: str) -> AsyncGenerator[McpSession, None]:
@@ -389,6 +398,7 @@ def _client_reason(scenario: str) -> ExternalToolCall:
         "connect_timeout",
         "call_timeout",
         "mcp_tool_error",
+        "classify_failed",
         "event_loop",
     ],
 )
