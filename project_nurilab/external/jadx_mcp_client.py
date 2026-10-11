@@ -30,6 +30,7 @@ from project_nurilab.config import (
 )
 from project_nurilab.external.jadx_mcp import (
     ClassifiedPayload,
+    cap_reason,
     check_tool_allowed,
     classify_is_error,
     classify_payload,
@@ -130,7 +131,7 @@ class JadxMcpClient:
             called_at=called_at,
             arguments={"class_name": class_name},
             target=target,
-            reason=classified.reason,
+            reason=cap_reason(classified.reason),
             server_name=outcome.server_name,
             server_version=outcome.server_version,
             expected_release=JADX_MCP_EXPECTED_RELEASE,

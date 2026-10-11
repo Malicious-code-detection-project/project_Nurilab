@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from project_nurilab.config import DEFAULT_REPORT_DIR
@@ -118,13 +121,14 @@ def main(argv: list[str] | None = None) -> int:
         use_ruff=not args.no_ruff,
         jadx_mcp_client=jadx_mcp_client,
     )
-    report, output_paths = pipeline.run(
-        input_path=Path(args.path),
-        output_dir=Path(args.out),
-        formats=args.format,
-        jadx_mcp_class=args.jadx_mcp_class,
-        jadx_mcp_target=args.jadx_mcp_target,
-    )
+    with _escaped_library_logs(enabled=args.jadx_mcp_class is not None):
+        report, output_paths = pipeline.run(
+            input_path=Path(args.path),
+            output_dir=Path(args.out),
+            formats=args.format,
+            jadx_mcp_class=args.jadx_mcp_class,
+            jadx_mcp_target=args.jadx_mcp_target,
+        )
 
     target_path = getattr(report.analysis, "path", None) or getattr(
         report.analysis,
@@ -149,6 +153,35 @@ def _format_external_tool_call(call: ExternalToolCall) -> str:
         return f"{prefix} ({call.response_size_bytes:,} bytes{truncated})"
     reason = (call.reason or "").strip().splitlines()
     return f"{prefix} - {_escape_control_chars(reason[0])}" if reason else prefix
+
+
+class _EscapingFormatter(logging.Formatter):
+    """Log formatter that escapes control characters but keeps line breaks."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        lines = super().format(record).split("\n")
+        return "\n".join(_escape_control_chars(line) for line in lines)
+
+
+@contextmanager
+def _escaped_library_logs(enabled: bool) -> Iterator[None]:
+    """While enabled, print library warnings to stderr with escaped control chars."""
+
+    # The MCP SDK logs server-supplied values (e.g. SSE event names) as-is, and
+    # Python's fallback handler would print them raw to the terminal. The handler
+    # lives only for this run so it never outlives the stderr it was bound to.
+    if not enabled:
+        yield
+        return
+    root = logging.getLogger()
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.WARNING)
+    handler.setFormatter(_EscapingFormatter())
+    root.addHandler(handler)
+    try:
+        yield
+    finally:
+        root.removeHandler(handler)
 
 
 def _escape_control_chars(text: str) -> str:

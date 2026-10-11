@@ -1,12 +1,25 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
 
 from project_nurilab.cli import main
 from project_nurilab.schemas import ExternalToolCall, RuffFinding
+
+
+@pytest.fixture(autouse=True)
+def _restore_root_log_handlers():
+    """Drop any root log handler a test leaves behind so tests stay independent."""
+
+    root = logging.getLogger()
+    handlers_before = list(root.handlers)
+    yield
+    for handler in root.handlers[:]:
+        if handler not in handlers_before:
+            root.removeHandler(handler)
 
 
 def test_cli_analyze_project_directory_generates_reports_with_no_ruff(
@@ -324,3 +337,53 @@ def test_cli_keeps_jadx_mcp_url_for_empty_class_name(
     )
 
     assert seen_urls == ["http://127.0.0.1:9000/mcp"]
+
+
+@pytest.mark.parametrize(
+    "logger_name", ["mcp.client.streamable_http", "client", "httpx2"]
+)
+def test_cli_escapes_control_characters_in_library_logs(
+    tmp_path: Path, monkeypatch, capsys, logger_name: str
+) -> None:
+    """Warnings a library logs during the MCP call reach stderr only as escapes."""
+
+    record = ExternalToolCall(
+        server_url="http://127.0.0.1:8651/mcp",
+        tool="get_class_source",
+        status="unavailable",
+        called_at="2026-10-11T00:00:00+00:00",
+    )
+
+    class LoggingJadxMcpClient:
+        def __init__(self, url: str | None = None) -> None:
+            pass
+
+        def call_tool(
+            self, tool: str, class_name: str, target: str | None = None
+        ) -> ExternalToolCall:
+            # The real SDK logs server-supplied values while the call runs.
+            logging.getLogger(logger_name).warning(
+                "Unknown SSE event: \x1b[2J\x1b[31mFAKE"
+            )
+            return record
+
+    monkeypatch.setattr("project_nurilab.cli.JadxMcpClient", LoggingJadxMcpClient)
+    handlers_before = list(logging.getLogger().handlers)
+
+    main(
+        [
+            "analyze",
+            str(FIXTURES / "clean_sample.py"),
+            "--out",
+            str(tmp_path),
+            "--no-ruff",
+            "--jadx-mcp-class",
+            "A",
+        ]
+    )
+
+    err = capsys.readouterr().err
+    assert "Logging error" not in err
+    assert "\x1b" not in err
+    assert "Unknown SSE event: \\x1b[2J\\x1b[31mFAKE" in err
+    assert logging.getLogger().handlers == handlers_before

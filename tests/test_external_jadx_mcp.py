@@ -13,9 +13,11 @@ from project_nurilab.config import (
     JADX_MCP_CLASS_NAME_MAX_LENGTH,
     JADX_MCP_EXPECTED_RELEASE,
     JADX_MCP_MAX_CONTENT_BYTES,
+    JADX_MCP_MAX_REASON_BYTES,
 )
 from project_nurilab.external.jadx_mcp import (
     MCP_TOOL_ERROR_PREFIX,
+    cap_reason,
     check_tool_allowed,
     classify_is_error,
     classify_payload,
@@ -297,11 +299,14 @@ def test_classify_payload_truncates_without_splitting_multibyte_char() -> None:
 
 
 def test_classify_payload_does_not_raise_on_lone_surrogate() -> None:
-    """A lone surrogate from JSON decoding must not crash the pipeline."""
+    """A lone surrogate becomes "?" so the source can later be written as UTF-8."""
 
     result = classify_payload({"response": "class A {} \ud800"})
 
     assert result.status == "success"
+    assert result.content == "class A {} ?"
+    assert result.content is not None
+    result.content.encode("utf-8")
 
 
 def test_classify_is_error_prefixes_reason_with_mcp_source() -> None:
@@ -622,3 +627,91 @@ def test_client_records_unavailable_inside_running_event_loop() -> None:
     assert call.status == "unavailable"
     assert call.reason is not None and "running event loop" in call.reason
     assert opened == []
+
+
+@pytest.mark.parametrize("error", [None, {"detail": "x"}, 404])
+def test_classify_payload_treats_non_string_error_as_malformed(error: object) -> None:
+    """An 'error' that is not a string is an unexpected shape, like 'response'."""
+
+    result = classify_payload({"error": error})
+
+    assert result.status == "malformed"
+    assert result.reason == "Tool result 'error' is not a string."
+
+
+def test_cap_reason_keeps_short_reasons_and_cuts_long_ones() -> None:
+    """Reasons over the byte limit keep their head and record the original size."""
+
+    long_reason = "x" * 300_000
+
+    capped = cap_reason(long_reason)
+
+    assert cap_reason(None) is None
+    assert cap_reason("short") == "short"
+    assert capped is not None
+    assert capped.startswith("x" * JADX_MCP_MAX_REASON_BYTES)
+    assert capped.endswith("... (truncated, 300000 bytes)")
+    assert len(capped.encode("utf-8")) < JADX_MCP_MAX_REASON_BYTES + 64
+
+
+def test_client_caps_long_server_error_reason() -> None:
+    """A huge jadx error is stored and printed only up to the reason limit."""
+
+    session = FakeSession(_text_result({"error": "E" * 300_000}))
+
+    call = _client(session, []).call_tool("get_class_source", "A")
+
+    assert call.status == "tool_error"
+    assert call.reason is not None
+    assert call.reason.endswith("(truncated, 300000 bytes)")
+    assert len(call.reason.encode("utf-8")) < JADX_MCP_MAX_REASON_BYTES + 64
+
+
+def test_client_keeps_success_when_session_close_fails() -> None:
+    """An error while closing the session after the call must not drop the result."""
+
+    session = FakeSession(_text_result({"response": "class A {}"}))
+
+    @asynccontextmanager
+    async def closing_fails(url: str) -> AsyncGenerator[McpSession, None]:
+        yield session
+        raise RuntimeError("terminate request failed")
+
+    client = JadxMcpClient(url=SERVER_URL, session_factory=closing_fails)
+
+    call = client.call_tool("get_class_source", "A")
+
+    assert call.status == "success"
+    assert call.content == "class A {}"
+
+
+def test_client_maps_timeout_error_from_call_to_timeout() -> None:
+    """A TimeoutError raised inside the call is recorded as timeout, not tool_error."""
+
+    session = FakeSession(call_error=TimeoutError("read timed out"))
+
+    call = _client(session, []).call_tool("get_class_source", "A")
+
+    assert call.status == "timeout"
+    assert call.reason == "call failed: TimeoutError: read timed out"
+
+
+def test_cap_reason_cleans_lone_surrogate_in_short_reason() -> None:
+    """A short reason is not cut but still loses lone surrogates."""
+
+    capped = cap_reason("bad \ud800 data")
+
+    assert capped == "bad ? data"
+    assert capped is not None
+    capped.encode("utf-8")
+
+
+def test_cap_reason_cuts_by_bytes_not_characters() -> None:
+    """Korean text (3 bytes each) is cut at the byte limit on a character boundary."""
+
+    reason = "가" * 2000  # 6000 UTF-8 bytes, 2000 characters
+
+    capped = cap_reason(reason)
+
+    kept_chars = JADX_MCP_MAX_REASON_BYTES // 3
+    assert capped == "가" * kept_chars + "... (truncated, 6000 bytes)"
