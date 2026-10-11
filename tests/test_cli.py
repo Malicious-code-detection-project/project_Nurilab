@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from project_nurilab.cli import main
-from project_nurilab.schemas import RuffFinding
+from project_nurilab.schemas import ExternalToolCall, RuffFinding
 
 
 def test_cli_analyze_project_directory_generates_reports_with_no_ruff(
@@ -121,3 +121,206 @@ def test_cli_max_lines_help_is_marked_deprecated(capsys) -> None:
     assert "--max-lines" in captured.out
     assert "Deprecated and ignored" in captured.out
     assert "Maximum allowed source lines" not in captured.out
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _fake_jadx_mcp_client(record: ExternalToolCall, seen_urls: list[str | None]):
+    """Build a JadxMcpClient stand-in that returns ``record`` for any call."""
+
+    class FakeJadxMcpClient:
+        def __init__(self, url: str | None = None) -> None:
+            seen_urls.append(url)
+
+        def call_tool(
+            self, tool: str, class_name: str, target: str | None = None
+        ) -> ExternalToolCall:
+            return record
+
+    return FakeJadxMcpClient
+
+
+@pytest.mark.parametrize(
+    ("record", "expected_line"),
+    [
+        (
+            ExternalToolCall(
+                server_url="http://127.0.0.1:9000/mcp",
+                tool="get_class_source",
+                status="success",
+                called_at="2026-10-01T00:00:00+00:00",
+                response_size_bytes=12345,
+            ),
+            "JADX MCP get_class_source: success (12,345 bytes)",
+        ),
+        (
+            ExternalToolCall(
+                server_url="http://127.0.0.1:9000/mcp",
+                tool="get_class_source",
+                status="unavailable",
+                called_at="2026-10-01T00:00:00+00:00",
+                reason="Cannot connect to JADX plugin\nsecond line",
+            ),
+            "JADX MCP get_class_source: unavailable - Cannot connect to JADX plugin",
+        ),
+    ],
+)
+def test_cli_jadx_mcp_prints_status_line_and_keeps_json(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    record: ExternalToolCall,
+    expected_line: str,
+) -> None:
+    """--jadx-mcp-class prints one status line; exit code and JSON stay as-is."""
+
+    seen_urls: list[str | None] = []
+    monkeypatch.setattr(
+        "project_nurilab.cli.JadxMcpClient",
+        _fake_jadx_mcp_client(record, seen_urls),
+    )
+    output_dir = tmp_path / "reports"
+
+    exit_code = main(
+        [
+            "analyze",
+            str(FIXTURES / "clean_sample.py"),
+            "--out",
+            str(output_dir),
+            "--no-ruff",
+            "--jadx-mcp-class",
+            "com.nurilab.mcpprobe.MainActivity",
+            "--jadx-mcp-url",
+            "http://127.0.0.1:9000/mcp",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(
+        (output_dir / "clean_sample.analysis.json").read_text(encoding="utf-8")
+    )
+    assert exit_code == 0
+    assert seen_urls == ["http://127.0.0.1:9000/mcp"]
+    assert captured.out.rstrip().splitlines()[-1] == expected_line
+    assert "external_tool_calls" not in payload
+
+
+def test_cli_without_jadx_mcp_class_never_builds_a_client(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """Default runs do not touch MCP and print no MCP status line."""
+
+    def fail_if_built(*args, **kwargs):
+        raise AssertionError("JadxMcpClient must not be built without the option")
+
+    monkeypatch.setattr("project_nurilab.cli.JadxMcpClient", fail_if_built)
+    monkeypatch.setattr("project_nurilab.pipeline.JadxMcpClient", fail_if_built)
+
+    exit_code = main(
+        [
+            "analyze",
+            str(FIXTURES / "clean_sample.py"),
+            "--out",
+            str(tmp_path),
+            "--no-ruff",
+        ]
+    )
+
+    assert exit_code == 0
+    assert "JADX MCP" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        ["--jadx-mcp-url", "http://127.0.0.1:9000/mcp"],
+        ["--jadx-mcp-target", "mcpprobe-debug.apk"],
+    ],
+)
+def test_cli_jadx_mcp_options_require_class(
+    tmp_path: Path, capsys, option: list[str]
+) -> None:
+    """URL or target without --jadx-mcp-class is a usage error, not ignored."""
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                "analyze",
+                str(FIXTURES / "clean_sample.py"),
+                "--out",
+                str(tmp_path),
+                *option,
+            ]
+        )
+
+    assert exc_info.value.code == 2
+    assert "require --jadx-mcp-class" in capsys.readouterr().err
+
+
+def test_cli_escapes_control_characters_in_external_reason(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Terminal control codes from an MCP server are printed as visible escapes."""
+
+    record = ExternalToolCall(
+        server_url="http://127.0.0.1:8651/mcp",
+        tool="get_class_source",
+        status="tool_error",
+        called_at="2026-10-07T00:00:00+00:00",
+        reason="\x1b[2J\x1b[31mFAKE: all clear",
+    )
+    monkeypatch.setattr(
+        "project_nurilab.cli.JadxMcpClient", _fake_jadx_mcp_client(record, [])
+    )
+
+    main(
+        [
+            "analyze",
+            str(FIXTURES / "clean_sample.py"),
+            "--out",
+            str(tmp_path),
+            "--no-ruff",
+            "--jadx-mcp-class",
+            "A",
+        ]
+    )
+
+    last_line = capsys.readouterr().out.rstrip().splitlines()[-1]
+    assert "\x1b" not in last_line
+    assert last_line.endswith("tool_error - \\x1b[2J\\x1b[31mFAKE: all clear")
+
+
+def test_cli_keeps_jadx_mcp_url_for_empty_class_name(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An empty --jadx-mcp-class still uses the given URL so the record is accurate."""
+
+    record = ExternalToolCall(
+        server_url="http://127.0.0.1:9000/mcp",
+        tool="get_class_source",
+        status="invalid_input",
+        called_at="2026-10-07T00:00:00+00:00",
+    )
+    seen_urls: list[str | None] = []
+    monkeypatch.setattr(
+        "project_nurilab.cli.JadxMcpClient", _fake_jadx_mcp_client(record, seen_urls)
+    )
+
+    main(
+        [
+            "analyze",
+            str(FIXTURES / "clean_sample.py"),
+            "--out",
+            str(tmp_path),
+            "--no-ruff",
+            "--jadx-mcp-class",
+            "",
+            "--jadx-mcp-url",
+            "http://127.0.0.1:9000/mcp",
+        ]
+    )
+
+    assert seen_urls == ["http://127.0.0.1:9000/mcp"]

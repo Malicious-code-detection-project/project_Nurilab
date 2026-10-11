@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "matplotlib>=3.10.9",
+    "mcp>=2.2.0",
     "numpy>=2.4.4",
     "pandas>=3.0.2",
     "requests>=2.33.1",
@@ -25,6 +26,7 @@ pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
     "local_llm_integration: requires an already-running local vLLM server and NURILAB_RUN_LOCAL_LLM=1",
+    "jadx_mcp_integration: requires an already-running jadx-mcp-server and NURILAB_RUN_JADX_MCP=1",
 ]
 
 [tool.mypy]

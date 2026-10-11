@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import pytest
+from mcp import types
+
+from project_nurilab.external.jadx_mcp_client import JadxMcpClient, McpSession
 from project_nurilab.pipeline import Phase1Pipeline
-from project_nurilab.schemas import AnalysisReport, ProjectReport, RuffFinding
+from project_nurilab.schemas import (
+    AnalysisReport,
+    ExternalToolCall,
+    ProjectReport,
+    RuffFinding,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -961,3 +972,164 @@ def test_pipeline_preserves_reports_when_local_llm_returns_http_error(
     assert payload["review"]["findings"][0]["source"] == "local_llm"
     assert payload["review"]["findings"][0]["title"] == "Local LLM HTTP error"
     assert "server overloaded" in payload["review"]["findings"][0]["reason"]
+
+
+class RecordingJadxMcpClient(JadxMcpClient):
+    """Fake client that records calls and returns a fixed success record."""
+
+    def __init__(self) -> None:
+        super().__init__(url="http://127.0.0.1:8651/mcp")
+        self.calls: list[tuple[str, str, str | None]] = []
+
+    def call_tool(
+        self, tool: str, class_name: str, target: str | None = None
+    ) -> ExternalToolCall:
+        self.calls.append((tool, class_name, target))
+        return ExternalToolCall(
+            server_url=self.url,
+            tool=tool,
+            status="success",
+            called_at="2026-10-01T00:00:00+00:00",
+            arguments={"class_name": class_name},
+            target=target,
+            content="class MainActivity {}",
+            response_size_bytes=21,
+        )
+
+
+def _jadx_mcp_input(kind: str, tmp_path: Path) -> Path:
+    """Return a risky single file or a risky project directory to analyze."""
+
+    if kind == "file":
+        return FIXTURES / "vulnerable_sample.py"
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    (project_dir / "risky.py").write_text(
+        "import os\n\n\ndef run(command):\n    return os.system(command)\n",
+        encoding="utf-8",
+    )
+    return project_dir
+
+
+@pytest.mark.parametrize(
+    ("kind", "report_type"),
+    [("file", AnalysisReport), ("project", ProjectReport)],
+)
+def test_pipeline_attaches_jadx_mcp_call_without_changing_outputs(
+    tmp_path: Path, kind: str, report_type: type
+) -> None:
+    """An opt-in MCP call is attached to the report, not to review or JSON."""
+
+    input_path = _jadx_mcp_input(kind, tmp_path)
+    baseline, _ = Phase1Pipeline(use_ruff=False).run(
+        input_path=input_path,
+        output_dir=tmp_path / "baseline",
+    )
+    client = RecordingJadxMcpClient()
+
+    report, output_paths = Phase1Pipeline(use_ruff=False, jadx_mcp_client=client).run(
+        input_path=input_path,
+        output_dir=tmp_path / "with_mcp",
+        jadx_mcp_class="com.nurilab.mcpprobe.MainActivity",
+        jadx_mcp_target="mcpprobe-debug.apk",
+    )
+
+    assert isinstance(report, report_type)
+    assert client.calls == [
+        ("get_class_source", "com.nurilab.mcpprobe.MainActivity", "mcpprobe-debug.apk")
+    ]
+    assert [call.status for call in report.external_tool_calls] == ["success"]
+    assert baseline.review.findings
+    assert report.review.to_dict() == baseline.review.to_dict()
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert "external_tool_calls" not in payload
+    assert payload.keys() == baseline.to_dict().keys()
+
+
+def test_pipeline_passes_missing_jadx_mcp_target_as_none(tmp_path: Path) -> None:
+    """Without jadx_mcp_target the client receives None, not a guessed value."""
+
+    client = RecordingJadxMcpClient()
+
+    Phase1Pipeline(use_ruff=False, jadx_mcp_client=client).run(
+        input_path=FIXTURES / "clean_sample.py",
+        output_dir=tmp_path,
+        jadx_mcp_class="com.nurilab.mcpprobe.MainActivity",
+    )
+
+    assert client.calls == [
+        ("get_class_source", "com.nurilab.mcpprobe.MainActivity", None)
+    ]
+
+
+def test_pipeline_skips_jadx_mcp_without_class_name(tmp_path: Path) -> None:
+    """Without jadx_mcp_class the client is never called and the list is empty."""
+
+    client = RecordingJadxMcpClient()
+
+    report, _ = Phase1Pipeline(use_ruff=False, jadx_mcp_client=client).run(
+        input_path=FIXTURES / "clean_sample.py",
+        output_dir=tmp_path,
+    )
+
+    assert report.external_tool_calls == []
+    assert client.calls == []
+
+
+class _NestedJsonSession:
+    """MCP session whose tool result is JSON text too deep for json.loads."""
+
+    async def initialize(self) -> types.InitializeResult:
+        return types.InitializeResult(
+            protocol_version="2025-11-25",
+            capabilities=types.ServerCapabilities(),
+            server_info=types.Implementation(name="jadx", version="3.0.2"),
+        )
+
+    async def list_tools(
+        self, *, params: types.PaginatedRequestParams | None = None
+    ) -> types.ListToolsResult:
+        return types.ListToolsResult(
+            tools=[types.Tool(name="get_class_source", input_schema={"type": "object"})]
+        )
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any] | None = None
+    ) -> object:
+        nested = "[" * 10_000 + "0" + "]" * 10_000
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=nested)]
+        )
+
+
+@pytest.mark.parametrize("kind", ["file", "project"])
+def test_pipeline_keeps_reports_when_mcp_result_classification_fails(
+    tmp_path: Path, kind: str
+) -> None:
+    """A result that breaks classification still leaves static results and reports."""
+
+    @asynccontextmanager
+    async def factory(url: str) -> AsyncGenerator[McpSession, None]:
+        yield _NestedJsonSession()
+
+    input_path = _jadx_mcp_input(kind, tmp_path)
+    baseline, _ = Phase1Pipeline(use_ruff=False).run(
+        input_path=input_path,
+        output_dir=tmp_path / "baseline",
+    )
+
+    report, output_paths = Phase1Pipeline(
+        use_ruff=False, jadx_mcp_client=JadxMcpClient(session_factory=factory)
+    ).run(
+        input_path=input_path,
+        output_dir=tmp_path / "with_mcp",
+        jadx_mcp_class="com.nurilab.mcpprobe.MainActivity",
+    )
+
+    assert [call.status for call in report.external_tool_calls] == ["malformed"]
+    assert report.external_tool_calls[0].server_version == "3.0.2"
+    assert output_paths["html"].exists()
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert baseline.review.findings
+    assert payload["analysis"] == baseline.to_dict()["analysis"]
+    assert payload["review"] == baseline.to_dict()["review"]
