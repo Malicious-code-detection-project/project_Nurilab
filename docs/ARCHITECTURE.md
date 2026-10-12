@@ -243,8 +243,9 @@ CLI --jadx-mcp-class
 - 연결 실패·시간 초과·오류 응답은 예외가 아니라 `ExternalToolCall`의 상태로 남고,
   정적 분석과 report 생성은 계속됩니다.
 - 받은 소스는 비신뢰 데이터이며 rule signal·risk·review 입력에 사용하지 않습니다.
-- `external_tool_calls`는 report 객체에만 담기며 `to_dict()`에 포함되지 않습니다.
-  JSON/HTML 표시와 반복 검증은 THE-155 범위입니다.
+- `external_tool_calls`는 호출 기록이 있을 때만 JSON 최상위 키로 추가됩니다.
+  옵션을 주지 않은 실행의 JSON은 기존과 같습니다. HTML 표시와 반복 검증은
+  THE-155에서 진행 중입니다.
 
 별도 AegisLM endpoint 연결은 `THE-80`의 외부 LLM 백로그입니다. 기존
 OpenAI-compatible review 경계를 사용할 수 있는지 검토하는 항목이며 MCP 연동의

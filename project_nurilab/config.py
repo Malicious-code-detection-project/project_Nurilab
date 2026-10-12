@@ -22,6 +22,8 @@ JADX_MCP_CLASS_NAME_MAX_LENGTH = 512
 JADX_MCP_MAX_CONTENT_BYTES = 256 * 1024
 # Reasons are diagnostics; long server error text is cut before it reaches reports.
 JADX_MCP_MAX_REASON_BYTES = 4 * 1024
+# serverInfo name/version are server-controlled; real values are about 45 bytes.
+JADX_MCP_MAX_SERVER_INFO_BYTES = 256
 DEFAULT_JADX_MCP_URL = "http://127.0.0.1:8651/mcp"
 JADX_MCP_CONNECT_TIMEOUT_SECONDS = 10.0  # connect + initialize + list_tools
 JADX_MCP_CALL_TIMEOUT_SECONDS = 15.0

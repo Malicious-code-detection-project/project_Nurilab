@@ -13,6 +13,7 @@ from project_nurilab.llm.review import MockLLMReviewClient
 from project_nurilab.reports.generator import ReportGenerator
 from project_nurilab.schemas import (
     AnalysisReport,
+    ExternalToolCall,
     ProjectAnalysis,
     ProjectFileSummary,
     ProjectReport,
@@ -400,6 +401,114 @@ def test_report_generator_writes_project_json_contract(tmp_path: Path) -> None:
     payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
     assert payload == report.to_dict()
     assert "html" not in output_paths
+
+
+def _jadx_mcp_success_call() -> ExternalToolCall:
+    return ExternalToolCall(
+        server_url="http://127.0.0.1:8651/mcp",
+        tool="get_class_source",
+        status="success",
+        called_at="2026-10-12T00:00:00+00:00",
+        arguments={"class_name": "com.nurilab.mcpprobe.MainActivity"},
+        target="mcpprobe-debug.apk",
+        server_name="JADX-AI-MCP Plugin Reverse Engineering Server",
+        server_version="3.0.2",
+        expected_release="jadx-ai-mcp V6.4.1",
+        client_sdk="mcp 2.2.0",
+        duration_ms=200,
+        content="// 주석 </script>\npackage com.nurilab.mcpprobe;\n",
+        response_size_bytes=50,
+    )
+
+
+def _jadx_mcp_unavailable_call() -> ExternalToolCall:
+    return ExternalToolCall(
+        server_url="http://127.0.0.1:8659/mcp",
+        tool="get_class_source",
+        status="unavailable",
+        called_at="2026-10-12T00:00:00+00:00",
+        arguments={"class_name": "com.nurilab.mcpprobe.MainActivity"},
+        reason="connect failed: ConnectError: All connection attempts failed",
+        client_sdk="mcp 2.2.0",
+        duration_ms=5,
+    )
+
+
+def _build_single_file_report() -> AnalysisReport:
+    return AnalysisReport(
+        generated_at="2026-06-29T00:00:00+00:00",
+        analyzer_version=__version__,
+        analysis=PythonAnalysis(path="/tmp/sample.py", line_count=1),
+        review=ReviewResult(summary="No findings.", risk_level="low"),
+    )
+
+
+@pytest.mark.parametrize(
+    "build_report",
+    [
+        _build_single_file_report,
+        lambda: _build_project_json_contract_report("/tmp/json_project"),
+    ],
+    ids=["file", "project"],
+)
+def test_report_to_dict_adds_external_tool_calls_only_when_recorded(
+    build_report,
+) -> None:
+    """Without an MCP call the JSON contract is unchanged; with one it is appended."""
+
+    report = build_report()
+    baseline = report.to_dict()
+    assert list(baseline) == ["generated_at", "analyzer_version", "analysis", "review"]
+
+    calls = [_jadx_mcp_success_call(), _jadx_mcp_unavailable_call()]
+    report.external_tool_calls = calls
+    payload = report.to_dict()
+
+    assert list(payload) == [*baseline, "external_tool_calls"]
+    for key, value in baseline.items():
+        assert payload[key] == value
+    assert payload["external_tool_calls"] == [call.to_dict() for call in calls]
+    assert set(payload["external_tool_calls"][0]) == {
+        "server_url",
+        "tool",
+        "status",
+        "called_at",
+        "arguments",
+        "target",
+        "target_verified",
+        "reason",
+        "server_name",
+        "server_version",
+        "expected_release",
+        "client_sdk",
+        "duration_ms",
+        "content",
+        "response_size_bytes",
+        "truncated",
+    }
+    assert payload["external_tool_calls"][1]["content"] is None
+    assert payload["external_tool_calls"][1]["target"] is None
+    assert [call["target_verified"] for call in payload["external_tool_calls"]] == [
+        False,
+        False,
+    ]
+
+
+def test_report_generator_writes_external_tool_call_json(tmp_path: Path) -> None:
+    """Untrusted MCP content is stored verbatim as JSON data, not re-encoded."""
+
+    report = _build_single_file_report()
+    report.external_tool_calls = [_jadx_mcp_success_call()]
+
+    output_paths = ReportGenerator().write(report, tmp_path, formats=["json"])
+
+    json_text = output_paths["json"].read_text(encoding="utf-8")
+    payload = json.loads(json_text)
+    assert payload == report.to_dict()
+    assert payload["external_tool_calls"][0]["content"] == (
+        _jadx_mcp_success_call().content
+    )
+    assert "// 주석" in json_text
 
 
 def test_report_generator_renders_local_llm_failure_finding_details(

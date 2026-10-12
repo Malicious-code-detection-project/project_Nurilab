@@ -27,10 +27,12 @@ from project_nurilab.config import (
     JADX_MCP_CALL_TIMEOUT_SECONDS,
     JADX_MCP_CONNECT_TIMEOUT_SECONDS,
     JADX_MCP_EXPECTED_RELEASE,
+    JADX_MCP_MAX_SERVER_INFO_BYTES,
 )
 from project_nurilab.external.jadx_mcp import (
     ClassifiedPayload,
     cap_reason,
+    cap_text,
     check_tool_allowed,
     classify_is_error,
     classify_payload,
@@ -132,8 +134,10 @@ class JadxMcpClient:
             arguments={"class_name": class_name},
             target=target,
             reason=cap_reason(classified.reason),
-            server_name=outcome.server_name,
-            server_version=outcome.server_version,
+            server_name=cap_text(outcome.server_name, JADX_MCP_MAX_SERVER_INFO_BYTES),
+            server_version=cap_text(
+                outcome.server_version, JADX_MCP_MAX_SERVER_INFO_BYTES
+            ),
             expected_release=JADX_MCP_EXPECTED_RELEASE,
             client_sdk=_client_sdk(),
             duration_ms=int((time.perf_counter() - started) * 1000),

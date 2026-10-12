@@ -14,6 +14,7 @@ from project_nurilab.config import (
     JADX_MCP_EXPECTED_RELEASE,
     JADX_MCP_MAX_CONTENT_BYTES,
     JADX_MCP_MAX_REASON_BYTES,
+    JADX_MCP_MAX_SERVER_INFO_BYTES,
 )
 from project_nurilab.external.jadx_mcp import (
     MCP_TOOL_ERROR_PREFIX,
@@ -81,6 +82,7 @@ def test_external_tool_call_defaults_leave_provenance_unset() -> None:
 
     assert call.arguments == {}
     assert call.target is None
+    assert call.target_verified is False
     assert call.reason is None
     assert call.server_name is None
     assert call.server_version is None
@@ -121,6 +123,7 @@ def test_external_tool_call_to_dict_is_json_serializable() -> None:
         "called_at",
         "arguments",
         "target",
+        "target_verified",
         "reason",
         "server_name",
         "server_version",
@@ -370,8 +373,12 @@ class FakeSession:
         initialize_delay: float = 0.0,
         call_delay: float = 0.0,
         call_error: Exception | None = None,
+        server_name: str = SERVER_NAME,
+        server_version: str = "3.0.2",
     ) -> None:
         self.result = result
+        self.server_name = server_name
+        self.server_version = server_version
         self.tool_pages = tool_pages
         self.initialize_delay = initialize_delay
         self.call_delay = call_delay
@@ -383,7 +390,9 @@ class FakeSession:
         return types.InitializeResult(
             protocol_version="2025-11-25",
             capabilities=types.ServerCapabilities(),
-            server_info=types.Implementation(name=SERVER_NAME, version="3.0.2"),
+            server_info=types.Implementation(
+                name=self.server_name, version=self.server_version
+            ),
         )
 
     async def list_tools(
@@ -715,3 +724,69 @@ def test_cap_reason_cuts_by_bytes_not_characters() -> None:
 
     kept_chars = JADX_MCP_MAX_REASON_BYTES // 3
     assert capped == "가" * kept_chars + "... (truncated, 6000 bytes)"
+
+
+def test_external_tool_call_replaces_lone_surrogates_in_every_text_field() -> None:
+    """Any producer's record can be written as UTF-8, whatever text it was given."""
+
+    bad = "x\udcffy"
+    call = ExternalToolCall(
+        server_url=f"http://127.0.0.1:8651/{bad}",
+        tool="get_class_source",
+        status="invalid_input",
+        called_at=CALLED_AT,
+        arguments={f"key{bad}": f"Bad{bad}"},
+        target=f"app{bad}.apk",
+        reason=bad,
+        server_name=bad,
+        server_version=bad,
+        expected_release=bad,
+        client_sdk=bad,
+        content=bad,
+    )
+
+    payload = call.to_dict()
+
+    json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    assert payload["server_url"] == "http://127.0.0.1:8651/x?y"
+    assert payload["arguments"] == {"keyx?y": "Badx?y"}
+    assert payload["target"] == "appx?y.apk"
+    for key in (
+        "reason",
+        "server_name",
+        "server_version",
+        "expected_release",
+        "client_sdk",
+        "content",
+    ):
+        assert payload[key] == "x?y"
+
+
+def test_client_records_surrogate_class_name_as_invalid_input() -> None:
+    """Undecodable argv bytes are rejected and recorded with "?" in their place."""
+
+    opened: list[str] = []
+
+    call = _client(FakeSession(), opened).call_tool("get_class_source", "Bad\udcff")
+
+    assert opened == []
+    assert call.status == "invalid_input"
+    assert call.arguments == {"class_name": "Bad?"}
+
+
+def test_client_cleans_and_caps_server_info() -> None:
+    """serverInfo is server-controlled, so it is cleaned and cut like a reason."""
+
+    session = FakeSession(
+        _text_result({"response": "class A {}"}),
+        server_name="jadx\ud800",
+        server_version="9" * 300,
+    )
+
+    call = _client(session, []).call_tool("get_class_source", "A")
+
+    assert call.status == "success"
+    assert call.server_name == "jadx?"
+    assert call.server_version == (
+        "9" * JADX_MCP_MAX_SERVER_INFO_BYTES + "... (truncated, 300 bytes)"
+    )

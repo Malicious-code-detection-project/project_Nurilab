@@ -1015,10 +1015,10 @@ def _jadx_mcp_input(kind: str, tmp_path: Path) -> Path:
     ("kind", "report_type"),
     [("file", AnalysisReport), ("project", ProjectReport)],
 )
-def test_pipeline_attaches_jadx_mcp_call_without_changing_outputs(
+def test_pipeline_records_jadx_mcp_call_without_changing_analysis_or_review(
     tmp_path: Path, kind: str, report_type: type
 ) -> None:
-    """An opt-in MCP call is attached to the report, not to review or JSON."""
+    """An opt-in MCP call is added to JSON apart from analysis and review."""
 
     input_path = _jadx_mcp_input(kind, tmp_path)
     baseline, _ = Phase1Pipeline(use_ruff=False).run(
@@ -1042,8 +1042,13 @@ def test_pipeline_attaches_jadx_mcp_call_without_changing_outputs(
     assert baseline.review.findings
     assert report.review.to_dict() == baseline.review.to_dict()
     payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
-    assert "external_tool_calls" not in payload
-    assert payload.keys() == baseline.to_dict().keys()
+    baseline_payload = baseline.to_dict()
+    assert list(payload) == [*baseline_payload, "external_tool_calls"]
+    assert payload["analysis"] == baseline_payload["analysis"]
+    assert payload["review"] == baseline_payload["review"]
+    assert payload["external_tool_calls"] == [
+        call.to_dict() for call in report.external_tool_calls
+    ]
 
 
 def test_pipeline_passes_missing_jadx_mcp_target_as_none(tmp_path: Path) -> None:
@@ -1073,6 +1078,7 @@ def test_pipeline_skips_jadx_mcp_without_class_name(tmp_path: Path) -> None:
     )
 
     assert report.external_tool_calls == []
+    assert "external_tool_calls" not in report.to_dict()
     assert client.calls == []
 
 

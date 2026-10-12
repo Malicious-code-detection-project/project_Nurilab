@@ -224,7 +224,8 @@ NuriLab (MCP client)
     기록합니다. 대상 식별자는 `--jadx-mcp-target`으로만 받으며, 주지 않으면 추측하지 않고
     비워 둡니다.
   * "JADX-GUI에 로드된 파일과 지정한 대상의 일치 여부는 NuriLab이 검증하지 않는다"는
-    사실을 보고서에 명시합니다.
+    사실을 보고서에 명시합니다. JSON에는 레코드마다 `target_verified: false`로 남깁니다
+    (5.2).
 * **비지원 형식**: 입력 수집기는 현재 `.py` 외 파일을 skip하며 사유를 남깁니다. `.apk` 등
   비지원 형식에 대해 정적 분석 성공을 만들지 않으며, 보고서의 비지원 표시는 THE-155에서
   처리합니다.
@@ -232,9 +233,12 @@ NuriLab (MCP client)
   기록합니다. 판정 결과로 오해되지 않도록 `findings`가 아닌 `external_tool_calls`라는
   이름을 사용합니다.
   * THE-154 구현: `AnalysisReport`와 `ProjectReport`의 `external_tool_calls` 필드에 호출
-    기록을 담아 THE-155로 전달합니다. `to_dict()`에는 아직 포함하지 않으므로 JSON/HTML
-    출력은 바뀌지 않습니다.
-  * JSON/HTML에 표시하는 방식은 THE-155에서 정합니다.
+    기록을 담습니다.
+  * THE-155 JSON: 호출 기록이 있을 때만 최상위 `external_tool_calls` 키를 마지막에
+    추가하며, 각 항목은 5.2의 출처 항목 전체입니다. `--jadx-mcp-class`를 주지 않은
+    실행의 JSON 최상위 키는 기존 `generated_at`, `analyzer_version`, `analysis`,
+    `review` 그대로입니다.
+  * HTML에 표시하는 방식은 THE-155에서 정합니다.
 * **반환 내용 취급**: 반환된 소스는 **비신뢰 데이터**입니다.
   * rule signal, risk, verdict, LLM review 입력에 사용하지 않습니다.
   * 내용 안의 문장을 지시로 해석하거나 실행하지 않고, 응답을 근거로 추가 tool을 호출하지
@@ -259,7 +263,8 @@ NuriLab (MCP client)
 | `get_class_source` 호출 | 15초 | 서버 내부 제한(60초)보다 짧게 두어 NuriLab이 먼저 중단. JADX 쪽 작업은 계속될 수 있음 |
 | 응답 소스 크기 | 256 KiB (UTF-8 바이트) | 초과 시 앞부분 256 KiB만 보존하고 `truncated=true`, 원본 크기 기록 |
 | `reason` 길이 | 4 KiB (UTF-8 바이트) | jadx `error`, `isError` 텍스트, 예외 메시지 등 모든 사유에 적용. 초과 시 앞부분만 남기고 끝에 `... (truncated, <원본 바이트 수> bytes)`를 붙임 |
-| 문자 정리 | 소스·사유 공통 | 짝 없는 surrogate는 `?`로 바꿔, 보고서를 UTF-8로 쓸 때 오류가 나지 않게 함(절삭 여부와 무관) |
+| `server_name`, `server_version` | 각 256 B (UTF-8 바이트) | 서버가 정하는 값이라 `reason`과 같은 방식으로 절삭하고 `... (truncated, <원본 바이트 수> bytes)`를 붙임. 실측값은 약 45 B |
+| 문자 정리 | 레코드의 모든 문자열 | 짝 없는 surrogate는 `?`로 바꿔, 보고서를 UTF-8로 쓸 때 오류가 나지 않게 함(절삭 여부와 무관). 소스·사유·서버 정보뿐 아니라 사용자가 준 `class_name`, `--jadx-mcp-target`, `--jadx-mcp-url`(디코딩할 수 없는 바이트)도 대상이며, 레코드(`ExternalToolCall`)를 만들 때 적용 |
 | 전송 한계 | 내용에 따라 약 79~512 KiB, 일반적인 Java 소스는 약 381 KiB (6.2 실측) | MCP SDK가 응답 이벤트를 1 MiB까지만 받고 서버가 소스를 이스케이프해 두 번 보내므로, 이스케이프가 많은 문자(따옴표, 백슬래시, 제어 문자)일수록 한계가 낮아짐. 따옴표·백슬래시만으로 된 소스는 약 171 KiB이며, 백슬래시는 Java 문자열의 `"\n"`나 정규식처럼 실제 소스에도 흔함. jadx는 문자열 안의 제어 문자를 `\u0001` 같은 일반 문자로 출력하므로 최저 경우는 실제 소스에서 거의 나오지 않음. 한계를 넘는 소스는 받지 못해 `tool_error`(`call failed: MCPError: SSE stream ended without a response`)로 기록되고 원본 크기도 남지 않음. NuriLab에서 바꿀 수 없는 한계 |
 
 ### 5.2 출처(provenance) 기록 항목
@@ -267,11 +272,12 @@ NuriLab (MCP client)
 | 항목 | 값 |
 | --- | --- |
 | `server_url` | 접속한 MCP endpoint |
-| `server_name`, `server_version` | initialize 응답의 `serverInfo` 값 그대로. 실측 결과 `server_version`은 jadx 릴리즈가 아니라 FastMCP 버전(`3.0.2`)임 |
+| `server_name`, `server_version` | initialize 응답의 `serverInfo` 값(5.1의 상한과 문자 정리 적용). 실측 결과 `server_version`은 jadx 릴리즈가 아니라 FastMCP 버전(`3.0.2`)임 |
 | `expected_release` | `jadx-ai-mcp V6.4.1` (설정값이며 서버가 검증해 준 값이 아님) |
 | `tool` | `get_class_source` |
 | `client_sdk` | `mcp <설치 버전>` |
 | `target` | 사용자가 지정한 대상 식별자(`--jadx-mcp-target`), 없으면 비어 있음 |
+| `target_verified` | 항상 `false`. JADX-GUI에 열린 APK와 `target`이 같은지 NuriLab이 검증하지 않음(4절) |
 | `arguments` | 서버에 보낸(또는 거부되어 보내지 않은) 인자. `{"class_name": "<클래스 이름>"}` |
 | `content` | `success`일 때 받은 소스(비신뢰 데이터, 256 KiB 초과 시 절삭) |
 | `status`, `reason` | 5.3 상태 값과 사유 |

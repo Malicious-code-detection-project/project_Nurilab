@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
+from mcp import types
 
 from project_nurilab.cli import main
+from project_nurilab.external.jadx_mcp_client import JadxMcpClient, McpSession
 from project_nurilab.schemas import ExternalToolCall, RuffFinding
 
 
@@ -186,7 +191,7 @@ def test_cli_jadx_mcp_prints_status_line_and_keeps_json(
     record: ExternalToolCall,
     expected_line: str,
 ) -> None:
-    """--jadx-mcp-class prints one status line; exit code and JSON stay as-is."""
+    """--jadx-mcp-class prints one status line and records the call in JSON."""
 
     seen_urls: list[str | None] = []
     monkeypatch.setattr(
@@ -216,7 +221,7 @@ def test_cli_jadx_mcp_prints_status_line_and_keeps_json(
     assert exit_code == 0
     assert seen_urls == ["http://127.0.0.1:9000/mcp"]
     assert captured.out.rstrip().splitlines()[-1] == expected_line
-    assert "external_tool_calls" not in payload
+    assert payload["external_tool_calls"] == [record.to_dict()]
 
 
 def test_cli_without_jadx_mcp_class_never_builds_a_client(
@@ -387,3 +392,98 @@ def test_cli_escapes_control_characters_in_library_logs(
     assert "\x1b" not in err
     assert "Unknown SSE event: \\x1b[2J\\x1b[31mFAKE" in err
     assert logging.getLogger().handlers == handlers_before
+
+
+class _SuccessSession:
+    """Offline MCP session that answers get_class_source with a small source."""
+
+    def __init__(self, server_name: str) -> None:
+        self.server_name = server_name
+
+    async def initialize(self) -> types.InitializeResult:
+        return types.InitializeResult(
+            protocol_version="2025-11-25",
+            capabilities=types.ServerCapabilities(),
+            server_info=types.Implementation(name=self.server_name, version="3.0.2"),
+        )
+
+    async def list_tools(
+        self, *, params: types.PaginatedRequestParams | None = None
+    ) -> types.ListToolsResult:
+        return types.ListToolsResult(
+            tools=[types.Tool(name="get_class_source", input_schema={"type": "object"})]
+        )
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any] | None = None
+    ) -> object:
+        payload = {"response": "class A {}"}
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=json.dumps(payload))],
+            structured_content=payload,
+        )
+
+
+@pytest.mark.parametrize(
+    ("options", "server_name", "field", "expected"),
+    [
+        (
+            ["--jadx-mcp-class", "Bad\udcff"],
+            "jadx",
+            "arguments",
+            {"class_name": "Bad?"},
+        ),
+        (
+            ["--jadx-mcp-class", "A", "--jadx-mcp-target", "app\udcb0\udca1.apk"],
+            "jadx",
+            "target",
+            "app??.apk",
+        ),
+        (
+            ["--jadx-mcp-class", "A", "--jadx-mcp-url", "http://127.0.0.1:9000/\udcff"],
+            "jadx",
+            "server_url",
+            "http://127.0.0.1:9000/?",
+        ),
+        (["--jadx-mcp-class", "A"], "jadx\ud800", "server_name", "jadx?"),
+    ],
+    ids=["class", "target", "url", "server_info"],
+)
+def test_cli_writes_json_when_mcp_values_contain_lone_surrogates(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    options: list[str],
+    server_name: str,
+    field: str,
+    expected: object,
+) -> None:
+    """Undecodable argv bytes or server text must not break the UTF-8 JSON write."""
+
+    @asynccontextmanager
+    async def factory(url: str) -> AsyncGenerator[McpSession, None]:
+        yield _SuccessSession(server_name)
+
+    monkeypatch.setattr(
+        "project_nurilab.cli.JadxMcpClient",
+        lambda url=None: JadxMcpClient(url=url, session_factory=factory),
+    )
+    output_dir = tmp_path / "reports"
+
+    exit_code = main(
+        [
+            "analyze",
+            str(FIXTURES / "clean_sample.py"),
+            "--out",
+            str(output_dir),
+            "--no-ruff",
+            *options,
+        ]
+    )
+
+    payload = json.loads(
+        (output_dir / "clean_sample.analysis.json").read_text(encoding="utf-8")
+    )
+    assert exit_code == 0
+    assert capsys.readouterr().out.rstrip().splitlines()[-1].startswith("JADX MCP")
+    assert payload["external_tool_calls"][0][field] == expected
