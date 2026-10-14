@@ -12,11 +12,13 @@ from project_nurilab.analyzers.python_static import PythonStaticAnalyzer
 from project_nurilab.input.manager import PythonFileLoader
 from project_nurilab.llm.review import MockLLMReviewClient
 from project_nurilab.reports.generator import (
+    EXTERNAL_STATUS_DISPLAY,
     ReportGenerator,
     _external_tool_call_css,
     _render_html_external_tool_calls,
 )
 from project_nurilab.schemas import (
+    ALLOWED_EXTERNAL_TOOL_CALL_STATUSES,
     AnalysisReport,
     ExternalToolCall,
     ProjectAnalysis,
@@ -599,7 +601,10 @@ def test_html_report_renders_external_tool_call_section(
         ("Truncated", "False"),
     ]:
         assert f'<span class="label">{label}</span><code>{value}</code>' in html, label
-    assert "<p><strong>Status:</strong> <code>success</code></p>" in html
+    assert (
+        '<p><strong>Status:</strong> <span class="badge external-status status-ok">'
+        "success</span> The tool returned source.</p>"
+    ) in html
     assert "<summary>Returned source (50 bytes shown)</summary>" in html
     assert _shown_external_content(html) == [call.content]
     assert "</script>" not in html
@@ -645,7 +650,12 @@ def test_html_report_shows_failed_external_call_without_source() -> None:
 
     html = ReportGenerator().to_html(report)
 
-    assert "<p><strong>Status:</strong> <code>unavailable</code></p>" in html
+    assert (
+        "<p><strong>Status:</strong> "
+        '<span class="badge external-status status-failure">unavailable</span> '
+        "The tool could not be used (server, plugin, or tool not available; "
+        "see Reason).</p>"
+    ) in html
     assert (
         "<p><strong>Reason:</strong> connect failed: ConnectError: "
         "All connection attempts failed</p>"
@@ -1046,3 +1056,73 @@ def test_pipeline_preserves_analysis_for_non_object_local_llm_json(
         persisted_report["review"]["findings"][0]["title"]
         == "Local LLM JSON parsing failed"
     )
+
+
+def _external_call(status: str, **fields) -> ExternalToolCall:
+    return ExternalToolCall(
+        server_url="http://127.0.0.1:8651/mcp",
+        tool="get_class_source",
+        status=status,
+        called_at="2026-10-14T00:00:00+00:00",
+        **fields,
+    )
+
+
+def _render_external_calls(*calls: ExternalToolCall) -> str:
+    report = _build_single_file_report()
+    report.external_tool_calls = list(calls)
+    return ReportGenerator().to_html(report)
+
+
+def test_external_status_display_covers_every_contract_status() -> None:
+    """A new status must get a display group and meaning before it can render."""
+
+    assert set(EXTERNAL_STATUS_DISPLAY) == ALLOWED_EXTERNAL_TOOL_CALL_STATUSES
+
+
+@pytest.mark.parametrize(
+    ("status", "group"),
+    [
+        ("success", "ok"),
+        ("empty", "warning"),
+        ("not_found", "warning"),
+        ("unavailable", "failure"),
+        ("timeout", "failure"),
+        ("tool_error", "failure"),
+        ("malformed", "failure"),
+        ("invalid_input", "not-called"),
+        ("not_allowed", "not-called"),
+    ],
+)
+def test_html_report_marks_each_external_status_by_group(
+    status: str, group: str
+) -> None:
+    """Each status shows its group and meaning; only success looks successful."""
+
+    html = _render_external_calls(_external_call(status))
+
+    meaning = EXTERNAL_STATUS_DISPLAY[status][1]
+    assert f'<article class="finding external-call status-{group}">' in html
+    assert (
+        f'<span class="badge external-status status-{group}">{status}</span> '
+        f"{meaning}</p>"
+    ) in html
+    if status != "success":
+        assert 'class="badge external-status status-ok"' not in html
+
+
+def test_html_report_adds_truncated_badge_only_to_truncated_source() -> None:
+    """truncated is a separate mark next to success, not a status of its own."""
+
+    whole = _render_external_calls(_external_call("success", content="class A {}"))
+    cut = _render_external_calls(
+        _external_call(
+            "success", content="class A", response_size_bytes=300_000, truncated=True
+        )
+    )
+
+    badge = '<span class="badge external-status status-warning">truncated</span>'
+    assert badge not in whole
+    assert (
+        '<span class="badge external-status status-ok">success</span> ' + badge
+    ) in cut

@@ -245,6 +245,13 @@ NuriLab (MCP client)
     * 호출마다 상태, 사유, 5.2의 출처 항목을 표시하고, 받은 소스는 접힌 영역에
       escape한 텍스트로만 보여 줍니다. 절삭된 경우 보여 준 크기와 원본 크기를 함께
       표시합니다.
+    * 상태는 5.3의 값을 그대로 배지로 표시하고 한 줄 의미를 붙입니다. 실패가 성공처럼
+      보이지 않도록 네 묶음으로 색을 나눕니다: `success`(성공), `empty`·`not_found`
+      (주의), `unavailable`·`timeout`·`tool_error`·`malformed`(실패),
+      `invalid_input`·`not_allowed`(호출하지 않음). `truncated`는 상태가 아니라
+      `success` 옆의 별도 배지입니다.
+    * 전송 한계(5.1) 초과 가능성 안내는 HTML이 따로 판정하지 않고 `reason`에 담긴
+      문장을 그대로 보여 줍니다(5.3).
     * 옵션을 주지 않은 실행의 HTML은 기존과 바이트 단위로 같습니다.
 * **반환 내용 취급**: 반환된 소스는 **비신뢰 데이터**입니다.
   * rule signal, risk, verdict, LLM review 입력에 사용하지 않습니다.
@@ -272,7 +279,7 @@ NuriLab (MCP client)
 | `reason` 길이 | 4 KiB (UTF-8 바이트) | jadx `error`, `isError` 텍스트, 예외 메시지 등 모든 사유에 적용. 초과 시 앞부분만 남기고 끝에 `... (truncated, <원본 바이트 수> bytes)`를 붙임 |
 | `server_name`, `server_version` | 각 256 B (UTF-8 바이트) | 서버가 정하는 값이라 `reason`과 같은 방식으로 절삭하고 `... (truncated, <원본 바이트 수> bytes)`를 붙임. 실측값은 약 45 B |
 | 문자 정리 | 레코드의 모든 문자열 | 짝 없는 surrogate는 `?`로 바꿔, 보고서를 UTF-8로 쓸 때 오류가 나지 않게 함(절삭 여부와 무관). 소스·사유·서버 정보뿐 아니라 사용자가 준 `class_name`, `--jadx-mcp-target`, `--jadx-mcp-url`(디코딩할 수 없는 바이트)도 대상이며, 레코드(`ExternalToolCall`)를 만들 때 적용 |
-| 전송 한계 | 내용에 따라 약 79~512 KiB, 일반적인 Java 소스는 약 381 KiB (6.2 실측) | MCP SDK가 응답 이벤트를 1 MiB까지만 받고 서버가 소스를 이스케이프해 두 번 보내므로, 이스케이프가 많은 문자(따옴표, 백슬래시, 제어 문자)일수록 한계가 낮아짐. 따옴표·백슬래시만으로 된 소스는 약 171 KiB이며, 백슬래시는 Java 문자열의 `"\n"`나 정규식처럼 실제 소스에도 흔함. jadx는 문자열 안의 제어 문자를 `\u0001` 같은 일반 문자로 출력하므로 최저 경우는 실제 소스에서 거의 나오지 않음. 한계를 넘는 소스는 받지 못해 `tool_error`(`call failed: MCPError: SSE stream ended without a response`)로 기록되고 원본 크기도 남지 않음. NuriLab에서 바꿀 수 없는 한계 |
+| 전송 한계 | 내용에 따라 약 79~512 KiB, 일반적인 Java 소스는 약 381 KiB (6.2 실측) | MCP SDK가 응답 이벤트를 1 MiB까지만 받고 서버가 소스를 이스케이프해 두 번 보내므로, 이스케이프가 많은 문자(따옴표, 백슬래시, 제어 문자)일수록 한계가 낮아짐. 따옴표·백슬래시만으로 된 소스는 약 171 KiB이며, 백슬래시는 Java 문자열의 `"\n"`나 정규식처럼 실제 소스에도 흔함. jadx는 문자열 안의 제어 문자를 `\u0001` 같은 일반 문자로 출력하므로 최저 경우는 실제 소스에서 거의 나오지 않음. 한계를 넘는 소스는 받지 못해 `tool_error`(`call failed: MCPError: SSE stream ended without a response`, 5.3의 안내 포함)로 기록되고 원본 크기도 남지 않음. NuriLab에서 바꿀 수 없는 한계 |
 
 ### 5.2 출처(provenance) 기록 항목
 
@@ -315,6 +322,7 @@ NuriLab (MCP client)
 | `isError: true` 결과 | `MCP tool error: <text>` (text가 없으면 `(no message)`) |
 | 연결·호출 중 예외 | `connect failed: ConnectError: ...`, `call failed: <예외 종류>: <메시지>` |
 | 클라이언트 제한 초과 | `connect exceeded 10s limit.`, `call exceeded 15s limit.` |
+| 호출 중 SSE 스트림이 결과 없이 끝남 | `call failed: MCPError: SSE stream ended without a response (the response may have exceeded the MCP transport limit, ...; an early server close looks the same)`. 전송 한계(5.1) 초과일 수 있다는 안내를 끝에 붙임. call 단계의 `MCPError`(코드 `CONNECTION_CLOSED`, 위 메시지)일 때 붙임. 서버 payload의 `error` 문자열로는 붙지 않지만, SDK가 서버의 JSON-RPC 오류도 같은 `MCPError`로 바꾸므로 서버가 같은 코드·메시지의 JSON-RPC 오류를 보내면 구별할 수 없어 붙을 수 있음. 서버가 스트림을 일찍 닫아도 같은 오류가 나므로 상태는 `tool_error` 그대로 둠 |
 | capability 확인 실패 | `Server does not provide tool 'get_class_source'.` |
 | 실행 중인 이벤트 루프 안에서 호출 | `Cannot call MCP from inside a running event loop.` (상태 `unavailable`, 서버에 연결하지 않음) |
 | 응답 판정 중 예외 | `classify failed: RecursionError: ...` (상태 `malformed`) |
@@ -390,4 +398,7 @@ curl `initialize` 요청의 `protocolVersion`은 NuriLab 클라이언트와 같�
   경로는 임시 가짜 서버로 확인했습니다(6.2). 단위 테스트는 가짜 session을 써서 전송
   단계를 거치지 않으므로 판정 규칙만 검증합니다.
 * 약 381 KiB를 넘는 클래스 소스는 받을 수 없고 원인이 드러나지 않는 `tool_error`로
-  남습니다(5.1). 보고서에서 이를 어떻게 안내할지는 THE-155에서 판단합니다.
+  남습니다(5.1). THE-155에서 이 경우의 `reason` 끝에 전송 한계 초과 가능성 안내를
+  붙였습니다(5.3). 실제 SDK 전송·세션을 메모리 안의 HTTP 응답으로 실행하는 오프라인
+  테스트가 이 경로를 검증하므로, SDK를 올려 오류 문구나 코드가 바뀌면 테스트가
+  실패합니다.

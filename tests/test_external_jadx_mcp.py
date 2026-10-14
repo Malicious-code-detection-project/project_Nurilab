@@ -6,7 +6,9 @@ from contextlib import asynccontextmanager
 
 import anyio
 import pytest
-from mcp import types
+import httpx2
+from mcp import ClientSession, MCPError, types
+from mcp.client.streamable_http import streamable_http_client
 
 from project_nurilab.config import (
     DEFAULT_JADX_MCP_URL,
@@ -26,6 +28,7 @@ from project_nurilab.external.jadx_mcp import (
     validate_class_name,
 )
 from project_nurilab.external.jadx_mcp_client import (
+    TRANSPORT_LIMIT_NOTE,
     JadxMcpClient,
     McpSession,
     SessionFactory,
@@ -371,6 +374,7 @@ class FakeSession:
         *,
         tool_pages: Sequence[Sequence[str]] = (("get_class_source",),),
         initialize_delay: float = 0.0,
+        initialize_error: Exception | None = None,
         call_delay: float = 0.0,
         call_error: Exception | None = None,
         server_name: str = SERVER_NAME,
@@ -381,12 +385,15 @@ class FakeSession:
         self.server_version = server_version
         self.tool_pages = tool_pages
         self.initialize_delay = initialize_delay
+        self.initialize_error = initialize_error
         self.call_delay = call_delay
         self.call_error = call_error
         self.calls: list[tuple[str, dict[str, object] | None]] = []
 
     async def initialize(self) -> types.InitializeResult:
         await anyio.sleep(self.initialize_delay)
+        if self.initialize_error is not None:
+            raise self.initialize_error
         return types.InitializeResult(
             protocol_version="2025-11-25",
             capabilities=types.ServerCapabilities(),
@@ -790,3 +797,107 @@ def test_client_cleans_and_caps_server_info() -> None:
     assert call.server_version == (
         "9" * JADX_MCP_MAX_SERVER_INFO_BYTES + "... (truncated, 300 bytes)"
     )
+
+
+STREAM_ENDED = "SSE stream ended without a response"
+
+
+def _stream_ends_on_call(request: httpx2.Request) -> httpx2.Response:
+    """MCP over HTTP whose tools/call SSE stream closes before any event."""
+
+    if request.method != "POST":
+        return httpx2.Response(200)
+    message = json.loads(request.content)
+    headers = {"mcp-session-id": "test-session"}
+    if "id" not in message:
+        return httpx2.Response(202, headers=headers)
+    if message["method"] == "initialize":
+        result: dict[str, object] = {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": SERVER_NAME, "version": "3.0.2"},
+        }
+    elif message["method"] == "tools/list":
+        result = {
+            "tools": [{"name": "get_class_source", "inputSchema": {"type": "object"}}]
+        }
+    else:
+        # What the SDK sees after dropping an SSE event over its 1 MiB limit.
+        return httpx2.Response(
+            200, headers={**headers, "content-type": "text/event-stream"}, content=b""
+        )
+    return httpx2.Response(
+        200,
+        headers=headers,
+        json={"jsonrpc": "2.0", "id": message["id"], "result": result},
+    )
+
+
+@asynccontextmanager
+async def _offline_sdk_session(url: str) -> AsyncGenerator[McpSession, None]:
+    """Real SDK transport and session over an in-memory HTTP handler."""
+
+    transport = httpx2.MockTransport(_stream_ends_on_call)
+    async with httpx2.AsyncClient(transport=transport) as http_client:
+        async with streamable_http_client(url, http_client=http_client) as streams:
+            async with ClientSession(*streams) as session:
+                yield session
+
+
+def test_client_notes_transport_limit_for_real_sdk_stream_end() -> None:
+    """The SDK's own stream-end failure gets the note; this breaks if the SDK
+    changes its message or error code."""
+
+    client = JadxMcpClient(url=SERVER_URL, session_factory=_offline_sdk_session)
+
+    call = client.call_tool("get_class_source", "A")
+
+    assert call.status == "tool_error"
+    assert call.reason == f"call failed: MCPError: {STREAM_ENDED}{TRANSPORT_LIMIT_NOTE}"
+
+
+def test_client_never_notes_transport_limit_for_server_error_text() -> None:
+    """A payload 'error' that copies the client reason stays the server's text."""
+
+    server_text = f"call failed: MCPError: {STREAM_ENDED}"
+    session = FakeSession(_text_result({"error": server_text}))
+
+    call = _client(session, []).call_tool("get_class_source", "A")
+
+    assert call.status == "tool_error"
+    assert call.reason == server_text
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        MCPError(types.CONNECTION_CLOSED, "Connection closed"),
+        MCPError(types.INTERNAL_ERROR, STREAM_ENDED),
+    ],
+    ids=["other-message", "other-code"],
+)
+def test_client_notes_transport_limit_only_for_exact_sdk_error(
+    error: MCPError,
+) -> None:
+    """Both the SDK error code and message must match before the note is added."""
+
+    session = FakeSession(call_error=error)
+
+    call = _client(session, []).call_tool("get_class_source", "A")
+
+    assert call.status == "tool_error"
+    assert call.reason is not None
+    assert not call.reason.endswith(TRANSPORT_LIMIT_NOTE)
+
+
+def test_client_notes_transport_limit_only_in_call_phase() -> None:
+    """A stream end during connect is a connection failure, not a large response."""
+
+    session = FakeSession(
+        initialize_error=MCPError(types.CONNECTION_CLOSED, STREAM_ENDED)
+    )
+
+    call = _client(session, []).call_tool("get_class_source", "A")
+
+    assert call.status == "unavailable"
+    assert call.reason == f"connect failed: MCPError: {STREAM_ENDED}"

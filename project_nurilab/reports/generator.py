@@ -1042,6 +1042,30 @@ def _shared_css() -> str:
     """
 
 
+# Display group and one-line meaning per call status (THE-151 section 5.3). Groups
+# keep failures and skipped calls visually apart from success.
+EXTERNAL_STATUS_DISPLAY = {
+    "success": ("ok", "The tool returned source."),
+    "empty": ("warning", "The tool returned an empty response."),
+    "not_found": ("warning", "The class was not found in the APK loaded in JADX-GUI."),
+    # unavailable and tool_error each cover several causes (server, plugin,
+    # missing tool, client transport), so their meaning defers to Reason.
+    "unavailable": (
+        "failure",
+        "The tool could not be used (server, plugin, or tool not available; "
+        "see Reason).",
+    ),
+    "timeout": ("failure", "The call did not finish within the time limit."),
+    "tool_error": ("failure", "The call failed with an error (see Reason)."),
+    "malformed": ("failure", "The response did not match the expected format."),
+    "invalid_input": (
+        "not-called",
+        "Not called: the class name failed input validation.",
+    ),
+    "not_allowed": ("not-called", "Not called: the tool is not in the allowlist."),
+}
+
+
 def _render_html_external_tool_calls(calls: list[ExternalToolCall]) -> str:
     """Render opt-in MCP call records apart from analysis, findings, and review."""
 
@@ -1091,15 +1115,24 @@ def _render_html_external_tool_call(call: ExternalToolCall) -> str:
         _render_html_meta("Response Size", response_size),
         _render_html_meta("Truncated", str(call.truncated)),
     ]
+    group, meaning = EXTERNAL_STATUS_DISPLAY[call.status]
+    truncated = (
+        ' <span class="badge external-status status-warning">truncated</span>'
+        if call.truncated
+        else ""
+    )
     reason = (
         f"<p><strong>Reason:</strong> {_escape_html(call.reason)}</p>"
         if call.reason
         else ""
     )
     return (
-        '<article class="finding external-call">'
+        f'<article class="finding external-call status-{group}">'
         f"<h3>{_escape_html(call.tool)}</h3>"
-        f"<p><strong>Status:</strong> <code>{_escape_html(call.status)}</code></p>"
+        "<p><strong>Status:</strong> "
+        f'<span class="badge external-status status-{group}">'
+        f"{_escape_html(call.status)}</span>{truncated} "
+        f"{_escape_html(meaning)}</p>"
         f"{reason}"
         f'<div class="meta-grid">{"".join(items)}</div>'
         f"{_render_html_external_content(call)}"
@@ -1131,6 +1164,14 @@ def _external_tool_call_css(calls: list[ExternalToolCall]) -> str:
         return ""
     return """
     .external-call code { overflow-wrap: anywhere; }
+    .external-status.status-ok { background: var(--low); }
+    .external-status.status-warning { background: var(--medium); }
+    .external-status.status-failure { background: var(--high); }
+    .external-status.status-not-called { background: var(--muted); }
+    .finding.external-call.status-ok { border-left-color: var(--low); }
+    .finding.external-call.status-warning { border-left-color: var(--medium); }
+    .finding.external-call.status-failure { border-left-color: var(--high); }
+    .finding.external-call.status-not-called { border-left-color: var(--muted); }
     .external-call summary { cursor: pointer; font-weight: 700; }
     .external-content {
       margin: 10px 0 0;
