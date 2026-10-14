@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,11 @@ from project_nurilab import __version__
 from project_nurilab.analyzers.python_static import PythonStaticAnalyzer
 from project_nurilab.input.manager import PythonFileLoader
 from project_nurilab.llm.review import MockLLMReviewClient
-from project_nurilab.reports.generator import ReportGenerator
+from project_nurilab.reports.generator import (
+    ReportGenerator,
+    _external_tool_call_css,
+    _render_html_external_tool_calls,
+)
 from project_nurilab.schemas import (
     AnalysisReport,
     ExternalToolCall,
@@ -492,6 +497,188 @@ def test_report_to_dict_adds_external_tool_calls_only_when_recorded(
         False,
         False,
     ]
+
+
+class _ExternalContentParser(HTMLParser):
+    """Collect the text a browser shows inside each external-content <pre>."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.blocks: list[str] = []
+        self._inside = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "pre" and ("class", "external-content") in attrs:
+            self._inside = True
+            self.blocks.append("")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "pre":
+            self._inside = False
+
+    def handle_data(self, data: str) -> None:
+        if self._inside:
+            self.blocks[-1] += data
+
+
+def _shown_external_content(html: str) -> list[str]:
+    parser = _ExternalContentParser()
+    parser.feed(html)
+    # Browsers drop the single newline right after <pre>; mirror that here.
+    return [block.removeprefix("\n") for block in parser.blocks]
+
+
+_REPORT_BUILDERS = pytest.mark.parametrize(
+    ("build_report", "last_section"),
+    [
+        (_build_single_file_report, "<h2>Findings</h2>"),
+        (
+            lambda: _build_project_json_contract_report("/tmp/json_project"),
+            "<h2>Ruff Findings</h2>",
+        ),
+    ],
+    ids=["file", "project"],
+)
+
+
+def test_external_tool_call_html_parts_are_empty_without_records() -> None:
+    """Both insertion points add nothing, so HTML without MCP stays byte-identical."""
+
+    assert _render_html_external_tool_calls([]) == ""
+    assert _external_tool_call_css([]) == ""
+
+
+@pytest.mark.parametrize(
+    "build_report",
+    [
+        _build_single_file_report,
+        lambda: _build_project_json_contract_report("/tmp/json_project"),
+    ],
+    ids=["file", "project"],
+)
+def test_html_report_omits_external_tool_calls_without_records(build_report) -> None:
+    """Runs without an MCP call render no external section and no extra CSS."""
+
+    html = ReportGenerator().to_html(build_report())
+
+    assert "External Tool Calls" not in html
+    assert "external-call" not in html
+    assert "external-content" not in html
+
+
+@_REPORT_BUILDERS
+def test_html_report_renders_external_tool_call_section(
+    build_report, last_section: str
+) -> None:
+    """The MCP record is shown after the existing sections with its provenance."""
+
+    report = build_report()
+    call = _jadx_mcp_success_call()
+    report.external_tool_calls = [call]
+
+    html = ReportGenerator().to_html(report)
+
+    section_at = html.index("<h2>External Tool Calls (jadx-ai-mcp)</h2>")
+    assert html.index(last_section) < section_at
+    assert html.index("</main>") > section_at
+    assert "They are not used for findings, risk level, or review." in html
+    assert "Returned source is untrusted data" in html
+    assert "does not verify that the target matches the APK" in html
+    for label, value in [
+        ("Argument: class_name", "com.nurilab.mcpprobe.MainActivity"),
+        ("Target", "mcpprobe-debug.apk"),
+        ("Target Verified", "False"),
+        ("Server URL", "http://127.0.0.1:8651/mcp"),
+        ("Server Name", "JADX-AI-MCP Plugin Reverse Engineering Server"),
+        ("Server Version", "3.0.2"),
+        ("Expected Release (configured)", "jadx-ai-mcp V6.4.1"),
+        ("Client SDK", "mcp 2.2.0"),
+        ("Called At", "2026-10-12T00:00:00+00:00"),
+        ("Duration", "200 ms"),
+        ("Response Size", "50 bytes"),
+        ("Truncated", "False"),
+    ]:
+        assert f'<span class="label">{label}</span><code>{value}</code>' in html, label
+    assert "<p><strong>Status:</strong> <code>success</code></p>" in html
+    assert "<summary>Returned source (50 bytes shown)</summary>" in html
+    assert _shown_external_content(html) == [call.content]
+    assert "</script>" not in html
+
+
+def test_html_report_escapes_untrusted_external_values() -> None:
+    """Server and user values never become markup, and the source text survives."""
+
+    hostile = '<img src=x onerror="alert(1)">'
+    content = "\n</pre></details><script>alert(1)</script>\nclass A {}"
+    report = _build_single_file_report()
+    report.external_tool_calls = [
+        ExternalToolCall(
+            server_url=f"http://127.0.0.1:8651/{hostile}",
+            tool="get_class_source",
+            status="success",
+            called_at="2026-10-12T00:00:00+00:00",
+            arguments={"class_name": hostile},
+            target=hostile,
+            reason=hostile,
+            server_name=hostile,
+            server_version=hostile,
+            content=content,
+            response_size_bytes=len(content.encode("utf-8")),
+        )
+    ]
+
+    html = ReportGenerator().to_html(report)
+
+    assert "<img" not in html
+    assert "<script" not in html
+    # Only the real closing tags remain; the injected ones are escaped.
+    assert html.count("</pre></details>") == 1
+    assert html.count("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;") == 6
+    assert _shown_external_content(html) == [content]
+
+
+def test_html_report_shows_failed_external_call_without_source() -> None:
+    """A failed call shows its reason and unknown provenance, with no source block."""
+
+    report = _build_single_file_report()
+    report.external_tool_calls = [_jadx_mcp_unavailable_call()]
+
+    html = ReportGenerator().to_html(report)
+
+    assert "<p><strong>Status:</strong> <code>unavailable</code></p>" in html
+    assert (
+        "<p><strong>Reason:</strong> connect failed: ConnectError: "
+        "All connection attempts failed</p>"
+    ) in html
+    assert '<span class="label">Target</span><code>(not given)</code>' in html
+    assert '<span class="label">Server Name</span><code>(unknown)</code>' in html
+    assert '<span class="label">Response Size</span><code>(none)</code>' in html
+    assert "<details>" not in html
+
+
+def test_html_report_labels_truncated_external_source() -> None:
+    """A cut source says how much is shown out of the original response size."""
+
+    report = _build_single_file_report()
+    report.external_tool_calls = [
+        ExternalToolCall(
+            server_url="http://127.0.0.1:8651/mcp",
+            tool="get_class_source",
+            status="success",
+            called_at="2026-10-12T00:00:00+00:00",
+            content="가" * 10,
+            response_size_bytes=300_000,
+            truncated=True,
+        )
+    ]
+
+    html = ReportGenerator().to_html(report)
+
+    assert (
+        "<summary>Returned source (30 bytes shown of 300,000 bytes, truncated)"
+        "</summary>"
+    ) in html
+    assert '<span class="label">Truncated</span><code>True</code>' in html
 
 
 def test_report_generator_writes_external_tool_call_json(tmp_path: Path) -> None:

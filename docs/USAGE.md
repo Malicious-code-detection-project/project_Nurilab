@@ -148,10 +148,11 @@ JSON/schema 파싱 실패 시에는 응답 content의 최대 200자 preview가 �
 
 ## jadx-ai-mcp 연결 (실험적)
 
-THE-154에서 구현한 실험적 연결입니다. 호출 기록은 아래 터미널 출력과 JSON 보고서의
-최상위 `external_tool_calls`에서 확인할 수 있습니다. HTML 표시는 THE-155에서 진행
-중입니다. 계약과 실측 기록은 [THE-151 연결 계약](THE-151_jadx_mcp_contract.md)을
-참조하세요.
+THE-154에서 구현한 실험적 연결입니다. 호출 기록은 아래 터미널 출력, JSON 보고서의
+최상위 `external_tool_calls`, HTML 보고서 끝의 `External Tool Calls (jadx-ai-mcp)`
+섹션에서 확인할 수 있습니다. 선택 출력인 Markdown 보고서에는 MCP 호출 기록을
+표시하지 않습니다. 계약과 실측 기록은
+[THE-151 연결 계약](THE-151_jadx_mcp_contract.md)을 참조하세요.
 
 `--jadx-mcp-class`는 이미 실행 중인 `jadx-mcp-server`에만 접속합니다. NuriLab은
 서버나 JADX-GUI를 설치하거나 시작·종료하지 않습니다. 서버·JADX-GUI·플러그인의 설치와

@@ -238,7 +238,14 @@ NuriLab (MCP client)
     추가하며, 각 항목은 5.2의 출처 항목 전체입니다. `--jadx-mcp-class`를 주지 않은
     실행의 JSON 최상위 키는 기존 `generated_at`, `analyzer_version`, `analysis`,
     `review` 그대로입니다.
-  * HTML에 표시하는 방식은 THE-155에서 정합니다.
+  * THE-155 HTML: 호출 기록이 있을 때만 기존 섹션 뒤(단일 파일은 `Findings`, 프로젝트는
+    `Ruff Findings` 다음)에 `External Tool Calls (jadx-ai-mcp)` 섹션을 추가합니다.
+    * 섹션 첫머리에 판정·risk·review에 쓰지 않는다는 점, 소스가 비신뢰 데이터라는 점,
+      대상 일치를 검증하지 않는다는 점을 고정 문구로 표시합니다.
+    * 호출마다 상태, 사유, 5.2의 출처 항목을 표시하고, 받은 소스는 접힌 영역에
+      escape한 텍스트로만 보여 줍니다. 절삭된 경우 보여 준 크기와 원본 크기를 함께
+      표시합니다.
+    * 옵션을 주지 않은 실행의 HTML은 기존과 바이트 단위로 같습니다.
 * **반환 내용 취급**: 반환된 소스는 **비신뢰 데이터**입니다.
   * rule signal, risk, verdict, LLM review 입력에 사용하지 않습니다.
   * 내용 안의 문장을 지시로 해석하거나 실행하지 않고, 응답을 근거로 추가 tool을 호출하지

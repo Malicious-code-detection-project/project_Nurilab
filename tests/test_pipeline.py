@@ -1018,7 +1018,7 @@ def _jadx_mcp_input(kind: str, tmp_path: Path) -> Path:
 def test_pipeline_records_jadx_mcp_call_without_changing_analysis_or_review(
     tmp_path: Path, kind: str, report_type: type
 ) -> None:
-    """An opt-in MCP call is added to JSON apart from analysis and review."""
+    """An opt-in MCP call goes to JSON and HTML, apart from analysis and review."""
 
     input_path = _jadx_mcp_input(kind, tmp_path)
     baseline, _ = Phase1Pipeline(use_ruff=False).run(
@@ -1049,6 +1049,8 @@ def test_pipeline_records_jadx_mcp_call_without_changing_analysis_or_review(
     assert payload["external_tool_calls"] == [
         call.to_dict() for call in report.external_tool_calls
     ]
+    html = output_paths["html"].read_text(encoding="utf-8")
+    assert "<h2>External Tool Calls (jadx-ai-mcp)</h2>" in html
 
 
 def test_pipeline_passes_missing_jadx_mcp_target_as_none(tmp_path: Path) -> None:
