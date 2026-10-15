@@ -20,6 +20,8 @@ JADX_MCP_CLASS_NAME_MAX_LENGTH = 512
 # 256 KiB: the MCP SDK drops any SSE event over 1 MiB, and fastmcp 3.0.2 sends the
 # source twice with JSON escaping, so Java-like sources fail from about 381 KiB.
 JADX_MCP_MAX_CONTENT_BYTES = 256 * 1024
+# Reasons are diagnostics; long server error text is cut before it reaches reports.
+JADX_MCP_MAX_REASON_BYTES = 4 * 1024
 DEFAULT_JADX_MCP_URL = "http://127.0.0.1:8651/mcp"
 JADX_MCP_CONNECT_TIMEOUT_SECONDS = 10.0  # connect + initialize + list_tools
 JADX_MCP_CALL_TIMEOUT_SECONDS = 15.0

@@ -17,6 +17,7 @@ from project_nurilab.config import (
     JADX_MCP_ALLOWED_TOOLS,
     JADX_MCP_CLASS_NAME_MAX_LENGTH,
     JADX_MCP_MAX_CONTENT_BYTES,
+    JADX_MCP_MAX_REASON_BYTES,
 )
 
 
@@ -84,7 +85,11 @@ def classify_payload(payload: object) -> ClassifiedPayload:
         )
 
     if "error" in payload:
-        message = str(payload["error"])
+        message = payload["error"]
+        if not isinstance(message, str):
+            return ClassifiedPayload(
+                status="malformed", reason="Tool result 'error' is not a string."
+            )
         if message.startswith(_NOT_FOUND_PREFIX):
             status = "not_found"
         elif _UNAVAILABLE_MARKER in message:
@@ -103,7 +108,7 @@ def classify_payload(payload: object) -> ClassifiedPayload:
             )
         if not response:
             return ClassifiedPayload(status="empty", response_size_bytes=0)
-        content, size, truncated = _truncate_content(response)
+        content, size, truncated = _truncate_utf8(response, JADX_MCP_MAX_CONTENT_BYTES)
         return ClassifiedPayload(
             status="success",
             content=content,
@@ -126,12 +131,22 @@ def classify_is_error(message: str | None) -> ClassifiedPayload:
     )
 
 
-def _truncate_content(content: str) -> tuple[str, int, bool]:
-    # Measure and cut by UTF-8 bytes. "replace" keeps lone surrogates from
-    # raising, and "ignore" drops a multi-byte character split at the cut.
-    encoded = content.encode("utf-8", errors="replace")
+def cap_reason(reason: str | None) -> str | None:
+    """Cut a reason to the byte limit, noting the original size when cut."""
+
+    if reason is None:
+        return None
+    kept, size, truncated = _truncate_utf8(reason, JADX_MCP_MAX_REASON_BYTES)
+    return f"{kept}... (truncated, {size} bytes)" if truncated else kept
+
+
+def _truncate_utf8(text: str, limit: int) -> tuple[str, int, bool]:
+    # Measure and cut by UTF-8 bytes. "replace" turns lone surrogates into "?" so
+    # the text can always be written as UTF-8 later (also when not cut), and
+    # "ignore" drops a multi-byte character split at the cut.
+    encoded = text.encode("utf-8", errors="replace")
     size = len(encoded)
-    if size <= JADX_MCP_MAX_CONTENT_BYTES:
-        return content, size, False
-    kept = encoded[:JADX_MCP_MAX_CONTENT_BYTES].decode("utf-8", errors="ignore")
+    if size <= limit:
+        return encoded.decode("utf-8"), size, False
+    kept = encoded[:limit].decode("utf-8", errors="ignore")
     return kept, size, True

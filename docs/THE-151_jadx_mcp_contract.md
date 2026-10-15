@@ -240,6 +240,11 @@ NuriLab (MCP client)
   * 내용 안의 문장을 지시로 해석하거나 실행하지 않고, 응답을 근거로 추가 tool을 호출하지
     않습니다.
   * HTML 보고서에 출력할 때는 escape 처리합니다.
+  * CLI(`main.py analyze`) 실행 중에는 터미널에 제어 문자를 escape해 출력합니다. 대상은 CLI
+    상태 줄의 사유와, `--jadx-mcp-class` 사용 시 MCP SDK 등 라이브러리가 서버 값을 담아 남기는
+    stderr 경고 로그입니다.
+  * CLI 밖에서 `Phase1Pipeline`이나 `JadxMcpClient`를 직접 쓰면 라이브러리 로그는 escape되지
+    않습니다. 호출하는 쪽이 로그 출력을 직접 설정해야 합니다.
 * **전송 범위**: NuriLab이 서버로 보내는 값은 `class_name` 문자열뿐입니다. Python 원문
   소스, secret, 분석 결과는 전송하지 않습니다.
 
@@ -253,6 +258,8 @@ NuriLab (MCP client)
 | 연결 + initialize + tool 목록 확인 | 10초 | 초과 시 `timeout` |
 | `get_class_source` 호출 | 15초 | 서버 내부 제한(60초)보다 짧게 두어 NuriLab이 먼저 중단. JADX 쪽 작업은 계속될 수 있음 |
 | 응답 소스 크기 | 256 KiB (UTF-8 바이트) | 초과 시 앞부분 256 KiB만 보존하고 `truncated=true`, 원본 크기 기록 |
+| `reason` 길이 | 4 KiB (UTF-8 바이트) | jadx `error`, `isError` 텍스트, 예외 메시지 등 모든 사유에 적용. 초과 시 앞부분만 남기고 끝에 `... (truncated, <원본 바이트 수> bytes)`를 붙임 |
+| 문자 정리 | 소스·사유 공통 | 짝 없는 surrogate는 `?`로 바꿔, 보고서를 UTF-8로 쓸 때 오류가 나지 않게 함(절삭 여부와 무관) |
 | 전송 한계 | 내용에 따라 약 79~512 KiB, 일반적인 Java 소스는 약 381 KiB (6.2 실측) | MCP SDK가 응답 이벤트를 1 MiB까지만 받고 서버가 소스를 이스케이프해 두 번 보내므로, 이스케이프가 많은 문자(따옴표, 백슬래시, 제어 문자)일수록 한계가 낮아짐. 따옴표·백슬래시만으로 된 소스는 약 171 KiB이며, 백슬래시는 Java 문자열의 `"\n"`나 정규식처럼 실제 소스에도 흔함. jadx는 문자열 안의 제어 문자를 `\u0001` 같은 일반 문자로 출력하므로 최저 경우는 실제 소스에서 거의 나오지 않음. 한계를 넘는 소스는 받지 못해 `tool_error`(`call failed: MCPError: SSE stream ended without a response`)로 기록되고 원본 크기도 남지 않음. NuriLab에서 바꿀 수 없는 한계 |
 
 ### 5.2 출처(provenance) 기록 항목
@@ -280,8 +287,8 @@ NuriLab (MCP client)
 | `not_found` | `error`가 HTTP 404 |
 | `unavailable` | MCP 서버 접속·initialize 실패, 서버가 허용 tool을 제공하지 않음(capability 확인 실패), 또는 `error`가 플러그인 연결 불가 |
 | `timeout` | 클라이언트 제한 초과, 또는 `error`가 서버 측 시간 초과 |
-| `tool_error` | 위에 해당하지 않는 `error`, 또는 MCP 결과가 `isError: true` |
-| `malformed` | `response`와 `error`가 모두 없거나 형식이 예상과 다름, 또는 응답을 판정하는 중 예외가 남(예: 지나치게 깊게 중첩된 JSON 텍스트에서 `RecursionError`). 이때도 받은 서버 정보는 유지 |
+| `tool_error` | 위에 해당하지 않는 문자열 `error`, 또는 MCP 결과가 `isError: true` |
+| `malformed` | `response`와 `error`가 모두 없거나 형식이 예상과 다름(`response`나 `error`가 문자열이 아닌 경우 포함), 또는 응답을 판정하는 중 예외가 남(예: 지나치게 깊게 중첩된 JSON 텍스트에서 `RecursionError`). 이때도 받은 서버 정보는 유지 |
 | `invalid_input` | `class_name` 검증 실패로 호출하지 않음 |
 | `not_allowed` | 허용 목록 밖 tool 요청으로 호출하지 않음 |
 
