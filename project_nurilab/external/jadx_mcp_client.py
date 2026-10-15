@@ -19,7 +19,7 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Protocol
 
 import anyio
-from mcp import ClientSession, types
+from mcp import ClientSession, MCPError, types
 from mcp.client.streamable_http import streamable_http_client
 
 from project_nurilab.config import (
@@ -27,10 +27,12 @@ from project_nurilab.config import (
     JADX_MCP_CALL_TIMEOUT_SECONDS,
     JADX_MCP_CONNECT_TIMEOUT_SECONDS,
     JADX_MCP_EXPECTED_RELEASE,
+    JADX_MCP_MAX_SERVER_INFO_BYTES,
 )
 from project_nurilab.external.jadx_mcp import (
     ClassifiedPayload,
     cap_reason,
+    cap_text,
     check_tool_allowed,
     classify_is_error,
     classify_payload,
@@ -56,6 +58,14 @@ class McpSession(Protocol):
     ) -> object:
         """Invoke one tool and return the raw MCP result."""
 
+
+# MCP SDK error for an SSE response stream that closed before the result. With
+# fastmcp 3.0.2 a source over the transport limit (THE-151 section 5.1) ends this way.
+_STREAM_ENDED_MESSAGE = "SSE stream ended without a response"
+TRANSPORT_LIMIT_NOTE = (
+    " (the response may have exceeded the MCP transport limit, about 381 KiB for "
+    "Java-like source, so its size is unknown; an early server close looks the same)"
+)
 
 # Opens a session for a URL; tests swap in fakes, production uses streamable HTTP.
 SessionFactory = Callable[[str], AbstractAsyncContextManager[McpSession]]
@@ -132,8 +142,10 @@ class JadxMcpClient:
             arguments={"class_name": class_name},
             target=target,
             reason=cap_reason(classified.reason),
-            server_name=outcome.server_name,
-            server_version=outcome.server_version,
+            server_name=cap_text(outcome.server_name, JADX_MCP_MAX_SERVER_INFO_BYTES),
+            server_version=cap_text(
+                outcome.server_version, JADX_MCP_MAX_SERVER_INFO_BYTES
+            ),
             expected_release=JADX_MCP_EXPECTED_RELEASE,
             client_sdk=_client_sdk(),
             duration_ms=int((time.perf_counter() - started) * 1000),
@@ -174,9 +186,10 @@ class JadxMcpClient:
                         status = "timeout"
                     else:
                         status = "unavailable" if phase == "connect" else "tool_error"
-                    outcome.classified = ClassifiedPayload(
-                        status, reason=f"{phase} failed: {_describe(leaf)}"
-                    )
+                    reason = f"{phase} failed: {_describe(leaf)}"
+                    if phase == "call" and _is_stream_ended(leaf):
+                        reason += TRANSPORT_LIMIT_NOTE
+                    outcome.classified = ClassifiedPayload(status, reason=reason)
                     return outcome
 
         if phase != "done":
@@ -227,6 +240,18 @@ def _classify_result(result: object) -> ClassifiedPayload:
     if result.is_error:
         return classify_is_error(text)
     return classify_payload(extract_payload(result.structured_content, text))
+
+
+def _is_stream_ended(exc: BaseException) -> bool:
+    """Return whether the SDK gave up on a call whose SSE stream closed early."""
+
+    # Checked on the exception, not the reason text, so an 'error' string from
+    # the server payload can never look like this transport failure.
+    return (
+        isinstance(exc, MCPError)
+        and exc.code == types.CONNECTION_CLOSED
+        and exc.message == _STREAM_ENDED_MESSAGE
+    )
 
 
 def _leaf_exception(exc: BaseException) -> BaseException:

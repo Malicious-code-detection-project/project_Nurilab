@@ -7,7 +7,7 @@ serialization simple for Markdown and JSON report generation.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any
 
 
@@ -179,19 +179,19 @@ class AnalysisReport:
     analyzer_version: str
     analysis: PythonAnalysis
     review: ReviewResult
-    # External MCP call records handed to THE-155. Not serialized by to_dict()
-    # yet, so JSON/HTML output is unchanged until THE-155 adds the section.
+    # Opt-in external MCP call records, kept apart from analysis and review.
     external_tool_calls: list[ExternalToolCall] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation."""
 
-        return {
+        data = {
             "generated_at": self.generated_at,
             "analyzer_version": self.analyzer_version,
             "analysis": self.analysis.to_dict(),
             "review": self.review.to_dict(),
         }
+        return _with_external_tool_calls(data, self.external_tool_calls)
 
 
 @dataclass(slots=True)
@@ -256,19 +256,19 @@ class ProjectReport:
     analyzer_version: str
     analysis: ProjectAnalysis
     review: ReviewResult
-    # External MCP call records handed to THE-155. Not serialized by to_dict()
-    # yet, so JSON/HTML output is unchanged until THE-155 adds the section.
+    # Opt-in external MCP call records, kept apart from analysis and review.
     external_tool_calls: list[ExternalToolCall] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation."""
 
-        return {
+        data = {
             "generated_at": self.generated_at,
             "analyzer_version": self.analyzer_version,
             "analysis": self.analysis.to_dict(),
             "review": self.review.to_dict(),
         }
+        return _with_external_tool_calls(data, self.external_tool_calls)
 
 
 ALLOWED_EXTERNAL_TOOL_CALL_STATUSES = {
@@ -299,6 +299,11 @@ class ExternalToolCall:
     called_at: str
     arguments: dict[str, str] = field(default_factory=dict)
     target: str | None = None
+    # NuriLab cannot see which APK JADX-GUI has open, so target is never verified.
+    target_verified: bool = False
+    # Static analysis covers .py files only, so the APK queried over MCP is never
+    # part of the analysis results in the same report.
+    target_statically_analyzed: bool = False
     reason: str | None = None
     server_name: str | None = None
     server_version: str | None = None
@@ -315,8 +320,35 @@ class ExternalToolCall:
         # unknown value is a programming error rather than input to normalize.
         if self.status not in ALLOWED_EXTERNAL_TOOL_CALL_STATUSES:
             raise ValueError(f"Unknown external tool call status: {self.status!r}")
+        # Values come from CLI input and the external server. Lone surrogates
+        # (undecodable argv bytes, "\ud800" in server JSON) would break the UTF-8
+        # report write, so every record is cleaned here whoever builds it.
+        for item in fields(self):
+            value = getattr(self, item.name)
+            if isinstance(value, str):
+                setattr(self, item.name, _utf8_safe(value))
+        self.arguments = {
+            _utf8_safe(key): _utf8_safe(value) for key, value in self.arguments.items()
+        }
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation."""
 
         return asdict(self)
+
+
+def _with_external_tool_calls(
+    data: dict[str, Any], calls: list[ExternalToolCall]
+) -> dict[str, Any]:
+    """Add MCP call records only when the run opted in to an MCP call."""
+
+    # Without the opt-in the key is omitted, so existing JSON stays unchanged.
+    if calls:
+        data["external_tool_calls"] = [call.to_dict() for call in calls]
+    return data
+
+
+def _utf8_safe(text: str) -> str:
+    """Replace lone surrogates with "?" so the text can be written as UTF-8."""
+
+    return text.encode("utf-8", errors="replace").decode("utf-8")

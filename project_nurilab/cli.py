@@ -145,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _format_external_tool_call(call: ExternalToolCall) -> str:
-    """One status line per MCP call; reports show it once THE-155 lands."""
+    """One terminal status line per MCP call; reports keep the full record."""
 
     prefix = f"JADX MCP {call.tool}: {call.status}"
     if call.status == "success":

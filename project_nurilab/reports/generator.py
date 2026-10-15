@@ -7,7 +7,12 @@ from pathlib import Path
 from collections.abc import Sequence
 from typing import Any, Protocol
 
-from project_nurilab.schemas import AnalysisReport, ProjectFileSummary, ProjectReport
+from project_nurilab.schemas import (
+    AnalysisReport,
+    ExternalToolCall,
+    ProjectFileSummary,
+    ProjectReport,
+)
 
 
 ReportPayload = AnalysisReport | ProjectReport
@@ -281,7 +286,7 @@ class ReportGenerator:
     .finding.severity-medium {{ border-left-color: var(--medium); }}
     .finding.severity-high {{ border-left-color: var(--high); }}
     .finding.severity-critical {{ border-left-color: var(--critical); }}
-    .finding.severity-info {{ border-left-color: var(--info); }}
+    .finding.severity-info {{ border-left-color: var(--info); }}{_external_tool_call_css(report.external_tool_calls)}
   </style>
 </head>
 <body>
@@ -326,7 +331,7 @@ class ReportGenerator:
     <section>
       <h2>Findings</h2>
       {_render_html_findings(report)}
-    </section>
+    </section>{_render_html_external_tool_calls(report.external_tool_calls)}
   </main>
 </body>
 </html>
@@ -438,7 +443,7 @@ class ReportGenerator:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Python Project Review Report</title>
-  <style>{_shared_css()}</style>
+  <style>{_shared_css()}{_external_tool_call_css(report.external_tool_calls)}</style>
 </head>
 <body>
   <main>
@@ -481,7 +486,7 @@ class ReportGenerator:
     <section>
       <h2>Ruff Findings</h2>
       {ruff_rows}
-    </section>
+    </section>{_render_html_external_tool_calls(report.external_tool_calls)}
   </main>
 </body>
 </html>
@@ -1034,4 +1039,155 @@ def _shared_css() -> str:
     .finding.severity-high { border-left-color: var(--high); }
     .finding.severity-critical { border-left-color: var(--critical); }
     .finding.severity-info { border-left-color: var(--info); }
+    """
+
+
+# Display group and one-line meaning per call status (THE-151 section 5.3). Groups
+# keep failures and skipped calls visually apart from success.
+EXTERNAL_STATUS_DISPLAY = {
+    "success": ("ok", "The tool returned source."),
+    "empty": ("warning", "The tool returned an empty response."),
+    "not_found": ("warning", "The class was not found in the APK loaded in JADX-GUI."),
+    # unavailable and tool_error each cover several causes (server, plugin,
+    # missing tool, client transport), so their meaning defers to Reason.
+    "unavailable": (
+        "failure",
+        "The tool could not be used (server, plugin, or tool not available; "
+        "see Reason).",
+    ),
+    "timeout": ("failure", "The call did not finish within the time limit."),
+    "tool_error": ("failure", "The call failed with an error (see Reason)."),
+    "malformed": ("failure", "The response did not match the expected format."),
+    "invalid_input": (
+        "not-called",
+        "Not called: the class name failed input validation.",
+    ),
+    "not_allowed": ("not-called", "Not called: the tool is not in the allowlist."),
+}
+
+
+def _render_html_external_tool_calls(calls: list[ExternalToolCall]) -> str:
+    """Render opt-in MCP call records apart from analysis, findings, and review."""
+
+    # Runs without an MCP call render nothing, so their HTML stays unchanged.
+    if not calls:
+        return ""
+    articles = "".join(_render_html_external_tool_call(call) for call in calls)
+    return (
+        '\n    <section class="external-tool-calls">'
+        "<h2>External Tool Calls (jadx-ai-mcp)</h2>"
+        '<div class="section-list">'
+        "<p>Opt-in external MCP call records. They are not used for findings, "
+        "risk level, or review.</p>"
+        "<p>Returned source is untrusted data from the external tool and is "
+        "shown as plain text only.</p>"
+        "<p>NuriLab does not verify that the target matches the APK loaded in "
+        "JADX-GUI.</p>"
+        "<p>The jadx-ai-mcp target (an APK) is not a format supported by NuriLab "
+        "static analysis; the analysis results above do not cover it.</p>"
+        "</div>"
+        f"{articles}"
+        "</section>"
+    )
+
+
+def _render_html_external_tool_call(call: ExternalToolCall) -> str:
+    response_size = (
+        f"{call.response_size_bytes:,} bytes"
+        if call.response_size_bytes is not None
+        else "(none)"
+    )
+    duration = f"{call.duration_ms:,} ms" if call.duration_ms is not None else "(none)"
+    items = [
+        *(
+            _render_html_meta(f"Argument: {key}", value)
+            for key, value in call.arguments.items()
+        ),
+        _render_html_meta("Target", call.target or "(not given)"),
+        _render_html_meta("Target Verified", str(call.target_verified)),
+        _render_html_meta(
+            "Target Statically Analyzed", str(call.target_statically_analyzed)
+        ),
+        _render_html_meta("Server URL", call.server_url),
+        _render_html_meta("Server Name", call.server_name or "(unknown)"),
+        _render_html_meta("Server Version", call.server_version or "(unknown)"),
+        _render_html_meta(
+            "Expected Release (configured)", call.expected_release or "(none)"
+        ),
+        _render_html_meta("Client SDK", call.client_sdk or "(unknown)"),
+        _render_html_meta("Called At", call.called_at),
+        _render_html_meta("Duration", duration),
+        _render_html_meta("Response Size", response_size),
+        _render_html_meta("Truncated", str(call.truncated)),
+    ]
+    group, meaning = EXTERNAL_STATUS_DISPLAY[call.status]
+    truncated = (
+        ' <span class="badge external-status status-warning">truncated</span>'
+        if call.truncated
+        else ""
+    )
+    reason = (
+        f"<p><strong>Reason:</strong> {_escape_html(call.reason)}</p>"
+        if call.reason
+        else ""
+    )
+    return (
+        f'<article class="finding external-call status-{group}">'
+        f"<h3>{_escape_html(call.tool)}</h3>"
+        "<p><strong>Status:</strong> "
+        f'<span class="badge external-status status-{group}">'
+        f"{_escape_html(call.status)}</span>{truncated} "
+        f"{_escape_html(meaning)}</p>"
+        f"{reason}"
+        f'<div class="meta-grid">{"".join(items)}</div>'
+        f"{_render_html_external_content(call)}"
+        "</article>"
+    )
+
+
+def _render_html_external_content(call: ExternalToolCall) -> str:
+    if not call.content:
+        return ""
+    kept_bytes = len(call.content.encode("utf-8"))
+    label = f"Returned source ({kept_bytes:,} bytes shown"
+    if call.truncated and call.response_size_bytes is not None:
+        label += f" of {call.response_size_bytes:,} bytes, truncated"
+    label += ")"
+    # The newline after <pre> is dropped by HTML parsers, so a leading newline
+    # in the source survives.
+    return (
+        "<details>"
+        f"<summary>{_escape_html(label)}</summary>"
+        f'<pre class="external-content">\n{_escape_html(call.content)}</pre>'
+        "</details>"
+    )
+
+
+def _external_tool_call_css(calls: list[ExternalToolCall]) -> str:
+    # Added only with MCP records so other reports keep their exact HTML.
+    if not calls:
+        return ""
+    return """
+    .external-call code { overflow-wrap: anywhere; }
+    .external-status.status-ok { background: var(--low); }
+    .external-status.status-warning { background: var(--medium); }
+    .external-status.status-failure { background: var(--high); }
+    .external-status.status-not-called { background: var(--muted); }
+    .finding.external-call.status-ok { border-left-color: var(--low); }
+    .finding.external-call.status-warning { border-left-color: var(--medium); }
+    .finding.external-call.status-failure { border-left-color: var(--high); }
+    .finding.external-call.status-not-called { border-left-color: var(--muted); }
+    .external-call summary { cursor: pointer; font-weight: 700; }
+    .external-content {
+      margin: 10px 0 0;
+      padding: 12px;
+      max-height: 480px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      background: #eef1f5;
+      border-radius: 6px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+    }
     """

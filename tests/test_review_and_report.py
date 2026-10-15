@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -10,9 +11,16 @@ from project_nurilab import __version__
 from project_nurilab.analyzers.python_static import PythonStaticAnalyzer
 from project_nurilab.input.manager import PythonFileLoader
 from project_nurilab.llm.review import MockLLMReviewClient
-from project_nurilab.reports.generator import ReportGenerator
+from project_nurilab.reports.generator import (
+    EXTERNAL_STATUS_DISPLAY,
+    ReportGenerator,
+    _external_tool_call_css,
+    _render_html_external_tool_calls,
+)
 from project_nurilab.schemas import (
+    ALLOWED_EXTERNAL_TOOL_CALL_STATUSES,
     AnalysisReport,
+    ExternalToolCall,
     ProjectAnalysis,
     ProjectFileSummary,
     ProjectReport,
@@ -402,6 +410,309 @@ def test_report_generator_writes_project_json_contract(tmp_path: Path) -> None:
     assert "html" not in output_paths
 
 
+def _jadx_mcp_success_call() -> ExternalToolCall:
+    return ExternalToolCall(
+        server_url="http://127.0.0.1:8651/mcp",
+        tool="get_class_source",
+        status="success",
+        called_at="2026-10-12T00:00:00+00:00",
+        arguments={"class_name": "com.nurilab.mcpprobe.MainActivity"},
+        target="mcpprobe-debug.apk",
+        server_name="JADX-AI-MCP Plugin Reverse Engineering Server",
+        server_version="3.0.2",
+        expected_release="jadx-ai-mcp V6.4.1",
+        client_sdk="mcp 2.2.0",
+        duration_ms=200,
+        content="// 주석 </script>\npackage com.nurilab.mcpprobe;\n",
+        response_size_bytes=50,
+    )
+
+
+def _jadx_mcp_unavailable_call() -> ExternalToolCall:
+    return ExternalToolCall(
+        server_url="http://127.0.0.1:8659/mcp",
+        tool="get_class_source",
+        status="unavailable",
+        called_at="2026-10-12T00:00:00+00:00",
+        arguments={"class_name": "com.nurilab.mcpprobe.MainActivity"},
+        reason="connect failed: ConnectError: All connection attempts failed",
+        client_sdk="mcp 2.2.0",
+        duration_ms=5,
+    )
+
+
+def _build_single_file_report() -> AnalysisReport:
+    return AnalysisReport(
+        generated_at="2026-06-29T00:00:00+00:00",
+        analyzer_version=__version__,
+        analysis=PythonAnalysis(path="/tmp/sample.py", line_count=1),
+        review=ReviewResult(summary="No findings.", risk_level="low"),
+    )
+
+
+@pytest.mark.parametrize(
+    "build_report",
+    [
+        _build_single_file_report,
+        lambda: _build_project_json_contract_report("/tmp/json_project"),
+    ],
+    ids=["file", "project"],
+)
+def test_report_to_dict_adds_external_tool_calls_only_when_recorded(
+    build_report,
+) -> None:
+    """Without an MCP call the JSON contract is unchanged; with one it is appended."""
+
+    report = build_report()
+    baseline = report.to_dict()
+    assert list(baseline) == ["generated_at", "analyzer_version", "analysis", "review"]
+
+    calls = [_jadx_mcp_success_call(), _jadx_mcp_unavailable_call()]
+    report.external_tool_calls = calls
+    payload = report.to_dict()
+
+    assert list(payload) == [*baseline, "external_tool_calls"]
+    for key, value in baseline.items():
+        assert payload[key] == value
+    assert payload["external_tool_calls"] == [call.to_dict() for call in calls]
+    assert set(payload["external_tool_calls"][0]) == {
+        "server_url",
+        "tool",
+        "status",
+        "called_at",
+        "arguments",
+        "target",
+        "target_verified",
+        "target_statically_analyzed",
+        "reason",
+        "server_name",
+        "server_version",
+        "expected_release",
+        "client_sdk",
+        "duration_ms",
+        "content",
+        "response_size_bytes",
+        "truncated",
+    }
+    assert payload["external_tool_calls"][1]["content"] is None
+    assert payload["external_tool_calls"][1]["target"] is None
+    for call in payload["external_tool_calls"]:
+        assert call["target_verified"] is False
+        assert call["target_statically_analyzed"] is False
+
+
+class _ExternalContentParser(HTMLParser):
+    """Collect the text a browser shows inside each external-content <pre>."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.blocks: list[str] = []
+        self._inside = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "pre" and ("class", "external-content") in attrs:
+            self._inside = True
+            self.blocks.append("")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "pre":
+            self._inside = False
+
+    def handle_data(self, data: str) -> None:
+        if self._inside:
+            self.blocks[-1] += data
+
+
+def _shown_external_content(html: str) -> list[str]:
+    parser = _ExternalContentParser()
+    parser.feed(html)
+    # Browsers drop the single newline right after <pre>; mirror that here.
+    return [block.removeprefix("\n") for block in parser.blocks]
+
+
+_REPORT_BUILDERS = pytest.mark.parametrize(
+    ("build_report", "last_section"),
+    [
+        (_build_single_file_report, "<h2>Findings</h2>"),
+        (
+            lambda: _build_project_json_contract_report("/tmp/json_project"),
+            "<h2>Ruff Findings</h2>",
+        ),
+    ],
+    ids=["file", "project"],
+)
+
+
+def test_external_tool_call_html_parts_are_empty_without_records() -> None:
+    """Both insertion points add nothing, so HTML without MCP stays byte-identical."""
+
+    assert _render_html_external_tool_calls([]) == ""
+    assert _external_tool_call_css([]) == ""
+
+
+@pytest.mark.parametrize(
+    "build_report",
+    [
+        _build_single_file_report,
+        lambda: _build_project_json_contract_report("/tmp/json_project"),
+    ],
+    ids=["file", "project"],
+)
+def test_html_report_omits_external_tool_calls_without_records(build_report) -> None:
+    """Runs without an MCP call render no external section and no extra CSS."""
+
+    html = ReportGenerator().to_html(build_report())
+
+    assert "External Tool Calls" not in html
+    assert "external-call" not in html
+    assert "external-content" not in html
+
+
+@_REPORT_BUILDERS
+def test_html_report_renders_external_tool_call_section(
+    build_report, last_section: str
+) -> None:
+    """The MCP record is shown after the existing sections with its provenance."""
+
+    report = build_report()
+    call = _jadx_mcp_success_call()
+    report.external_tool_calls = [call]
+
+    html = ReportGenerator().to_html(report)
+
+    section_at = html.index("<h2>External Tool Calls (jadx-ai-mcp)</h2>")
+    assert html.index(last_section) < section_at
+    assert html.index("</main>") > section_at
+    assert "They are not used for findings, risk level, or review." in html
+    assert "Returned source is untrusted data" in html
+    assert "does not verify that the target matches the APK" in html
+    assert (
+        "The jadx-ai-mcp target (an APK) is not a format supported by NuriLab "
+        "static analysis; the analysis results above do not cover it."
+    ) in html
+    for label, value in [
+        ("Argument: class_name", "com.nurilab.mcpprobe.MainActivity"),
+        ("Target", "mcpprobe-debug.apk"),
+        ("Target Verified", "False"),
+        ("Target Statically Analyzed", "False"),
+        ("Server URL", "http://127.0.0.1:8651/mcp"),
+        ("Server Name", "JADX-AI-MCP Plugin Reverse Engineering Server"),
+        ("Server Version", "3.0.2"),
+        ("Expected Release (configured)", "jadx-ai-mcp V6.4.1"),
+        ("Client SDK", "mcp 2.2.0"),
+        ("Called At", "2026-10-12T00:00:00+00:00"),
+        ("Duration", "200 ms"),
+        ("Response Size", "50 bytes"),
+        ("Truncated", "False"),
+    ]:
+        assert f'<span class="label">{label}</span><code>{value}</code>' in html, label
+    assert (
+        '<p><strong>Status:</strong> <span class="badge external-status status-ok">'
+        "success</span> The tool returned source.</p>"
+    ) in html
+    assert "<summary>Returned source (50 bytes shown)</summary>" in html
+    assert _shown_external_content(html) == [call.content]
+    assert "</script>" not in html
+
+
+def test_html_report_escapes_untrusted_external_values() -> None:
+    """Server and user values never become markup, and the source text survives."""
+
+    hostile = '<img src=x onerror="alert(1)">'
+    content = "\n</pre></details><script>alert(1)</script>\nclass A {}"
+    report = _build_single_file_report()
+    report.external_tool_calls = [
+        ExternalToolCall(
+            server_url=f"http://127.0.0.1:8651/{hostile}",
+            tool="get_class_source",
+            status="success",
+            called_at="2026-10-12T00:00:00+00:00",
+            arguments={"class_name": hostile},
+            target=hostile,
+            reason=hostile,
+            server_name=hostile,
+            server_version=hostile,
+            content=content,
+            response_size_bytes=len(content.encode("utf-8")),
+        )
+    ]
+
+    html = ReportGenerator().to_html(report)
+
+    assert "<img" not in html
+    assert "<script" not in html
+    # Only the real closing tags remain; the injected ones are escaped.
+    assert html.count("</pre></details>") == 1
+    assert html.count("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;") == 6
+    assert _shown_external_content(html) == [content]
+
+
+def test_html_report_shows_failed_external_call_without_source() -> None:
+    """A failed call shows its reason and unknown provenance, with no source block."""
+
+    report = _build_single_file_report()
+    report.external_tool_calls = [_jadx_mcp_unavailable_call()]
+
+    html = ReportGenerator().to_html(report)
+
+    assert (
+        "<p><strong>Status:</strong> "
+        '<span class="badge external-status status-failure">unavailable</span> '
+        "The tool could not be used (server, plugin, or tool not available; "
+        "see Reason).</p>"
+    ) in html
+    assert (
+        "<p><strong>Reason:</strong> connect failed: ConnectError: "
+        "All connection attempts failed</p>"
+    ) in html
+    assert '<span class="label">Target</span><code>(not given)</code>' in html
+    assert '<span class="label">Server Name</span><code>(unknown)</code>' in html
+    assert '<span class="label">Response Size</span><code>(none)</code>' in html
+    assert "<details>" not in html
+
+
+def test_html_report_labels_truncated_external_source() -> None:
+    """A cut source says how much is shown out of the original response size."""
+
+    report = _build_single_file_report()
+    report.external_tool_calls = [
+        ExternalToolCall(
+            server_url="http://127.0.0.1:8651/mcp",
+            tool="get_class_source",
+            status="success",
+            called_at="2026-10-12T00:00:00+00:00",
+            content="가" * 10,
+            response_size_bytes=300_000,
+            truncated=True,
+        )
+    ]
+
+    html = ReportGenerator().to_html(report)
+
+    assert (
+        "<summary>Returned source (30 bytes shown of 300,000 bytes, truncated)"
+        "</summary>"
+    ) in html
+    assert '<span class="label">Truncated</span><code>True</code>' in html
+
+
+def test_report_generator_writes_external_tool_call_json(tmp_path: Path) -> None:
+    """Untrusted MCP content is stored verbatim as JSON data, not re-encoded."""
+
+    report = _build_single_file_report()
+    report.external_tool_calls = [_jadx_mcp_success_call()]
+
+    output_paths = ReportGenerator().write(report, tmp_path, formats=["json"])
+
+    json_text = output_paths["json"].read_text(encoding="utf-8")
+    payload = json.loads(json_text)
+    assert payload == report.to_dict()
+    assert payload["external_tool_calls"][0]["content"] == (
+        _jadx_mcp_success_call().content
+    )
+    assert "// 주석" in json_text
+
+
 def test_report_generator_renders_local_llm_failure_finding_details(
     tmp_path: Path,
 ) -> None:
@@ -750,3 +1061,73 @@ def test_pipeline_preserves_analysis_for_non_object_local_llm_json(
         persisted_report["review"]["findings"][0]["title"]
         == "Local LLM JSON parsing failed"
     )
+
+
+def _external_call(status: str, **fields) -> ExternalToolCall:
+    return ExternalToolCall(
+        server_url="http://127.0.0.1:8651/mcp",
+        tool="get_class_source",
+        status=status,
+        called_at="2026-10-14T00:00:00+00:00",
+        **fields,
+    )
+
+
+def _render_external_calls(*calls: ExternalToolCall) -> str:
+    report = _build_single_file_report()
+    report.external_tool_calls = list(calls)
+    return ReportGenerator().to_html(report)
+
+
+def test_external_status_display_covers_every_contract_status() -> None:
+    """A new status must get a display group and meaning before it can render."""
+
+    assert set(EXTERNAL_STATUS_DISPLAY) == ALLOWED_EXTERNAL_TOOL_CALL_STATUSES
+
+
+@pytest.mark.parametrize(
+    ("status", "group"),
+    [
+        ("success", "ok"),
+        ("empty", "warning"),
+        ("not_found", "warning"),
+        ("unavailable", "failure"),
+        ("timeout", "failure"),
+        ("tool_error", "failure"),
+        ("malformed", "failure"),
+        ("invalid_input", "not-called"),
+        ("not_allowed", "not-called"),
+    ],
+)
+def test_html_report_marks_each_external_status_by_group(
+    status: str, group: str
+) -> None:
+    """Each status shows its group and meaning; only success looks successful."""
+
+    html = _render_external_calls(_external_call(status))
+
+    meaning = EXTERNAL_STATUS_DISPLAY[status][1]
+    assert f'<article class="finding external-call status-{group}">' in html
+    assert (
+        f'<span class="badge external-status status-{group}">{status}</span> '
+        f"{meaning}</p>"
+    ) in html
+    if status != "success":
+        assert 'class="badge external-status status-ok"' not in html
+
+
+def test_html_report_adds_truncated_badge_only_to_truncated_source() -> None:
+    """truncated is a separate mark next to success, not a status of its own."""
+
+    whole = _render_external_calls(_external_call("success", content="class A {}"))
+    cut = _render_external_calls(
+        _external_call(
+            "success", content="class A", response_size_bytes=300_000, truncated=True
+        )
+    )
+
+    badge = '<span class="badge external-status status-warning">truncated</span>'
+    assert badge not in whole
+    assert (
+        '<span class="badge external-status status-ok">success</span> ' + badge
+    ) in cut
