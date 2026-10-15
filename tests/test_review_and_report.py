@@ -483,6 +483,7 @@ def test_report_to_dict_adds_external_tool_calls_only_when_recorded(
         "arguments",
         "target",
         "target_verified",
+        "target_statically_analyzed",
         "reason",
         "server_name",
         "server_version",
@@ -495,10 +496,9 @@ def test_report_to_dict_adds_external_tool_calls_only_when_recorded(
     }
     assert payload["external_tool_calls"][1]["content"] is None
     assert payload["external_tool_calls"][1]["target"] is None
-    assert [call["target_verified"] for call in payload["external_tool_calls"]] == [
-        False,
-        False,
-    ]
+    for call in payload["external_tool_calls"]:
+        assert call["target_verified"] is False
+        assert call["target_statically_analyzed"] is False
 
 
 class _ExternalContentParser(HTMLParser):
@@ -586,10 +586,15 @@ def test_html_report_renders_external_tool_call_section(
     assert "They are not used for findings, risk level, or review." in html
     assert "Returned source is untrusted data" in html
     assert "does not verify that the target matches the APK" in html
+    assert (
+        "The jadx-ai-mcp target (an APK) is not a format supported by NuriLab "
+        "static analysis; the analysis results above do not cover it."
+    ) in html
     for label, value in [
         ("Argument: class_name", "com.nurilab.mcpprobe.MainActivity"),
         ("Target", "mcpprobe-debug.apk"),
         ("Target Verified", "False"),
+        ("Target Statically Analyzed", "False"),
         ("Server URL", "http://127.0.0.1:8651/mcp"),
         ("Server Name", "JADX-AI-MCP Plugin Reverse Engineering Server"),
         ("Server Version", "3.0.2"),

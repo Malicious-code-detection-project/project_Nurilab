@@ -227,8 +227,11 @@ NuriLab (MCP client)
     사실을 보고서에 명시합니다. JSON에는 레코드마다 `target_verified: false`로 남깁니다
     (5.2).
 * **비지원 형식**: 입력 수집기는 현재 `.py` 외 파일을 skip하며 사유를 남깁니다. `.apk` 등
-  비지원 형식에 대해 정적 분석 성공을 만들지 않으며, 보고서의 비지원 표시는 THE-155에서
-  처리합니다.
+  비지원 형식에 대해 정적 분석 성공을 만들지 않습니다.
+  * THE-155: MCP 조회 대상은 항상 JADX-GUI에 연 APK이고 NuriLab 정적 분석은 `.py`만
+    지원하므로, 이 사실을 MCP 영역 안에서만 표시합니다. JSON에는 레코드마다
+    `target_statically_analyzed: false`(5.2), HTML에는 MCP 섹션 안내문으로 남깁니다.
+  * 기존 분석 결과와 review 출력은 바꾸지 않습니다.
 * **결과 위치**: 기존 분석 결과(파일별 분석, 요약, risk, LLM review)와 분리된 별도 영역에
   기록합니다. 판정 결과로 오해되지 않도록 `findings`가 아닌 `external_tool_calls`라는
   이름을 사용합니다.
@@ -241,7 +244,8 @@ NuriLab (MCP client)
   * THE-155 HTML: 호출 기록이 있을 때만 기존 섹션 뒤(단일 파일은 `Findings`, 프로젝트는
     `Ruff Findings` 다음)에 `External Tool Calls (jadx-ai-mcp)` 섹션을 추가합니다.
     * 섹션 첫머리에 판정·risk·review에 쓰지 않는다는 점, 소스가 비신뢰 데이터라는 점,
-      대상 일치를 검증하지 않는다는 점을 고정 문구로 표시합니다.
+      대상 일치를 검증하지 않는다는 점, 대상(APK)이 NuriLab 정적 분석 지원 형식이 아니라
+      위 분석 결과에 포함되지 않는다는 점을 고정 문구로 표시합니다.
     * 호출마다 상태, 사유, 5.2의 출처 항목을 표시하고, 받은 소스는 접힌 영역에
       escape한 텍스트로만 보여 줍니다. 절삭된 경우 보여 준 크기와 원본 크기를 함께
       표시합니다.
@@ -292,6 +296,7 @@ NuriLab (MCP client)
 | `client_sdk` | `mcp <설치 버전>` |
 | `target` | 사용자가 지정한 대상 식별자(`--jadx-mcp-target`), 없으면 비어 있음 |
 | `target_verified` | 항상 `false`. JADX-GUI에 열린 APK와 `target`이 같은지 NuriLab이 검증하지 않음(4절) |
+| `target_statically_analyzed` | 항상 `false`. MCP 대상(APK)은 NuriLab 정적 분석이 지원하지 않는 형식이라 같은 보고서의 분석 결과에 포함되지 않음(4절) |
 | `arguments` | 서버에 보낸(또는 거부되어 보내지 않은) 인자. `{"class_name": "<클래스 이름>"}` |
 | `content` | `success`일 때 받은 소스(비신뢰 데이터, 256 KiB 초과 시 절삭) |
 | `status`, `reason` | 5.3 상태 값과 사유 |

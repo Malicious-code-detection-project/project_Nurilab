@@ -86,6 +86,7 @@ def test_external_tool_call_defaults_leave_provenance_unset() -> None:
     assert call.arguments == {}
     assert call.target is None
     assert call.target_verified is False
+    assert call.target_statically_analyzed is False
     assert call.reason is None
     assert call.server_name is None
     assert call.server_version is None
@@ -127,6 +128,7 @@ def test_external_tool_call_to_dict_is_json_serializable() -> None:
         "arguments",
         "target",
         "target_verified",
+        "target_statically_analyzed",
         "reason",
         "server_name",
         "server_version",

@@ -301,6 +301,9 @@ class ExternalToolCall:
     target: str | None = None
     # NuriLab cannot see which APK JADX-GUI has open, so target is never verified.
     target_verified: bool = False
+    # Static analysis covers .py files only, so the APK queried over MCP is never
+    # part of the analysis results in the same report.
+    target_statically_analyzed: bool = False
     reason: str | None = None
     server_name: str | None = None
     server_version: str | None = None

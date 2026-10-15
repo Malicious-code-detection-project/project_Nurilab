@@ -1083,6 +1083,8 @@ def _render_html_external_tool_calls(calls: list[ExternalToolCall]) -> str:
         "shown as plain text only.</p>"
         "<p>NuriLab does not verify that the target matches the APK loaded in "
         "JADX-GUI.</p>"
+        "<p>The jadx-ai-mcp target (an APK) is not a format supported by NuriLab "
+        "static analysis; the analysis results above do not cover it.</p>"
         "</div>"
         f"{articles}"
         "</section>"
@@ -1103,6 +1105,9 @@ def _render_html_external_tool_call(call: ExternalToolCall) -> str:
         ),
         _render_html_meta("Target", call.target or "(not given)"),
         _render_html_meta("Target Verified", str(call.target_verified)),
+        _render_html_meta(
+            "Target Statically Analyzed", str(call.target_statically_analyzed)
+        ),
         _render_html_meta("Server URL", call.server_url),
         _render_html_meta("Server Name", call.server_name or "(unknown)"),
         _render_html_meta("Server Version", call.server_version or "(unknown)"),
