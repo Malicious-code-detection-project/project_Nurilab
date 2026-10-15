@@ -150,7 +150,7 @@ Local LLM에는 원본 source text가 아니라 정규화된 정적 분석 paylo
 사용자가 선정한 [jadx-ai-mcp](https://github.com/zinja-coder/jadx-ai-mcp)의 외부 도구를
 NuriLab에서 호출하는 MCP 클라이언트 연결입니다. 예정 순서는
 `THE-151` tool contract, `THE-154` 연결, `THE-155` report 반영입니다. `THE-154`
-연결은 실험적 옵션으로 구현되었으며 report 표시는 `THE-155`에서 진행합니다(사용법은
+연결과 `THE-155` report 표시는 실험적 옵션으로 구현되었습니다(사용법은
 [사용 가이드](docs/USAGE.md)). RAG와 Sandbox 구축·연동은 제외합니다. 파인튜닝 방향과 실행은
 별도 프로젝트에서 재검토하며, NuriLab에는 준비된 외부 모델의 API 연결만 후속
 `THE-80`으로 남깁니다. 모델 준비는 MCP 연동의 선행 조건이 아닙니다.

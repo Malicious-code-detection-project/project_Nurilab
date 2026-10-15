@@ -338,7 +338,7 @@ NuriLab (MCP client)
 * 기존 정적 분석, Mock/Local LLM review, HTML/JSON 출력은 MCP 결과와 무관하게 그대로
   완료됩니다.
 * 테스트용 가짜(fake) 클라이언트 결과는 실제 연결 증거로 쓰지 않습니다. 실제 연결 증거는
-  6절의 실제 서버 실측 기록이며, 보고서 기반 반복 검증 기록은 THE-155에서 남깁니다.
+  6절의 실제 서버 실측 기록이며, 보고서 기반 반복 검증 기록은 7절(THE-155)에 남깁니다.
 
 ## 6. THE-154 실측 기록
 
@@ -407,3 +407,58 @@ curl `initialize` 요청의 `protocolVersion`은 NuriLab 클라이언트와 같�
   붙였습니다(5.3). 실제 SDK 전송·세션을 메모리 안의 HTTP 응답으로 실행하는 오프라인
   테스트가 이 경로를 검증하므로, SDK를 올려 오류 문구나 코드가 바뀌면 테스트가
   실패합니다.
+
+## 7. THE-155 실측 기록 (2026-10-15)
+
+THE-155의 보고서 기록(JSON/HTML)을 실제 서버로 확인하고, 같은 호출의 반복과 실패
+사례를 재현했습니다.
+
+* 환경과 버전: 6.3과 같습니다(WSL2 Ubuntu 24.04.4, WSLg, OpenJDK `17.0.20.1`, JADX
+  `1.5.6`, 플러그인 `jadx-ai-mcp-6.4.1.jar` SHA-256 `df7040ee…bed983`). 서버 가상환경은
+  `fastmcp 3.0.2`, `mcp 1.26.0`, `httpx 0.28.1`, `requests 2.34.2`, 클라이언트는 `mcp 2.2.0`
+* APK: 6.3과 같은 `mcpprobe-debug.apk`(SHA-256 `8d7c6b56…4d4260`, 실측 직전 재확인)
+* NuriLab: `feat/phase4-jadx-mcp-report-the-155` 브랜치(`2e9dfef` + 선택형 통합 테스트 2개)
+* 정적 분석 입력은 저장소의 무해 fixture `tests/fixtures/clean_sample.py`, review는 기본 Mock
+* 서버와 JADX-GUI는 계약 2절 명령으로 실행했고, 사례에 맞춰 종료·재실행한 뒤 실측이
+  끝나면 둘 다 종료했습니다.
+
+### 7.1 CLI 사례별 결과
+
+명령: `analyze tests/fixtures/clean_sample.py --jadx-mcp-class <클래스> --jadx-mcp-target mcpprobe-debug.apk`
+
+| 사례 | 조건 | CLI 상태 줄 | 보고서 |
+| --- | --- | --- | --- |
+| 성공 3회 반복 | `com.nurilab.mcpprobe.MainActivity` | 3회 모두 `success (1,573 bytes)`, 종료 코드 0 | 3회 모두 같은 `status`, `response_size_bytes=1573`, 소스 SHA-256 `bae3fbef…3cf69d`(32줄, `package com.nurilab.mcpprobe;`로 시작), `truncated=false`. 소요 166~271 ms. `generated_at`을 뺀 analysis·review도 3회 동일 |
+| 보고서 기록 | 위 성공 실행 | - | JSON 최상위 `external_tool_calls`에 출처 항목 전체, `target_verified=false`, `target_statically_analyzed=false`. HTML에 MCP 섹션 1개, `success` 성공 배지, 접힌 소스 1개, 실행 가능한 `<script>` 없음 |
+| 없는 클래스 | `com.nurilab.dummy.TestClass` | `not_found - HTTP error 404: {"error":"Class com.nurilab.dummy.TestClass not found"}`, 종료 코드 0 | HTML `not_found` 주의 배지 |
+| JADX-GUI 종료 | 성공 명령, 플러그인 종료 | `unavailable - Cannot connect to JADX plugin at http://127.0.0.1:8650. ...`, 종료 코드 0 | `server_name`은 기록됨(서버는 응답), HTML `unavailable` 실패 배지 |
+| JADX-GUI 재실행 | 서버·NuriLab 재시작 없이 GUI만 다시 실행 | `success (1,573 bytes)` | 소스 SHA-256이 반복 실행과 같음 |
+| 서버 미실행 | 서버 종료 후 기본 주소 | `unavailable - connect failed: ConnectError: All connection attempts failed`, 종료 코드 0 | - |
+| 서버가 없는 주소 | `--jadx-mcp-url http://127.0.0.1:8659/mcp` | 위와 같은 `unavailable` | - |
+
+모든 사례에서 정적 분석과 HTML/JSON 보고서 생성은 계속되었고 종료 코드는 0이었습니다.
+
+### 7.2 실제 서버 통합 테스트
+
+`NURILAB_RUN_JADX_MCP=1 uv run pytest tests/test_jadx_mcp_integration.py -m jadx_mcp_integration`
+(THE-155에서 반복 호출과 보고서 기록 테스트 2개를 추가해 총 5개)
+
+| 조건 | 결과 |
+| --- | --- |
+| GUI 실행, `NURILAB_JADX_MCP_CLASS=com.nurilab.mcpprobe.MainActivity` | 5 passed. 반복 호출 3회 모두 `success`, 1573 bytes, 같은 소스 SHA-256. 연결·호출 제한을 극단적으로 줄인 두 테스트는 `timeout` |
+| GUI 실행, 기본 클래스(없는 클래스) | 5 passed (`not_found`) |
+| GUI 종료 | 5 passed. 반복 3회 모두 `unavailable`(`plugin_unreachable`) |
+| 서버 종료 | 5 failed(의도한 결과). 호출 전에 멈춘 실패는 jadx 응답으로 인정하지 않음 |
+
+보고서 기록 테스트가 받은 소스를 지역 변수로 들지 않도록(`pytest -l` 출력 방지) 고친 뒤,
+같은 날 GUI 실행 상태에서 다시 실행해 실제 클래스·기본 클래스 모두 5 passed, 반복 호출
+SHA-256도 위와 같음을 확인했습니다. `-l` 실행 출력에도 소스가 나오지 않았습니다.
+
+### 7.3 실측하지 않은 항목
+
+* `malformed`, 크기 초과(`truncated`), 381 KiB 초과 전송 한계: jadx 실서버와 무해 APK로는
+  재현할 수 없어 단위 테스트, 오프라인 SDK 경로 테스트(5.3), THE-154의 임시 가짜 서버
+  실측(6.2)으로 대신합니다.
+* `--review-client local` 조합: 실측 시점에 vLLM 서버가 없어 수행하지 않았습니다. MCP
+  결과는 review 입력에 쓰이지 않으며(4절), Mock 경로 결과는 MCP 유무와 관계없이 같음을
+  위 반복 실행과 통합 테스트로 확인했습니다.

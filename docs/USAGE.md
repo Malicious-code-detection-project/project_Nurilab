@@ -43,7 +43,7 @@ uv run python main.py analyze tests
 | `--review-client mock\|local` | `mock` | review backend 선택 |
 | `--no-ruff` | 사용 안 함 | Ruff JSON finding 수집 비활성화 |
 | `--max-lines <n>` | 없음 | 하위 호환용 deprecated no-op. 파일 줄 수를 제한하지 않음 |
-| `--jadx-mcp-class <class>` | 사용 안 함 | 실험적(THE-154). 주면 jadx-ai-mcp `get_class_source`를 한 번 호출 |
+| `--jadx-mcp-class <class>` | 사용 안 함 | 실험적(THE-154, THE-155). 주면 jadx-ai-mcp `get_class_source`를 한 번 호출하고 결과를 JSON/HTML에 기록 |
 | `--jadx-mcp-url <url>` | `http://127.0.0.1:8651/mcp` | 실험적. jadx-mcp-server endpoint. `--jadx-mcp-class` 필요 |
 | `--jadx-mcp-target <name>` | 없음 | 실험적. 기록할 대상 식별자(예: APK 파일명). 검증하지 않음. `--jadx-mcp-class` 필요 |
 
@@ -148,7 +148,7 @@ JSON/schema 파싱 실패 시에는 응답 content의 최대 200자 preview가 �
 
 ## jadx-ai-mcp 연결 (실험적)
 
-THE-154에서 구현한 실험적 연결입니다. 호출 기록은 아래 터미널 출력, JSON 보고서의
+THE-154·THE-155에서 구현한 실험적 연결입니다. 호출 기록은 아래 터미널 출력, JSON 보고서의
 최상위 `external_tool_calls`, HTML 보고서 끝의 `External Tool Calls (jadx-ai-mcp)`
 섹션에서 확인할 수 있습니다. 선택 출력인 Markdown 보고서에는 MCP 호출 기록을
 표시하지 않습니다. 계약과 실측 기록은
@@ -201,12 +201,15 @@ NURILAB_RUN_JADX_MCP=1 uv run pytest tests/test_jadx_mcp_integration.py
 ```
 
 `NURILAB_JADX_MCP_CLASS`로 조회할 클래스를 바꿀 수 있습니다. 기본값은 존재하지 않는
-`com.nurilab.dummy.TestClass`이며, `get_class_source`가 실제로 호출되어 jadx가 응답했는지와
-연결·호출 시간 제한이 `timeout`으로 기록되는지 확인합니다. jadx 응답으로 인정하는 상태는
+`com.nurilab.dummy.TestClass`이며, `get_class_source`가 실제로 호출되어 jadx가 응답했는지,
+연결·호출 시간 제한이 `timeout`으로 기록되는지, 같은 호출을 3번 반복해도 상태·크기·소스
+SHA-256이 같은지, 실제 호출 결과가 JSON/HTML 보고서에 기록되고 정적 분석과 review는
+바뀌지 않는지 확인합니다. jadx 응답으로 인정하는 상태는
 `success`, `empty`, `not_found`와, 사유가 플러그인 연결 실패(`Cannot connect to JADX plugin`)인
 `unavailable`뿐입니다. 서버 연결 실패나 tool 미제공처럼 호출 전에 멈춘 경우는 실패로
 판정합니다. 진단 출력은 상태·사유 분류 이름·서버 버전·응답 크기·절삭 여부·소요 시간만
-남기며 소스, 접속 정보, 사유 원문은 출력하지 않습니다.
+남기며 소스, 접속 정보, 사유 원문은 출력하지 않습니다. 반복 호출 테스트는 비교를 위해
+소스 대신 소스의 SHA-256만 함께 출력합니다.
 
 ## Ruff
 
