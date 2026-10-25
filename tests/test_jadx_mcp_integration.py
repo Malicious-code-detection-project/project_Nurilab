@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -10,6 +13,7 @@ import pytest
 from mcp import types
 
 from project_nurilab.external.jadx_mcp_client import JadxMcpClient, McpSession
+from project_nurilab.pipeline import Phase1Pipeline
 from project_nurilab.schemas import ExternalToolCall
 
 
@@ -135,6 +139,99 @@ def test_real_jadx_mcp_call_timeout_cancels_transport_cleanly() -> None:
     assert has_server_version
 
 
+REPEATED_CALLS = 3
+CLEAN_SAMPLE = Path(__file__).parent / "fixtures" / "clean_sample.py"
+
+
+def content_digest(call: ExternalToolCall) -> str | None:
+    """SHA-256 of the returned source, so runs compare without printing it."""
+
+    if call.content is None:
+        return None
+    return hashlib.sha256(call.content.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.jadx_mcp_integration
+@requires_real_server
+def test_real_jadx_mcp_repeated_calls_return_the_same_answer() -> None:
+    """The same class asked several times gives the same status, size, and source."""
+
+    calls = [
+        JadxMcpClient().call_tool("get_class_source", CLASS_NAME)
+        for _ in range(REPEATED_CALLS)
+    ]
+    for call in calls:
+        digest = content_digest(call)
+        print(f"{diagnostic_summary(call)} content_sha256={digest}")
+
+    answered = [answered_by_jadx(call) for call in calls]
+    outcomes = {
+        (call.status, call.response_size_bytes, content_digest(call)) for call in calls
+    }
+    assert all(answered), [call.status for call in calls]
+    assert len(outcomes) == 1
+
+
+def report_facts(
+    paths: dict[str, Path], baseline: dict[str, Any], status: str
+) -> dict[str, object]:
+    """Small facts read from the written reports; the source never leaves here.
+
+    The test keeps only these values as locals, so even ``pytest -l`` cannot
+    print the returned source held in the JSON payload or the HTML text.
+    """
+
+    payload = json.loads(paths["json"].read_text(encoding="utf-8"))
+    record = payload["external_tool_calls"][0]
+    html = paths["html"].read_text(encoding="utf-8")
+    return {
+        "analysis_unchanged": payload["analysis"] == baseline["analysis"],
+        "review_unchanged": payload["review"] == baseline["review"],
+        "status": record["status"],
+        "server_name": record["server_name"],
+        "target": record["target"],
+        "target_verified": record["target_verified"],
+        "target_statically_analyzed": record["target_statically_analyzed"],
+        "html_section": "<h2>External Tool Calls (jadx-ai-mcp)</h2>" in html,
+        "html_status_badge": f'">{status}</span>' in html,
+    }
+
+
+@pytest.mark.jadx_mcp_integration
+@requires_real_server
+def test_real_jadx_mcp_call_is_recorded_in_json_and_html_reports(
+    tmp_path: Path,
+) -> None:
+    """A real call lands in both reports while analysis and review stay as without it."""
+
+    baseline, _ = Phase1Pipeline(use_ruff=False).run(
+        CLEAN_SAMPLE, output_dir=tmp_path / "baseline"
+    )
+    report, paths = Phase1Pipeline(use_ruff=False, jadx_mcp_client=JadxMcpClient()).run(
+        CLEAN_SAMPLE,
+        output_dir=tmp_path / "with_mcp",
+        jadx_mcp_class=CLASS_NAME,
+        jadx_mcp_target="mcpprobe-debug.apk",
+    )
+    call = report.external_tool_calls[0]
+    print(diagnostic_summary(call))
+
+    facts = report_facts(paths, baseline.to_dict(), call.status)
+    answered = answered_by_jadx(call)
+    assert answered, diagnostic_summary(call)
+    assert facts == {
+        "analysis_unchanged": True,
+        "review_unchanged": True,
+        "status": call.status,
+        "server_name": SERVER_NAME,
+        "target": "mcpprobe-debug.apk",
+        "target_verified": False,
+        "target_statically_analyzed": False,
+        "html_section": True,
+        "html_status_badge": True,
+    }
+
+
 # --- Guards for the real-server judgement (always run) -------------------------
 
 
@@ -219,6 +316,51 @@ def test_answered_by_jadx_fails_when_server_lacks_the_tool() -> None:
     assert call.server_name == SERVER_NAME
     assert calls == []
     assert not answered_by_jadx(call)
+
+
+class _FixedRecordClient(JadxMcpClient):
+    """Offline stand-in that returns one record carrying a marker source."""
+
+    def __init__(self, record: ExternalToolCall) -> None:
+        super().__init__(url=record.server_url)
+        self.record = record
+
+    def call_tool(
+        self, tool: str, class_name: str, target: str | None = None
+    ) -> ExternalToolCall:
+        return self.record
+
+
+def test_report_facts_exclude_returned_source(tmp_path: Path) -> None:
+    """The report test's locals stay free of the source, even under ``pytest -l``."""
+
+    record = ExternalToolCall(
+        server_url="http://127.0.0.1:8651/mcp",
+        tool="get_class_source",
+        status="success",
+        called_at="2026-10-15T00:00:00+00:00",
+        target="mcpprobe-debug.apk",
+        server_name=SERVER_NAME,
+        content="SYNTHETIC_SOURCE_MARKER",
+        response_size_bytes=23,
+    )
+    baseline, _ = Phase1Pipeline(use_ruff=False).run(
+        CLEAN_SAMPLE, output_dir=tmp_path / "baseline"
+    )
+    _, paths = Phase1Pipeline(
+        use_ruff=False, jadx_mcp_client=_FixedRecordClient(record)
+    ).run(
+        CLEAN_SAMPLE,
+        output_dir=tmp_path / "with_mcp",
+        jadx_mcp_class="com.nurilab.mcpprobe.MainActivity",
+    )
+
+    facts = report_facts(paths, baseline.to_dict(), "success")
+
+    assert "SYNTHETIC_SOURCE_MARKER" in paths["json"].read_text(encoding="utf-8")
+    assert "SYNTHETIC_SOURCE_MARKER" not in repr(facts)
+    assert facts["html_section"] is True
+    assert facts["html_status_badge"] is True
 
 
 def test_diagnostic_summary_excludes_source_and_connection_details() -> None:

@@ -7,7 +7,12 @@ from pathlib import Path
 from collections.abc import Sequence
 from typing import Any, Protocol
 
-from project_nurilab.schemas import AnalysisReport, ProjectFileSummary, ProjectReport
+from project_nurilab.schemas import (
+    AnalysisReport,
+    ExternalToolCall,
+    ProjectFileSummary,
+    ProjectReport,
+)
 
 
 ReportPayload = AnalysisReport | ProjectReport
@@ -157,6 +162,7 @@ class ReportGenerator:
                 "",
                 *_render_review_findings(report),
                 "",
+                *_render_markdown_external_tool_calls(report.external_tool_calls),
             ]
         )
 
@@ -281,7 +287,7 @@ class ReportGenerator:
     .finding.severity-medium {{ border-left-color: var(--medium); }}
     .finding.severity-high {{ border-left-color: var(--high); }}
     .finding.severity-critical {{ border-left-color: var(--critical); }}
-    .finding.severity-info {{ border-left-color: var(--info); }}
+    .finding.severity-info {{ border-left-color: var(--info); }}{_external_tool_call_css(report.external_tool_calls)}
   </style>
 </head>
 <body>
@@ -326,7 +332,7 @@ class ReportGenerator:
     <section>
       <h2>Findings</h2>
       {_render_html_findings(report)}
-    </section>
+    </section>{_render_html_external_tool_calls(report.external_tool_calls)}
   </main>
 </body>
 </html>
@@ -410,6 +416,7 @@ class ReportGenerator:
                 )
             lines.append("")
 
+        lines.extend(_render_markdown_external_tool_calls(report.external_tool_calls))
         return "\n".join(lines).rstrip() + "\n"
 
     def _project_to_html(self, report: ProjectReport) -> str:
@@ -438,7 +445,7 @@ class ReportGenerator:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Python Project Review Report</title>
-  <style>{_shared_css()}</style>
+  <style>{_shared_css()}{_external_tool_call_css(report.external_tool_calls)}</style>
 </head>
 <body>
   <main>
@@ -481,7 +488,7 @@ class ReportGenerator:
     <section>
       <h2>Ruff Findings</h2>
       {ruff_rows}
-    </section>
+    </section>{_render_html_external_tool_calls(report.external_tool_calls)}
   </main>
 </body>
 </html>
@@ -1034,4 +1041,260 @@ def _shared_css() -> str:
     .finding.severity-high { border-left-color: var(--high); }
     .finding.severity-critical { border-left-color: var(--critical); }
     .finding.severity-info { border-left-color: var(--info); }
+    """
+
+
+# Display group and one-line meaning per call status (THE-151 section 5.3). Groups
+# keep failures and skipped calls visually apart from success.
+EXTERNAL_STATUS_DISPLAY = {
+    "success": ("ok", "The tool returned source."),
+    "empty": ("warning", "The tool returned an empty response."),
+    # not_found is any HTTP 404 from the plugin, which a plugin path mismatch
+    # also produces, so the meaning names both causes.
+    "not_found": (
+        "warning",
+        "The server reported HTTP 404: usually the class is not in the APK loaded "
+        "in JADX-GUI, but a plugin path mismatch looks the same (see Reason).",
+    ),
+    # unavailable, timeout, and tool_error each cover several causes (server,
+    # plugin, missing tool, client transport, phase), so their meaning defers
+    # to Reason.
+    "unavailable": (
+        "failure",
+        "The tool could not be used (server, plugin, or tool not available; "
+        "see Reason).",
+    ),
+    "timeout": (
+        "failure",
+        "A time limit was exceeded while connecting, calling the tool, or waiting "
+        "on the JADX plugin (see Reason).",
+    ),
+    "tool_error": ("failure", "The call failed with an error (see Reason)."),
+    "malformed": ("failure", "The response did not match the expected format."),
+    "invalid_input": (
+        "not-called",
+        "Not called: the class name failed input validation.",
+    ),
+    "not_allowed": ("not-called", "Not called: the tool is not in the allowlist."),
+}
+
+
+def _render_html_external_tool_calls(calls: list[ExternalToolCall]) -> str:
+    """Render opt-in MCP call records apart from analysis, findings, and review."""
+
+    # Runs without an MCP call render nothing, so their HTML stays unchanged.
+    if not calls:
+        return ""
+    articles = "".join(_render_html_external_tool_call(call) for call in calls)
+    return (
+        '\n    <section class="external-tool-calls">'
+        "<h2>External Tool Calls (jadx-ai-mcp)</h2>"
+        '<div class="section-list">'
+        "<p>Opt-in external MCP call records. They are not used for findings, "
+        "risk level, or review.</p>"
+        "<p>Returned source is untrusted data from the external tool and is "
+        "shown as plain text only.</p>"
+        "<p>NuriLab does not verify that the target matches the APK loaded in "
+        "JADX-GUI.</p>"
+        "<p>The jadx-ai-mcp target (an APK) is not a format supported by NuriLab "
+        "static analysis; the analysis results above do not cover it.</p>"
+        "</div>"
+        f"{articles}"
+        "</section>"
+    )
+
+
+def _external_call_meta(call: ExternalToolCall) -> list[tuple[str, str]]:
+    """Label and display value of each provenance item, shared by HTML and Markdown."""
+
+    response_size = (
+        f"{call.response_size_bytes:,} bytes"
+        if call.response_size_bytes is not None
+        else "(none)"
+    )
+    duration = f"{call.duration_ms:,} ms" if call.duration_ms is not None else "(none)"
+    return [
+        *(
+            (f"Argument: {key}", value or "(empty)")
+            for key, value in call.arguments.items()
+        ),
+        ("Target", call.target or "(not given)"),
+        ("Target Verified", str(call.target_verified)),
+        ("Target Statically Analyzed", str(call.target_statically_analyzed)),
+        ("Server URL", call.server_url),
+        ("Server Name", call.server_name or "(unknown)"),
+        ("Server Version", call.server_version or "(unknown)"),
+        ("Expected Release (configured)", call.expected_release or "(none)"),
+        ("Client SDK", call.client_sdk or "(unknown)"),
+        ("Called At", call.called_at),
+        ("Duration", duration),
+        ("Response Size", response_size),
+        ("Truncated", str(call.truncated)),
+    ]
+
+
+def _render_html_external_tool_call(call: ExternalToolCall) -> str:
+    items = [
+        _render_html_meta(label, _show_bidi_controls(value))
+        for label, value in _external_call_meta(call)
+    ]
+    group, meaning = EXTERNAL_STATUS_DISPLAY[call.status]
+    truncated = (
+        ' <span class="badge external-status status-warning">truncated</span>'
+        if call.truncated
+        else ""
+    )
+    reason = (
+        '<p class="external-reason"><strong>Reason:</strong> '
+        f"{_escape_html(_show_bidi_controls(call.reason))}</p>"
+        if call.reason
+        else ""
+    )
+    return (
+        f'<article class="finding external-call status-{group}">'
+        f"<h3>{_escape_html(call.tool)}</h3>"
+        "<p><strong>Status:</strong> "
+        f'<span class="badge external-status status-{group}">'
+        f"{_escape_html(call.status)}</span>{truncated} "
+        f"{_escape_html(meaning)}</p>"
+        f"{reason}"
+        f'<div class="meta-grid">{"".join(items)}</div>'
+        f"{_render_html_external_content(call)}"
+        "</article>"
+    )
+
+
+def _render_html_external_content(call: ExternalToolCall) -> str:
+    if not call.content:
+        return ""
+    kept_bytes = len(call.content.encode("utf-8"))
+    label = f"Returned source ({kept_bytes:,} bytes shown"
+    if call.truncated and call.response_size_bytes is not None:
+        label += f" of {call.response_size_bytes:,} bytes, truncated"
+    label += ")"
+    # The newline after <pre> is dropped by HTML parsers, so a leading newline
+    # in the source survives.
+    return (
+        "<details>"
+        f"<summary>{_escape_html(label)}</summary>"
+        '<pre class="external-content">\n'
+        f"{_escape_html(_show_bidi_controls(call.content))}</pre>"
+        "</details>"
+    )
+
+
+# Unicode bidi controls (U+061C, U+200E-200F, U+202A-202E, U+2066-2069) can make
+# text display in a different order than it is stored (Trojan Source).
+_BIDI_CONTROLS = frozenset(
+    "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+)
+
+
+def _show_bidi_controls(text: str) -> str:
+    """Replace bidi controls in external values with visible ``\\uXXXX`` escapes."""
+
+    # Only bidi controls: other control characters such as tabs keep the source
+    # readable, and HTML cannot reorder text through them.
+    return "".join(
+        f"\\u{ord(char):04x}" if char in _BIDI_CONTROLS else char for char in text
+    )
+
+
+def escape_control_chars(text: str) -> str:
+    """Render non-printable characters, bidi controls included, as escapes."""
+
+    return "".join(char if char.isprintable() else repr(char)[1:-1] for char in text)
+
+
+def _render_markdown_external_tool_calls(calls: list[ExternalToolCall]) -> list[str]:
+    """Render MCP call status and provenance; the source stays in HTML and JSON."""
+
+    # Runs without an MCP call render nothing, so their Markdown stays unchanged.
+    if not calls:
+        return []
+    lines = [
+        "## External Tool Calls (jadx-ai-mcp)",
+        "",
+        "- Opt-in external MCP call records. They are not used for findings, "
+        "risk level, or review.",
+        "- NuriLab does not verify that the target matches the APK loaded in JADX-GUI.",
+        "- The jadx-ai-mcp target (an APK) is not a format supported by NuriLab "
+        "static analysis; the analysis results above do not cover it.",
+        "- Returned source is untrusted and is not shown in Markdown; use the "
+        "HTML or JSON report to see it.",
+        "",
+    ]
+    for call in calls:
+        _, meaning = EXTERNAL_STATUS_DISPLAY[call.status]
+        truncated = " (truncated)" if call.truncated else ""
+        lines.extend(
+            [
+                f"### {_markdown_code(call.tool)}",
+                "",
+                f"- Status: `{call.status}`{truncated} - {meaning}",
+                *(
+                    f"- {label}: {_markdown_code(value)}"
+                    for label, value in _external_call_meta(call)
+                ),
+                "",
+            ]
+        )
+        if call.reason:
+            lines.extend(["Reason:", "", *_markdown_code_block(call.reason), ""])
+    return lines
+
+
+def _markdown_code(value: str) -> str:
+    """Inline code span that external text cannot close or break across lines."""
+
+    text = escape_control_chars(value)
+    fence = "`" * (_longest_backtick_run(text) + 1)
+    pad = " " if text[:1] in ("`", " ") or text[-1:] in ("`", " ") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
+def _markdown_code_block(value: str) -> list[str]:
+    """Fenced block that keeps line breaks of external text but nothing else raw."""
+
+    lines = [escape_control_chars(line) for line in value.splitlines()]
+    fence = "`" * max(3, max(map(_longest_backtick_run, lines), default=0) + 1)
+    return [f"{fence}text", *lines, fence]
+
+
+def _longest_backtick_run(text: str) -> int:
+    longest = run = 0
+    for char in text:
+        run = run + 1 if char == "`" else 0
+        longest = max(longest, run)
+    return longest
+
+
+def _external_tool_call_css(calls: list[ExternalToolCall]) -> str:
+    # Added only with MCP records so other reports keep their exact HTML.
+    if not calls:
+        return ""
+    return """
+    .external-call code { overflow-wrap: anywhere; }
+    .external-status.status-ok { background: var(--low); }
+    .external-status.status-warning { background: var(--medium); }
+    .external-status.status-failure { background: var(--high); }
+    .external-status.status-not-called { background: var(--muted); }
+    .finding.external-call.status-ok { border-left-color: var(--low); }
+    .finding.external-call.status-warning { border-left-color: var(--medium); }
+    .finding.external-call.status-failure { border-left-color: var(--high); }
+    .finding.external-call.status-not-called { border-left-color: var(--muted); }
+    .external-reason { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .external-call summary { cursor: pointer; font-weight: 700; }
+    .external-content {
+      margin: 10px 0 0;
+      padding: 12px;
+      max-height: 480px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      background: #eef1f5;
+      border-radius: 6px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+    }
     """

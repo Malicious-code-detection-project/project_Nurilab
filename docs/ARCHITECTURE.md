@@ -226,10 +226,10 @@ MCP 연동은 [`jadx-ai-mcp`](https://github.com/zinja-coder/jadx-ai-mcp)를 대
 ```text
 THE-151: 입력·출력·실패·provenance tool contract 확정
 -> THE-154: contract를 따르는 연결 구현 (실험적 opt-in)
--> THE-155: connector 결과와 상태를 report에 표시 (예정)
+-> THE-155: connector 결과와 상태를 report에 표시 (실험적 opt-in)
 ```
 
-THE-154에서 구현한 흐름은 다음과 같습니다.
+THE-154·THE-155에서 구현한 흐름은 다음과 같습니다.
 
 ```text
 CLI --jadx-mcp-class
@@ -237,14 +237,18 @@ CLI --jadx-mcp-class
 -> JadxMcpClient: 허용 tool·class_name 검사 -> 연결·initialize·tool 목록 확인 -> get_class_source
 -> ExternalToolCall: status·reason·server/tool/version·content
 -> AnalysisReport / ProjectReport.external_tool_calls
+-> ReportGenerator: JSON 최상위 external_tool_calls, HTML·Markdown External Tool Calls 섹션
 ```
 
 - 이미 실행 중인 `jadx-mcp-server`에만 접속하며 서버를 시작하지 않습니다.
 - 연결 실패·시간 초과·오류 응답은 예외가 아니라 `ExternalToolCall`의 상태로 남고,
   정적 분석과 report 생성은 계속됩니다.
 - 받은 소스는 비신뢰 데이터이며 rule signal·risk·review 입력에 사용하지 않습니다.
-- `external_tool_calls`는 report 객체에만 담기며 `to_dict()`에 포함되지 않습니다.
-  JSON/HTML 표시와 반복 검증은 THE-155 범위입니다.
+- `external_tool_calls`는 호출 기록이 있을 때만 JSON 최상위 키와 HTML·선택 Markdown의
+  별도 섹션으로 추가됩니다. Markdown에는 받은 소스를 담지 않습니다. 옵션을 주지 않은
+  실행의 JSON/HTML/Markdown은 기존과 같습니다.
+- 보고서는 공유되므로 `server_url`에서 사용자 정보·query·fragment를 빼고 기록합니다.
+- 실제 서버로 확인한 반복 호출과 실패 사례 기록은 계약 문서 7절에 있습니다.
 
 별도 AegisLM endpoint 연결은 `THE-80`의 외부 LLM 백로그입니다. 기존
 OpenAI-compatible review 경계를 사용할 수 있는지 검토하는 항목이며 MCP 연동의

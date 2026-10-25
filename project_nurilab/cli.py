@@ -12,6 +12,7 @@ from project_nurilab.config import DEFAULT_REPORT_DIR
 from project_nurilab.external.jadx_mcp_client import JadxMcpClient
 from project_nurilab.llm.review import LocalLLMReviewClient, MockReviewClient
 from project_nurilab.pipeline import Phase1Pipeline
+from project_nurilab.reports.generator import escape_control_chars
 from project_nurilab.schemas import ExternalToolCall
 
 
@@ -145,14 +146,14 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _format_external_tool_call(call: ExternalToolCall) -> str:
-    """One status line per MCP call; reports show it once THE-155 lands."""
+    """One terminal status line per MCP call; reports keep the full record."""
 
     prefix = f"JADX MCP {call.tool}: {call.status}"
     if call.status == "success":
         truncated = ", truncated" if call.truncated else ""
         return f"{prefix} ({call.response_size_bytes:,} bytes{truncated})"
     reason = (call.reason or "").strip().splitlines()
-    return f"{prefix} - {_escape_control_chars(reason[0])}" if reason else prefix
+    return f"{prefix} - {escape_control_chars(reason[0])}" if reason else prefix
 
 
 class _EscapingFormatter(logging.Formatter):
@@ -160,7 +161,7 @@ class _EscapingFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         lines = super().format(record).split("\n")
-        return "\n".join(_escape_control_chars(line) for line in lines)
+        return "\n".join(escape_control_chars(line) for line in lines)
 
 
 @contextmanager
@@ -182,9 +183,3 @@ def _escaped_library_logs(enabled: bool) -> Iterator[None]:
         yield
     finally:
         root.removeHandler(handler)
-
-
-def _escape_control_chars(text: str) -> str:
-    """Render control characters from external servers as escapes."""
-
-    return "".join(char if char.isprintable() else repr(char)[1:-1] for char in text)

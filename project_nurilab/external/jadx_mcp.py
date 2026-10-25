@@ -132,11 +132,17 @@ def classify_is_error(message: str | None) -> ClassifiedPayload:
 
 
 def cap_reason(reason: str | None) -> str | None:
-    """Cut a reason to the byte limit, noting the original size when cut."""
+    """Cut a reason to the reason byte limit, noting the original size when cut."""
 
-    if reason is None:
+    return cap_text(reason, JADX_MCP_MAX_REASON_BYTES)
+
+
+def cap_text(text: str | None, limit: int) -> str | None:
+    """Cut text to ``limit`` UTF-8 bytes, noting the original size when cut."""
+
+    if text is None:
         return None
-    kept, size, truncated = _truncate_utf8(reason, JADX_MCP_MAX_REASON_BYTES)
+    kept, size, truncated = _truncate_utf8(text, limit)
     return f"{kept}... (truncated, {size} bytes)" if truncated else kept
 
 
