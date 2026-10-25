@@ -874,6 +874,16 @@ def test_client_cleans_and_caps_server_info() -> None:
         "9" * JADX_MCP_MAX_SERVER_INFO_BYTES + "... (truncated, 300 bytes)"
     )
 
+    long_name = FakeSession(
+        _text_result({"response": "class A {}"}), server_name="n" * 300
+    )
+
+    named = _client(long_name, []).call_tool("get_class_source", "A")
+
+    assert named.server_name == (
+        "n" * JADX_MCP_MAX_SERVER_INFO_BYTES + "... (truncated, 300 bytes)"
+    )
+
 
 STREAM_ENDED = "SSE stream ended without a response"
 STREAM_ENDED_AFTER_RECONNECT = (
