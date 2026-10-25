@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
+from typing import Any
 
 import anyio
 import pytest
@@ -154,6 +155,64 @@ def test_external_tool_call_repr_hides_untrusted_content() -> None:
 
     assert "SYNTHETIC_SOURCE_MARKER" not in repr(call)
     assert call.to_dict()["content"] == "SYNTHETIC_SOURCE_MARKER"
+
+
+@pytest.mark.parametrize("flag", ["target_verified", "target_statically_analyzed"])
+def test_external_tool_call_target_flags_cannot_be_set(flag: str) -> None:
+    """Both flags are a fixed contract, so no producer can record them as True."""
+
+    fixed_flag: dict[str, Any] = {flag: True}
+
+    with pytest.raises(TypeError, match=flag):
+        ExternalToolCall(
+            server_url=SERVER_URL,
+            tool="get_class_source",
+            status="success",
+            called_at=CALLED_AT,
+            **fixed_flag,
+        )
+
+
+@pytest.mark.parametrize(
+    ("url", "recorded"),
+    [
+        (SERVER_URL, SERVER_URL),
+        (
+            "http://user:token@127.0.0.1:8651/mcp?key=SECRET#frag",
+            "http://127.0.0.1:8651/mcp",
+        ),
+        ("http://user@[::1]:8651/mcp?", "http://[::1]:8651/mcp"),
+        ("http://[::1/mcp?key=SECRET", "(unparsable URL omitted)"),
+        ("user:SECRET@127.0.0.1:8651/mcp", "(unparsable URL omitted)"),
+        ("http://u:SE/CRET@127.0.0.1:8651/mcp", "(unparsable URL omitted)"),
+        ("http://u:SE?CRET@127.0.0.1:8651/mcp", "(unparsable URL omitted)"),
+        ("http://u:SE#CRET@127.0.0.1:8651/mcp", "(unparsable URL omitted)"),
+    ],
+    ids=[
+        "plain",
+        "userinfo-query-fragment",
+        "ipv6",
+        "unparsable",
+        "no-scheme-userinfo",
+        "slash-in-password",
+        "question-in-password",
+        "hash-in-password",
+    ],
+)
+def test_external_tool_call_records_server_url_without_secrets(
+    url: str, recorded: str
+) -> None:
+    """Reports are shared, so userinfo, query, and fragment never reach them."""
+
+    call = ExternalToolCall(
+        server_url=url,
+        tool="get_class_source",
+        status="unavailable",
+        called_at=CALLED_AT,
+    )
+
+    assert call.server_url == recorded
+    assert call.to_dict()["server_url"] == recorded
 
 
 def test_external_tool_call_rejects_unknown_status() -> None:
@@ -493,6 +552,21 @@ def test_client_records_success_with_provenance() -> None:
     ]
 
 
+def test_client_connects_with_full_url_but_records_it_redacted() -> None:
+    """Credentials in the URL still reach the server; only the record drops them."""
+
+    url = "http://user:token@127.0.0.1:8651/mcp?key=SECRET"
+    opened: list[str] = []
+    session = FakeSession(_text_result({"response": "class A {}"}))
+    client = JadxMcpClient(url=url, session_factory=_factory(session, opened))
+
+    call = client.call_tool("get_class_source", "A")
+
+    assert opened == [url]
+    assert call.status == "success"
+    assert call.server_url == "http://127.0.0.1:8651/mcp"
+
+
 def test_client_falls_back_to_text_without_structured_content() -> None:
     """Without structuredContent the JSON text block is used instead."""
 
@@ -802,6 +876,9 @@ def test_client_cleans_and_caps_server_info() -> None:
 
 
 STREAM_ENDED = "SSE stream ended without a response"
+STREAM_ENDED_AFTER_RECONNECT = (
+    "SSE stream ended and reconnection attempts were exhausted"
+)
 
 
 def _stream_ends_on_call(request: httpx2.Request) -> httpx2.Response:
@@ -835,27 +912,59 @@ def _stream_ends_on_call(request: httpx2.Request) -> httpx2.Response:
     )
 
 
-@asynccontextmanager
-async def _offline_sdk_session(url: str) -> AsyncGenerator[McpSession, None]:
-    """Real SDK transport and session over an in-memory HTTP handler."""
+def _resumable_stream_ends_on_call(request: httpx2.Request) -> httpx2.Response:
+    """Like ``_stream_ends_on_call``, but the call stream sends an SSE event id
+    first, so the SDK tries to resume it, and every resume attempt fails."""
 
-    transport = httpx2.MockTransport(_stream_ends_on_call)
-    async with httpx2.AsyncClient(transport=transport) as http_client:
-        async with streamable_http_client(url, http_client=http_client) as streams:
-            async with ClientSession(*streams) as session:
-                yield session
+    if request.method == "GET" and "last-event-id" in request.headers:
+        return httpx2.Response(500)
+    response = _stream_ends_on_call(request)
+    if response.headers.get("content-type") != "text/event-stream":
+        return response
+    # A priming event (id, no data); retry: 0 keeps the resume attempts instant.
+    return httpx2.Response(
+        200, headers=response.headers, content=b"id: e1\nretry: 0\ndata:\n\n"
+    )
 
 
-def test_client_notes_transport_limit_for_real_sdk_stream_end() -> None:
-    """The SDK's own stream-end failure gets the note; this breaks if the SDK
-    changes its message or error code."""
+def _offline_sdk_session_factory(
+    handler: Callable[[httpx2.Request], httpx2.Response],
+) -> SessionFactory:
+    @asynccontextmanager
+    async def factory(url: str) -> AsyncGenerator[McpSession, None]:
+        """Real SDK transport and session over an in-memory HTTP handler."""
 
-    client = JadxMcpClient(url=SERVER_URL, session_factory=_offline_sdk_session)
+        transport = httpx2.MockTransport(handler)
+        async with httpx2.AsyncClient(transport=transport) as http_client:
+            async with streamable_http_client(url, http_client=http_client) as streams:
+                async with ClientSession(*streams) as session:
+                    yield session
+
+    return factory
+
+
+@pytest.mark.parametrize(
+    ("handler", "message"),
+    [
+        (_stream_ends_on_call, STREAM_ENDED),
+        (_resumable_stream_ends_on_call, STREAM_ENDED_AFTER_RECONNECT),
+    ],
+    ids=["no-event-id", "after-reconnect"],
+)
+def test_client_notes_transport_limit_for_real_sdk_stream_end(
+    handler: Callable[[httpx2.Request], httpx2.Response], message: str
+) -> None:
+    """The SDK's own stream-end failures get the note; this breaks if the SDK
+    changes its messages or error code."""
+
+    client = JadxMcpClient(
+        url=SERVER_URL, session_factory=_offline_sdk_session_factory(handler)
+    )
 
     call = client.call_tool("get_class_source", "A")
 
     assert call.status == "tool_error"
-    assert call.reason == f"call failed: MCPError: {STREAM_ENDED}{TRANSPORT_LIMIT_NOTE}"
+    assert call.reason == f"call failed: MCPError: {message}{TRANSPORT_LIMIT_NOTE}"
 
 
 def test_client_never_notes_transport_limit_for_server_error_text() -> None:

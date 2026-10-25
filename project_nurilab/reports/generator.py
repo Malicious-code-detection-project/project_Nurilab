@@ -162,6 +162,7 @@ class ReportGenerator:
                 "",
                 *_render_review_findings(report),
                 "",
+                *_render_markdown_external_tool_calls(report.external_tool_calls),
             ]
         )
 
@@ -415,6 +416,7 @@ class ReportGenerator:
                 )
             lines.append("")
 
+        lines.extend(_render_markdown_external_tool_calls(report.external_tool_calls))
         return "\n".join(lines).rstrip() + "\n"
 
     def _project_to_html(self, report: ProjectReport) -> str:
@@ -1047,15 +1049,26 @@ def _shared_css() -> str:
 EXTERNAL_STATUS_DISPLAY = {
     "success": ("ok", "The tool returned source."),
     "empty": ("warning", "The tool returned an empty response."),
-    "not_found": ("warning", "The class was not found in the APK loaded in JADX-GUI."),
-    # unavailable and tool_error each cover several causes (server, plugin,
-    # missing tool, client transport), so their meaning defers to Reason.
+    # not_found is any HTTP 404 from the plugin, which a plugin path mismatch
+    # also produces, so the meaning names both causes.
+    "not_found": (
+        "warning",
+        "The server reported HTTP 404: usually the class is not in the APK loaded "
+        "in JADX-GUI, but a plugin path mismatch looks the same (see Reason).",
+    ),
+    # unavailable, timeout, and tool_error each cover several causes (server,
+    # plugin, missing tool, client transport, phase), so their meaning defers
+    # to Reason.
     "unavailable": (
         "failure",
         "The tool could not be used (server, plugin, or tool not available; "
         "see Reason).",
     ),
-    "timeout": ("failure", "The call did not finish within the time limit."),
+    "timeout": (
+        "failure",
+        "A time limit was exceeded while connecting, calling the tool, or waiting "
+        "on the JADX plugin (see Reason).",
+    ),
     "tool_error": ("failure", "The call failed with an error (see Reason)."),
     "malformed": ("failure", "The response did not match the expected format."),
     "invalid_input": (
@@ -1091,34 +1104,39 @@ def _render_html_external_tool_calls(calls: list[ExternalToolCall]) -> str:
     )
 
 
-def _render_html_external_tool_call(call: ExternalToolCall) -> str:
+def _external_call_meta(call: ExternalToolCall) -> list[tuple[str, str]]:
+    """Label and display value of each provenance item, shared by HTML and Markdown."""
+
     response_size = (
         f"{call.response_size_bytes:,} bytes"
         if call.response_size_bytes is not None
         else "(none)"
     )
     duration = f"{call.duration_ms:,} ms" if call.duration_ms is not None else "(none)"
-    items = [
+    return [
         *(
-            _render_html_meta(f"Argument: {key}", value)
+            (f"Argument: {key}", value or "(empty)")
             for key, value in call.arguments.items()
         ),
-        _render_html_meta("Target", call.target or "(not given)"),
-        _render_html_meta("Target Verified", str(call.target_verified)),
-        _render_html_meta(
-            "Target Statically Analyzed", str(call.target_statically_analyzed)
-        ),
-        _render_html_meta("Server URL", call.server_url),
-        _render_html_meta("Server Name", call.server_name or "(unknown)"),
-        _render_html_meta("Server Version", call.server_version or "(unknown)"),
-        _render_html_meta(
-            "Expected Release (configured)", call.expected_release or "(none)"
-        ),
-        _render_html_meta("Client SDK", call.client_sdk or "(unknown)"),
-        _render_html_meta("Called At", call.called_at),
-        _render_html_meta("Duration", duration),
-        _render_html_meta("Response Size", response_size),
-        _render_html_meta("Truncated", str(call.truncated)),
+        ("Target", call.target or "(not given)"),
+        ("Target Verified", str(call.target_verified)),
+        ("Target Statically Analyzed", str(call.target_statically_analyzed)),
+        ("Server URL", call.server_url),
+        ("Server Name", call.server_name or "(unknown)"),
+        ("Server Version", call.server_version or "(unknown)"),
+        ("Expected Release (configured)", call.expected_release or "(none)"),
+        ("Client SDK", call.client_sdk or "(unknown)"),
+        ("Called At", call.called_at),
+        ("Duration", duration),
+        ("Response Size", response_size),
+        ("Truncated", str(call.truncated)),
+    ]
+
+
+def _render_html_external_tool_call(call: ExternalToolCall) -> str:
+    items = [
+        _render_html_meta(label, _show_bidi_controls(value))
+        for label, value in _external_call_meta(call)
     ]
     group, meaning = EXTERNAL_STATUS_DISPLAY[call.status]
     truncated = (
@@ -1127,7 +1145,8 @@ def _render_html_external_tool_call(call: ExternalToolCall) -> str:
         else ""
     )
     reason = (
-        f"<p><strong>Reason:</strong> {_escape_html(call.reason)}</p>"
+        '<p class="external-reason"><strong>Reason:</strong> '
+        f"{_escape_html(_show_bidi_controls(call.reason))}</p>"
         if call.reason
         else ""
     )
@@ -1158,9 +1177,96 @@ def _render_html_external_content(call: ExternalToolCall) -> str:
     return (
         "<details>"
         f"<summary>{_escape_html(label)}</summary>"
-        f'<pre class="external-content">\n{_escape_html(call.content)}</pre>'
+        '<pre class="external-content">\n'
+        f"{_escape_html(_show_bidi_controls(call.content))}</pre>"
         "</details>"
     )
+
+
+# Unicode bidi controls (U+061C, U+200E-200F, U+202A-202E, U+2066-2069) can make
+# text display in a different order than it is stored (Trojan Source).
+_BIDI_CONTROLS = frozenset(
+    "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+)
+
+
+def _show_bidi_controls(text: str) -> str:
+    """Replace bidi controls in external values with visible ``\\uXXXX`` escapes."""
+
+    # Only bidi controls: other control characters such as tabs keep the source
+    # readable, and HTML cannot reorder text through them.
+    return "".join(
+        f"\\u{ord(char):04x}" if char in _BIDI_CONTROLS else char for char in text
+    )
+
+
+def escape_control_chars(text: str) -> str:
+    """Render non-printable characters, bidi controls included, as escapes."""
+
+    return "".join(char if char.isprintable() else repr(char)[1:-1] for char in text)
+
+
+def _render_markdown_external_tool_calls(calls: list[ExternalToolCall]) -> list[str]:
+    """Render MCP call status and provenance; the source stays in HTML and JSON."""
+
+    # Runs without an MCP call render nothing, so their Markdown stays unchanged.
+    if not calls:
+        return []
+    lines = [
+        "## External Tool Calls (jadx-ai-mcp)",
+        "",
+        "- Opt-in external MCP call records. They are not used for findings, "
+        "risk level, or review.",
+        "- NuriLab does not verify that the target matches the APK loaded in JADX-GUI.",
+        "- The jadx-ai-mcp target (an APK) is not a format supported by NuriLab "
+        "static analysis; the analysis results above do not cover it.",
+        "- Returned source is untrusted and is not shown in Markdown; use the "
+        "HTML or JSON report to see it.",
+        "",
+    ]
+    for call in calls:
+        _, meaning = EXTERNAL_STATUS_DISPLAY[call.status]
+        truncated = " (truncated)" if call.truncated else ""
+        lines.extend(
+            [
+                f"### {_markdown_code(call.tool)}",
+                "",
+                f"- Status: `{call.status}`{truncated} - {meaning}",
+                *(
+                    f"- {label}: {_markdown_code(value)}"
+                    for label, value in _external_call_meta(call)
+                ),
+                "",
+            ]
+        )
+        if call.reason:
+            lines.extend(["Reason:", "", *_markdown_code_block(call.reason), ""])
+    return lines
+
+
+def _markdown_code(value: str) -> str:
+    """Inline code span that external text cannot close or break across lines."""
+
+    text = escape_control_chars(value)
+    fence = "`" * (_longest_backtick_run(text) + 1)
+    pad = " " if text[:1] in ("`", " ") or text[-1:] in ("`", " ") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
+def _markdown_code_block(value: str) -> list[str]:
+    """Fenced block that keeps line breaks of external text but nothing else raw."""
+
+    lines = [escape_control_chars(line) for line in value.splitlines()]
+    fence = "`" * max(3, max(map(_longest_backtick_run, lines), default=0) + 1)
+    return [f"{fence}text", *lines, fence]
+
+
+def _longest_backtick_run(text: str) -> int:
+    longest = run = 0
+    for char in text:
+        run = run + 1 if char == "`" else 0
+        longest = max(longest, run)
+    return longest
 
 
 def _external_tool_call_css(calls: list[ExternalToolCall]) -> str:
@@ -1177,6 +1283,7 @@ def _external_tool_call_css(calls: list[ExternalToolCall]) -> str:
     .finding.external-call.status-warning { border-left-color: var(--medium); }
     .finding.external-call.status-failure { border-left-color: var(--high); }
     .finding.external-call.status-not-called { border-left-color: var(--muted); }
+    .external-reason { white-space: pre-wrap; overflow-wrap: anywhere; }
     .external-call summary { cursor: pointer; font-weight: 700; }
     .external-content {
       margin: 10px 0 0;

@@ -662,8 +662,8 @@ def test_html_report_shows_failed_external_call_without_source() -> None:
         "see Reason).</p>"
     ) in html
     assert (
-        "<p><strong>Reason:</strong> connect failed: ConnectError: "
-        "All connection attempts failed</p>"
+        '<p class="external-reason"><strong>Reason:</strong> connect failed: '
+        "ConnectError: All connection attempts failed</p>"
     ) in html
     assert '<span class="label">Target</span><code>(not given)</code>' in html
     assert '<span class="label">Server Name</span><code>(unknown)</code>' in html
@@ -1131,3 +1131,175 @@ def test_html_report_adds_truncated_badge_only_to_truncated_source() -> None:
     assert (
         '<span class="badge external-status status-ok">success</span> ' + badge
     ) in cut
+
+
+_MARKDOWN_REPORT_BUILDERS = pytest.mark.parametrize(
+    ("build_report", "last_section"),
+    [
+        (_build_single_file_report, "## Findings"),
+        (
+            lambda: _build_project_json_contract_report("/tmp/json_project"),
+            "## Ruff Findings",
+        ),
+    ],
+    ids=["file", "project"],
+)
+
+
+@_MARKDOWN_REPORT_BUILDERS
+def test_markdown_report_adds_external_tool_calls_only_when_recorded(
+    build_report, last_section: str
+) -> None:
+    """Markdown-only runs keep MCP status and reason; others stay unchanged."""
+
+    report = build_report()
+    baseline = ReportGenerator().to_markdown(report)
+    assert "External Tool Calls" not in baseline
+
+    report.external_tool_calls = [_jadx_mcp_unavailable_call()]
+    markdown = ReportGenerator().to_markdown(report)
+
+    assert markdown.startswith(baseline)
+    section_at = markdown.index("## External Tool Calls (jadx-ai-mcp)")
+    assert markdown.index(last_section) < section_at
+    assert "They are not used for findings, risk level, or review." in markdown
+    assert "does not verify that the target matches the APK" in markdown
+    assert "the analysis results above do not cover it." in markdown
+    meaning = EXTERNAL_STATUS_DISPLAY["unavailable"][1]
+    assert f"- Status: `unavailable` - {meaning}\n" in markdown
+    assert "- Server URL: `http://127.0.0.1:8659/mcp`\n" in markdown
+    assert "- Server Name: `(unknown)`\n" in markdown
+    assert "- Target Verified: `False`\n" in markdown
+    assert (
+        "Reason:\n\n```text\n"
+        "connect failed: ConnectError: All connection attempts failed\n```\n"
+    ) in markdown
+
+
+def test_markdown_report_omits_external_source() -> None:
+    """Untrusted source stays in HTML and JSON; Markdown shows its size only."""
+
+    report = _build_single_file_report()
+    report.external_tool_calls = [_jadx_mcp_success_call()]
+
+    markdown = ReportGenerator().to_markdown(report)
+
+    assert "package com.nurilab.mcpprobe" not in markdown
+    assert "- Status: `success` - The tool returned source.\n" in markdown
+    assert "- Response Size: `50 bytes`\n" in markdown
+    assert "use the HTML or JSON report to see it" in markdown
+    assert "Reason:" not in markdown
+
+
+def test_markdown_report_keeps_untrusted_external_values_inert() -> None:
+    """Server values cannot close their code span or fence, or hide characters."""
+
+    hostile = "``a`b\n## Injected\u202e[x](http://evil)"
+    report = _build_single_file_report()
+    report.external_tool_calls = [
+        _external_call(
+            "tool_error",
+            server_name=hostile,
+            reason=f"first line\n```\n# Injected heading\n{hostile}",
+            truncated=True,
+        )
+    ]
+
+    markdown = ReportGenerator().to_markdown(report)
+
+    assert (
+        "- Server Name: ``` ``a`b\\n## Injected\\u202e[x](http://evil) ```\n"
+    ) in markdown
+    assert "- Status: `tool_error` (truncated) - " in markdown
+    assert (
+        "Reason:\n\n````text\nfirst line\n```\n# Injected heading\n"
+        "``a`b\n## Injected\\u202e[x](http://evil)\n````\n"
+    ) in markdown
+    assert "\u202e" not in markdown
+
+
+def test_reports_show_empty_external_argument_as_placeholder() -> None:
+    """An empty class name cannot leave a bare backtick pair in Markdown."""
+
+    report = _build_single_file_report()
+    report.external_tool_calls = [
+        _external_call("invalid_input", arguments={"class_name": ""})
+    ]
+
+    markdown = ReportGenerator().to_markdown(report)
+    html = ReportGenerator().to_html(report)
+
+    assert "- Argument: class_name: `(empty)`\n" in markdown
+    assert (
+        '<span class="label">Argument: class_name</span><code>(empty)</code>'
+    ) in html
+
+
+def test_report_generator_writes_markdown_only_with_external_tool_call(
+    tmp_path: Path,
+) -> None:
+    """An md-only run still leaves the MCP failure in a report file."""
+
+    report = _build_single_file_report()
+    report.external_tool_calls = [_jadx_mcp_unavailable_call()]
+
+    output_paths = ReportGenerator().write(report, tmp_path, formats=["md"])
+
+    assert set(output_paths) == {"md"}
+    markdown = output_paths["md"].read_text(encoding="utf-8")
+    assert "## External Tool Calls (jadx-ai-mcp)" in markdown
+    assert "connect failed: ConnectError" in markdown
+
+
+def test_html_report_shows_bidi_controls_in_external_values() -> None:
+    """Bidi controls cannot reorder shown text; other characters stay as-is."""
+
+    trojan = "a\u202eb\u2066c\tq"
+    html = _render_external_calls(
+        _external_call(
+            "success",
+            server_name=trojan,
+            reason=trojan,
+            content=f"class A {{ // {trojan} }}",
+        )
+    )
+
+    assert "\u202e" not in html
+    assert "\u2066" not in html
+    shown = "a\\u202eb\\u2066c\tq"
+    assert f'<span class="label">Server Name</span><code>{shown}</code>' in html
+    assert f"<strong>Reason:</strong> {shown}</p>" in html
+    assert _shown_external_content(html) == [f"class A {{ // {shown} }}"]
+
+
+def test_html_report_keeps_line_breaks_in_external_reason() -> None:
+    """A multi-line reason wraps as written instead of joining into one line."""
+
+    html = _render_external_calls(
+        _external_call("tool_error", reason="first line\nsecond line")
+    )
+
+    assert (
+        '<p class="external-reason"><strong>Reason:</strong> '
+        "first line\nsecond line</p>"
+    ) in html
+    assert ".external-reason { white-space: pre-wrap;" in html
+
+
+@pytest.mark.parametrize(
+    ("status", "causes"),
+    [
+        ("not_found", ["HTTP 404", "not in the APK", "plugin path mismatch"]),
+        ("timeout", ["connecting", "calling the tool", "JADX plugin"]),
+    ],
+)
+def test_external_status_meaning_names_every_cause(
+    status: str, causes: list[str]
+) -> None:
+    """Statuses with several causes do not claim a single one."""
+
+    meaning = EXTERNAL_STATUS_DISPLAY[status][1]
+
+    for cause in causes:
+        assert cause in meaning
+    assert "see Reason" in meaning

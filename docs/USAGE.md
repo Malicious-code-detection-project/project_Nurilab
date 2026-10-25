@@ -150,8 +150,11 @@ JSON/schema 파싱 실패 시에는 응답 content의 최대 200자 preview가 �
 
 THE-154·THE-155에서 구현한 실험적 연결입니다. 호출 기록은 아래 터미널 출력, JSON 보고서의
 최상위 `external_tool_calls`, HTML 보고서 끝의 `External Tool Calls (jadx-ai-mcp)`
-섹션에서 확인할 수 있습니다. 선택 출력인 Markdown 보고서에는 MCP 호출 기록을
-표시하지 않습니다. 계약과 실측 기록은
+섹션에서 확인할 수 있습니다. 선택 출력인 Markdown 보고서에도 끝에 같은 이름의 섹션으로
+상태·사유·출처 항목을 남기며, 받은 소스는 HTML·JSON 보고서에만 담습니다. 보고서의
+`server_url`에는 `--jadx-mcp-url`의 사용자 정보(`user:token@`)·query·fragment를 빼고
+기록하며, 사용자 정보를 확실히 가려낼 수 없는 URL은 `(unparsable URL omitted)`로
+대신합니다. 계약과 실측 기록은
 [THE-151 연결 계약](THE-151_jadx_mcp_contract.md)을 참조하세요.
 
 `--jadx-mcp-class`는 이미 실행 중인 `jadx-mcp-server`에만 접속합니다. NuriLab은

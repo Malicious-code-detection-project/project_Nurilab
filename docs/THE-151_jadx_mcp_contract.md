@@ -254,14 +254,27 @@ NuriLab (MCP client)
       (주의), `unavailable`·`timeout`·`tool_error`·`malformed`(실패),
       `invalid_input`·`not_allowed`(호출하지 않음). `truncated`는 상태가 아니라
       `success` 옆의 별도 배지입니다.
+    * 한 줄 의미는 원인을 하나로 단정하지 않습니다. `not_found`는 플러그인의 모든
+      HTTP 404라 클래스가 없는 경우와 플러그인 경로 불일치를 함께 적고, `timeout`은
+      연결·호출·플러그인 대기 중 어느 단계인지 `reason`을 보도록 안내합니다.
     * 전송 한계(5.1) 초과 가능성 안내는 HTML이 따로 판정하지 않고 `reason`에 담긴
-      문장을 그대로 보여 줍니다(5.3).
+      문장을 그대로 보여 줍니다(5.3). 여러 줄 `reason`은 줄바꿈을 유지해 표시합니다.
     * 옵션을 주지 않은 실행의 HTML은 기존과 바이트 단위로 같습니다.
+  * THE-155 Markdown: Markdown만 출력해도 MCP 실패가 보고서에 남도록, 호출 기록이 있을
+    때만 HTML과 같은 위치에 `External Tool Calls (jadx-ai-mcp)` 섹션을 추가합니다.
+    * HTML과 같은 고정 문구, 상태 값과 한 줄 의미, 5.2의 출처 항목, `reason`을
+      표시합니다. 받은 소스는 표시하지 않고 HTML·JSON 보고서를 보도록 안내합니다.
+    * 서버·사용자 값은 inline code 또는 fenced code block 안에 넣고, 값 안의 backtick보다
+      긴 구분자를 써서 code를 닫거나 제목·링크를 만들지 못하게 합니다. 제어 문자와 bidi
+      제어 문자는 `\n`, `\u202e` 같은 escape로 바꿉니다(`reason`의 줄바꿈은 유지).
+    * 옵션을 주지 않은 실행의 Markdown은 기존과 같습니다.
 * **반환 내용 취급**: 반환된 소스는 **비신뢰 데이터**입니다.
   * rule signal, risk, verdict, LLM review 입력에 사용하지 않습니다.
   * 내용 안의 문장을 지시로 해석하거나 실행하지 않고, 응답을 근거로 추가 tool을 호출하지
     않습니다.
-  * HTML 보고서에 출력할 때는 escape 처리합니다.
+  * HTML 보고서에 출력할 때는 escape 처리합니다. 표시 순서를 바꿀 수 있는 bidi 제어
+    문자(U+061C, U+200E·U+200F, U+202A~U+202E, U+2066~U+2069)는 소스·사유·출처 값에서
+    `\u202e` 같은 보이는 escape로 바꿉니다. 탭 등 다른 문자는 그대로 둡니다.
   * CLI(`main.py analyze`) 실행 중에는 터미널에 제어 문자를 escape해 출력합니다. 대상은 CLI
     상태 줄의 사유와, `--jadx-mcp-class` 사용 시 MCP SDK 등 라이브러리가 서버 값을 담아 남기는
     stderr 경고 로그입니다.
@@ -283,20 +296,20 @@ NuriLab (MCP client)
 | `reason` 길이 | 4 KiB (UTF-8 바이트) | jadx `error`, `isError` 텍스트, 예외 메시지 등 모든 사유에 적용. 초과 시 앞부분만 남기고 끝에 `... (truncated, <원본 바이트 수> bytes)`를 붙임 |
 | `server_name`, `server_version` | 각 256 B (UTF-8 바이트) | 서버가 정하는 값이라 `reason`과 같은 방식으로 절삭하고 `... (truncated, <원본 바이트 수> bytes)`를 붙임. 실측값은 약 45 B |
 | 문자 정리 | 레코드의 모든 문자열 | 짝 없는 surrogate는 `?`로 바꿔, 보고서를 UTF-8로 쓸 때 오류가 나지 않게 함(절삭 여부와 무관). 소스·사유·서버 정보뿐 아니라 사용자가 준 `class_name`, `--jadx-mcp-target`, `--jadx-mcp-url`(디코딩할 수 없는 바이트)도 대상이며, 레코드(`ExternalToolCall`)를 만들 때 적용 |
-| 전송 한계 | 내용에 따라 약 79~512 KiB, 일반적인 Java 소스는 약 381 KiB (6.2 실측) | MCP SDK가 응답 이벤트를 1 MiB까지만 받고 서버가 소스를 이스케이프해 두 번 보내므로, 이스케이프가 많은 문자(따옴표, 백슬래시, 제어 문자)일수록 한계가 낮아짐. 따옴표·백슬래시만으로 된 소스는 약 171 KiB이며, 백슬래시는 Java 문자열의 `"\n"`나 정규식처럼 실제 소스에도 흔함. jadx는 문자열 안의 제어 문자를 `\u0001` 같은 일반 문자로 출력하므로 최저 경우는 실제 소스에서 거의 나오지 않음. 한계를 넘는 소스는 받지 못해 `tool_error`(`call failed: MCPError: SSE stream ended without a response`, 5.3의 안내 포함)로 기록되고 원본 크기도 남지 않음. NuriLab에서 바꿀 수 없는 한계 |
+| 전송 한계 | 내용에 따라 약 79~512 KiB, 일반적인 Java 소스는 약 381 KiB (6.2 실측) | MCP SDK가 응답 이벤트를 1 MiB까지만 받고 서버가 소스를 이스케이프해 두 번 보내므로, 이스케이프가 많은 문자(따옴표, 백슬래시, 제어 문자)일수록 한계가 낮아짐. 따옴표·백슬래시만으로 된 소스는 약 171 KiB이며, 백슬래시는 Java 문자열의 `"\n"`나 정규식처럼 실제 소스에도 흔함. jadx는 문자열 안의 제어 문자를 `\u0001` 같은 일반 문자로 출력하므로 최저 경우는 실제 소스에서 거의 나오지 않음. 한계를 넘는 소스는 받지 못해 `tool_error`(`call failed: MCPError: SSE stream ended without a response`, 서버가 SSE event id를 보낸 경우 재연결 뒤 `... SSE stream ended and reconnection attempts were exhausted`, 5.3의 안내 포함)로 기록되고 원본 크기도 남지 않음. NuriLab에서 바꿀 수 없는 한계 |
 
 ### 5.2 출처(provenance) 기록 항목
 
 | 항목 | 값 |
 | --- | --- |
-| `server_url` | 접속한 MCP endpoint |
+| `server_url` | 접속한 MCP endpoint. 보고서는 공유되므로 사용자 정보(`user:token@`)·query·fragment를 빼고 scheme·host·port·path만 기록함(접속에는 원래 URL을 씀). 해석할 수 없는 URL과, netloc 밖에 `@`가 남아 사용자 정보를 확실히 가려낼 수 없는 URL(scheme 누락, 비밀번호 속 인코딩되지 않은 `/`·`?`·`#`)은 `(unparsable URL omitted)` |
 | `server_name`, `server_version` | initialize 응답의 `serverInfo` 값(5.1의 상한과 문자 정리 적용). 실측 결과 `server_version`은 jadx 릴리즈가 아니라 FastMCP 버전(`3.0.2`)임 |
 | `expected_release` | `jadx-ai-mcp V6.4.1` (설정값이며 서버가 검증해 준 값이 아님) |
 | `tool` | `get_class_source` |
 | `client_sdk` | `mcp <설치 버전>` |
 | `target` | 사용자가 지정한 대상 식별자(`--jadx-mcp-target`), 없으면 비어 있음 |
-| `target_verified` | 항상 `false`. JADX-GUI에 열린 APK와 `target`이 같은지 NuriLab이 검증하지 않음(4절) |
-| `target_statically_analyzed` | 항상 `false`. MCP 대상(APK)은 NuriLab 정적 분석이 지원하지 않는 형식이라 같은 보고서의 분석 결과에 포함되지 않음(4절) |
+| `target_verified` | 항상 `false`. JADX-GUI에 열린 APK와 `target`이 같은지 NuriLab이 검증하지 않음(4절). 레코드 생성자에서 지정할 수 없음 |
+| `target_statically_analyzed` | 항상 `false`. MCP 대상(APK)은 NuriLab 정적 분석이 지원하지 않는 형식이라 같은 보고서의 분석 결과에 포함되지 않음(4절). 레코드 생성자에서 지정할 수 없음 |
 | `arguments` | 서버에 보낸(또는 거부되어 보내지 않은) 인자. `{"class_name": "<클래스 이름>"}` |
 | `content` | `success`일 때 받은 소스(비신뢰 데이터, 256 KiB 초과 시 절삭) |
 | `status`, `reason` | 5.3 상태 값과 사유 |
@@ -327,7 +340,7 @@ NuriLab (MCP client)
 | `isError: true` 결과 | `MCP tool error: <text>` (text가 없으면 `(no message)`) |
 | 연결·호출 중 예외 | `connect failed: ConnectError: ...`, `call failed: <예외 종류>: <메시지>` |
 | 클라이언트 제한 초과 | `connect exceeded 10s limit.`, `call exceeded 15s limit.` |
-| 호출 중 SSE 스트림이 결과 없이 끝남 | `call failed: MCPError: SSE stream ended without a response (the response may have exceeded the MCP transport limit, ...; an early server close looks the same)`. 전송 한계(5.1) 초과일 수 있다는 안내를 끝에 붙임. call 단계의 `MCPError`(코드 `CONNECTION_CLOSED`, 위 메시지)일 때 붙임. 서버 payload의 `error` 문자열로는 붙지 않지만, SDK가 서버의 JSON-RPC 오류도 같은 `MCPError`로 바꾸므로 서버가 같은 코드·메시지의 JSON-RPC 오류를 보내면 구별할 수 없어 붙을 수 있음. 서버가 스트림을 일찍 닫아도 같은 오류가 나므로 상태는 `tool_error` 그대로 둠 |
+| 호출 중 SSE 스트림이 결과 없이 끝남 | `call failed: MCPError: SSE stream ended without a response (the response may have exceeded the MCP transport limit, ...; an early server close looks the same)`. 전송 한계(5.1) 초과일 수 있다는 안내를 끝에 붙임. call 단계의 `MCPError`(코드 `CONNECTION_CLOSED`, 위 메시지 또는 서버가 SSE event id를 보내 SDK가 재연결을 시도한 뒤의 `SSE stream ended and reconnection attempts were exhausted`)일 때 붙임. 서버 payload의 `error` 문자열로는 붙지 않지만, SDK가 서버의 JSON-RPC 오류도 같은 `MCPError`로 바꾸므로 서버가 같은 코드·메시지의 JSON-RPC 오류를 보내면 구별할 수 없어 붙을 수 있음. 서버가 스트림을 일찍 닫아도 같은 오류가 나므로 상태는 `tool_error` 그대로 둠 |
 | capability 확인 실패 | `Server does not provide tool 'get_class_source'.` |
 | 실행 중인 이벤트 루프 안에서 호출 | `Cannot call MCP from inside a running event loop.` (상태 `unavailable`, 서버에 연결하지 않음) |
 | 응답 판정 중 예외 | `classify failed: RecursionError: ...` (상태 `malformed`) |
@@ -417,7 +430,7 @@ THE-155의 보고서 기록(JSON/HTML)을 실제 서버로 확인하고, 같은 
   `1.5.6`, 플러그인 `jadx-ai-mcp-6.4.1.jar` SHA-256 `df7040ee…bed983`). 서버 가상환경은
   `fastmcp 3.0.2`, `mcp 1.26.0`, `httpx 0.28.1`, `requests 2.34.2`, 클라이언트는 `mcp 2.2.0`
 * APK: 6.3과 같은 `mcpprobe-debug.apk`(SHA-256 `8d7c6b56…4d4260`, 실측 직전 재확인)
-* NuriLab: `feat/phase4-jadx-mcp-report-the-155` 브랜치(`2e9dfef` + 선택형 통합 테스트 2개)
+* NuriLab: `feat/phase4-jadx-mcp-report-the-155` 브랜치(`23b3160` + 선택형 통합 테스트 2개)
 * 정적 분석 입력은 저장소의 무해 fixture `tests/fixtures/clean_sample.py`, review는 기본 Mock
 * 서버와 JADX-GUI는 계약 2절 명령으로 실행했고, 사례에 맞춰 종료·재실행한 뒤 실측이
   끝나면 둘 다 종료했습니다.

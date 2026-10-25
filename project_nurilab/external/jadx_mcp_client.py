@@ -59,9 +59,16 @@ class McpSession(Protocol):
         """Invoke one tool and return the raw MCP result."""
 
 
-# MCP SDK error for an SSE response stream that closed before the result. With
-# fastmcp 3.0.2 a source over the transport limit (THE-151 section 5.1) ends this way.
-_STREAM_ENDED_MESSAGE = "SSE stream ended without a response"
+# MCP SDK errors for an SSE response stream that closed before the result. With
+# fastmcp 3.0.2 a source over the transport limit (THE-151 section 5.1) ends this way;
+# the second message replaces the first when the server sent an SSE event id, since
+# the SDK then reconnects before giving up.
+_STREAM_ENDED_MESSAGES = frozenset(
+    {
+        "SSE stream ended without a response",
+        "SSE stream ended and reconnection attempts were exhausted",
+    }
+)
 TRANSPORT_LIMIT_NOTE = (
     " (the response may have exceeded the MCP transport limit, about 381 KiB for "
     "Java-like source, so its size is unknown; an early server close looks the same)"
@@ -250,7 +257,7 @@ def _is_stream_ended(exc: BaseException) -> bool:
     return (
         isinstance(exc, MCPError)
         and exc.code == types.CONNECTION_CLOSED
-        and exc.message == _STREAM_ENDED_MESSAGE
+        and exc.message in _STREAM_ENDED_MESSAGES
     )
 
 
