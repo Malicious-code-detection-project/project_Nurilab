@@ -194,8 +194,7 @@ uv run mypy .
 
 초기 설계는 Gilbut의
 [A2A × MCP 멀티에이전트 오케스트레이션 실전 / Code_Vulnerability](https://github.com/gilbutITbook/080493/tree/main/Code_Vulnerability)를
-참고했습니다. 이는 책의 A2A × MCP 멀티에이전트 구조를 뜻하지 않습니다. 현재 앱은
-단일 프로세스 Python pipeline이며, MCP는 선택적으로 외부 서버에 접속하는
+참고하였으며, 단일 프로세스 Python pipeline이며, MCP는 선택적으로 외부 서버에 접속하는
 클라이언트로만 사용합니다.
 
 초기 설계도와 발표 Q&A, 당시의 가정 및 현재 결정과의 차이는
