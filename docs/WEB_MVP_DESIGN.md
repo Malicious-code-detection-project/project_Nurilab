@@ -1,6 +1,6 @@
 # NuriLab 웹 MVP 설계
 
-> 상태: 검토 중 (2026-10-21, [THE-158](https://linear.app/the-debugging-water-deer/issue/THE-158)). Owner가 이 문서의 PR을 병합하면 설계가 승인된 것으로 본다.
+> 상태: Owner가 이 문서를 추가한 PR([THE-158](https://linear.app/the-debugging-water-deer/issue/THE-158))을 병합하면 승인된 설계다. 작성 2026-10-21.
 > 작업 범위·상태·담당자는 Linear 에픽 [THE-157](https://linear.app/the-debugging-water-deer/issue/THE-157)과 하위 이슈가, 설계와 계약은 이 문서가 정본이다. 전체 범위는 [실행 계획](PLAN.md), 현재 구조는 [아키텍처](ARCHITECTURE.md)를 따른다.
 > 코드 줄 번호는 THE-155 병합 시점 기준이다. 코드가 바뀌면 함수 이름으로 찾는다.
 
@@ -28,7 +28,7 @@
 - **서버 시연:** 다른 PC 브라우저로 보여줄 때만 `NURILAB_WEB_HOST=0.0.0.0`으로 띄우고, 끝나면 내린다.
 - **개인 PC 임시 테스트:** 웹은 개인 PC에서 `127.0.0.1`로 띄우고 LLM은 SSH 터널 없이 서버 주소로 호출한다.
   - 서버 주소와 내부 IP가 커밋되지 않도록 `config.py`를 고치지 않고 `NURILAB_LLM_BASE_URL=http://<서버주소>:8000/v1`로 지정한다.
-  - 테스트 동안만 서버의 vLLM을 `--host 0.0.0.0`으로 띄운다.
+  - 테스트 동안만 서버의 vLLM을 `--host 0.0.0.0`으로 띄운다. 인증 없이 열리므로 테스트가 끝나면 바로 내리고, 가능하면 접근 IP를 제한한다.
 
 ## 2. 리뷰 모드 정책
 
@@ -62,6 +62,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
   - 기준 경로는 `expanduser().resolve()`한 뒤 비교한다. pipeline이 입력 경로를 같은 방식으로 바꿔(`pipeline.py`의 `run()`) 보고서에는 펼친 절대 경로만 들어가므로, 상대 경로·`~`·symlink가 든 기준은 일치하지 않아 서버 경로가 그대로 남는다.
   - 웹은 업로드를 담는 디렉터리(`NURILAB_WEB_DATA_DIR/<job_id>/upload/`)를 기준으로 그 접두어를 지운다. 단일 파일은 `file.py`, 폴더는 `myproj`와 `myproj/a.py`가 된다.
   - 단일 파일에서 파일 경로나 그 상위 폴더를 기준으로 삼지 않는다. LLM finding의 `file`은 빈 값이면 `analysis.path`, 상대 경로면 `Path(analysis.path).parent` 기준의 절대 경로가 되므로(`llm/review.py:319`~`:326`), 기준에 따라 `file.py/file.py`처럼 어긋난다.
+  - LLM finding의 `file`이 상대 경로로 기준 밖을 가리키면(`../notes.py` 등) `llm/review.py:313`·`:326`의 `resolve()` 결과가 업로드 디렉터리 밖이 되어 접두어 치환에서 빠진다. 단일 파일은 `../` 한 번, 폴더는 `../../`부터 해당한다. 치환 뒤에도 절대 경로로 남는 finding의 `file`은 파일 이름만 남긴다.
   - 테스트는 지금처럼 분석 루트를 `<ROOT>`로 바꾼다.
   - 치환 규칙은 `tests/test_external_regression.py`의 `_normalize_string()`을 옮겨 공용으로 쓰고, 테스트의 `normalize_report()`는 그 위에 얹는다. `generated_at` 제거는 테스트에 남긴다.
 - `_report_stem()`은 폴더 보고서면 `root_path`의 이름, 단일 파일 보고서면 `analysis.path`의 stem으로 파일명을 만든다. 두 경우 모두 치환 뒤에도 올바른지 확인한다.
@@ -90,6 +91,10 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 
 - `:286`의 finding 제목은 "Local LLM connection failed"지만 실제 연결 오류는 `:265`에서 먼저 잡히므로 `invalid_response`로 분리한다. finding 제목과 문구는 바꾸지 않는다.
 - 다섯 곳 모두 호출하는 `_local_llm_request_failure()`에 `failure_code`를 필수 인자로 추가해 빠짐없이 설정한다. finding 문구를 파싱해 실패를 판단하지 않는다.
+- 성공 경로도 각 client가 채운다.
+  - Mock: `ReviewResult`를 만드는 네 곳(`llm/review.py:124`, `:128`, `:144`, `:162`) 모두 `{"client": "mock", "model": null, "status": "ok", "failure_code": null}`이다. 읽지 못한 파일(skipped)의 리뷰도 Mock이 정상으로 만든 결과이므로 `ok`다.
+  - LLM 성공: `LocalLLMReviewClient.review()`가 `_parse_llm_review()` 결과를 받은 뒤(`:303`) `client=local`, 설정한 모델, `status=ok`로 채운다.
+- `ReviewResult`의 `reviewer` 기본값은 `None`이다. 두 client 밖에서 직접 만든 ReviewClient처럼 값을 넣지 않으면 보고서 JSON에는 `"reviewer": null`로 나간다. 웹은 Mock과 LLM client만 쓰므로 항상 값이 있다.
 - 리뷰를 만든 주체의 정보이므로 최상위가 아닌 `review` 안에 둔다. 따라서 `review` 키 고정 테스트(`tests/test_review_and_report.py:384`)를 갱신한다. 최상위에 두어도 `:318`의 최상위 키 고정 테스트가 바뀌므로 테스트 비용은 같다.
 
 ### 3.4 LLM 연결 확인
@@ -142,11 +147,12 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
   3. 같은 form에서 `review_mode`(`mock` / `local`, 기본 `mock`)를 꺼낸다.
   4. `local`이면 LLM 연결을 확인한다 (§2).
   5. 업로드 규칙으로 걸러내고 검증한다 (§6). 남은 `.py`가 분석 대상 파일 수 상한을 넘으면 `413 too_many_files`, 0개면 `422 no_python_files`다.
+- 총 크기 상한, 분석 대상 `.py` 파일 수 상한, `max_files` 안전 상한의 환경 변수 이름과 기본값은 THE-160에서 정해 이 문서와 `/api/upload-rules`에 반영한다.
 - 파일은 multipart 필드 `files`로 받는다. 기본 `append(name, file)`는 파일 이름만 보내 폴더 경로가 빠지므로, 브라우저는 `FormData.append("files", file, file.webkitRelativePath || file.name)`처럼 상대 경로를 세 번째 인자로 넘긴다.
 
 ### 4.3 오류 형태
 
-모든 오류는 `{"code": "...", "message": "..."}`로 응답한다. FastAPI 기본 형태(`{"detail": ...}`)는 쓰지 않고, `HTTPException`과 입력 검증 오류도 exception handler로 이 형태로 바꾼다. `message`는 사용자에게 보여줄 고정 문구이며 내부 경로나 예외 원문을 담지 않는다.
+모든 오류는 `{"code": "...", "message": "..."}`로 응답한다. FastAPI 기본 형태(`{"detail": ...}`)는 쓰지 않고, `HTTPException`과 입력 검증 오류도 exception handler로 이 형태로 바꾼다. `message`는 사용자에게 보여줄 고정 문구이며 내부 경로나 예외 원문을 담지 않는다. job id는 경로에서 문자열로 받아 직접 UUID 형식을 확인하고, FastAPI의 UUID 타입 검증(`422`)에 맡기지 않는다.
 
 | 코드 | HTTP | 상황 |
 | --- | --- | --- |
@@ -157,7 +163,9 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 | `too_many_files` | 413 | 걸러낸 뒤 `.py`가 분석 대상 파일 수 상한 초과 |
 | `no_python_files` | 422 | 걸러낸 뒤 `.py` 0개 |
 | `llm_unavailable` | 503 | `local`인데 LLM 연결 안 됨 |
-| `not_found` | 404 | 없는 job id |
+| `not_found` | 404 | 없는 job id, UUID 형식이 아닌 job id, 없는 경로 |
+| `method_not_allowed` | 405 | 경로는 있지만 허용하지 않는 메서드 |
+| `invalid_request` | 400 | 그 밖의 요청 검증 오류(`RequestValidationError`) |
 | `report_not_ready` | 409 | `queued`/`running` job의 보고서 요청 |
 | `report_unavailable` | 409 | `failed` job의 보고서 요청 |
 
@@ -167,7 +175,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 - job id는 UUID4다. 순번이면 `0.0.0.0` 시연 중 같은 망의 누구나 다른 사람의 보고서를 조회할 수 있다.
 - 응답 필드: `id`, `status`, `created_at`, `finished_at`, `upload_name`, `file_count`, `review`(`client`, `model`, `status`, `failure_code`), `risk_level`, `static_risk_level`, `error`(`failed`일 때 `{code, message}`, 아니면 `null`)
 - 위험도는 CLI와 같은 값을 쓰며 `completed`일 때만 채운다.
-  - `risk_level`: 보고서의 `review.risk_level`. CLI 터미널의 `Risk Level`(`cli.py:140`)과 같고, LLM 리뷰가 실패하면 `unknown`이다.
+  - `risk_level`: 보고서의 `review.risk_level`. CLI 터미널의 `Risk Level`(`cli.py:140`)과 같고, LLM 리뷰가 실패하면 `unknown`이다. Mock도 단일 파일을 읽지 못하면(skipped) `unknown`이므로(`llm/review.py:128`), LLM 실패 여부는 `risk_level`이 아니라 `review.status`(보고서의 `review.reviewer.status`)로만 판단한다.
   - `static_risk_level`: 폴더 업로드면 정적 분석의 `analysis.summary.risk_level`(폴더 HTML 보고서 상단 카드와 같은 값), 단일 파일이면 `null`이다.
 - job 실패 코드는 `analysis_error`(분석 중 예외)와 `interrupted`(서버 재시작으로 중단)다.
 
@@ -177,7 +185,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 
 - `project_nurilab/web/`에 FastAPI 앱과 정적 HTML/vanilla JS 한 페이지를 둔다. 기존 CLI(`analyze`)는 건드리지 않는다.
 - 공식 실행 명령은 `uv run python -m project_nurilab.web`(`web/__main__.py`) 하나다. 이 진입점이 `NURILAB_WEB_HOST`, `NURILAB_WEB_PORT`를 읽어 uvicorn을 띄운다. `uvicorn ...:app` 직접 실행은 앱 코드가 bind를 정할 수 없어 쓰지 않는다.
-- `fastapi`, `uvicorn`, `python-multipart`는 기본 `dependencies`에 추가한다. 별도 그룹으로 빼면 `uv sync --locked` 기본 설치에서 빠져 pytest와 mypy가 import 오류로 실패한다.
+- `fastapi`, `uvicorn`, `python-multipart`는 기본 `dependencies`에 추가한다. 별도 그룹으로 빼면 `[tool.uv] default-groups`에 따로 넣지 않는 한 `uv sync --locked` 기본 설치에서 빠져 pytest와 mypy가 import 오류로 실패한다. 이 저장소는 uv로만 설치·실행하므로 그 설정까지 관리할 실익이 작아, CLI만 쓰는 경우에도 함께 설치되는 것을 감수한다.
   - `uvicorn`, `python-multipart`는 이미 `mcp` 2.2.0을 통해 lock에 있다(starlette 1.7.0, uvicorn 0.54.0, python-multipart 0.0.32). 웹이 직접 쓰므로 명시만 한다.
   - 2026-10-21 scratch 복사본 확인 결과, `fastapi`를 추가하면 `fastapi` 0.156.4와 `annotated-doc`만 늘고 starlette는 그대로였다. 착수 시 다시 확인하고 W3 PR에 `uv.lock` diff를 기록한다.
   - `httpx`는 추가하지 않는다. Starlette 1.7 TestClient는 `mcp`가 끌어온 `httpx2`를 쓴다.
@@ -214,10 +222,11 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
   - 단일 파일: 경로 구분자가 없는 파일 1개다. 분석 대상과 업로드 이름은 그 파일이다.
   - 폴더: 모든 파일이 최상위 폴더 하나 아래에 있다. 분석 루트와 업로드 이름은 그 폴더다.
 - `400 invalid_path`로 거부하는 경우:
-  - `..`, 절대 경로, 드라이브 문자, 빈 이름이나 빈 경로 조각
+  - `..`, 절대 경로, 드라이브 문자(`C:/` 등), 빈 이름이나 빈 경로 조각
   - 백슬래시(`\`), NUL 문자
   - 같은 상대 경로가 두 번 이상 온 경우
   - 최상위 폴더가 둘 이상, 파일과 폴더가 섞임, 경로 없는 파일이 2개 이상
+- `C:\evil\x.py`, `\\host\share\x.py`처럼 `X:\`나 `\\`로 시작하는 이름은 python-multipart가 핸들러에 넘기기 전에 파일 이름(`x.py`)만 남긴다(IE6 대응 코드). 이 경우는 따로 거부하지 않고 잘린 이름에 같은 규칙을 적용한다. 폴더 업로드에 섞이면 "파일과 폴더가 섞임"으로 `400`이 된다.
 - 업로드 파일은 실행하거나 import하지 않는다. 분석은 기존 AST 정적 분석뿐이다.
 
 ## 7. 화면
@@ -227,6 +236,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 - "LLM 리뷰 사용" 토글은 기본 꺼짐(Mock)이다. 켜면 `/api/llm-status`로 연결 상태와 모델 이름을 표시하고, 연결할 수 없으면 실행 버튼을 막고 안내를 띄운다.
 - 상태는 polling으로 조회한다.
 - 위험도, 요약, finding을 표시하며 문자열은 `textContent`로만 렌더링한다.
+- `review.status=failed`이면 `source=local_llm`인 finding의 `reason` 원문 대신 고정 문구를 보여준다(§7.3). `0.0.0.0` 시연에서 endpoint URL과 예외 원문이 보이지 않도록 W3부터 적용한다.
 - 대표 위험도는 CLI 터미널과 같은 `risk_level`(§4.4)이다. 폴더 업로드면 폴더 HTML 보고서처럼 정적 위험도(`static_risk_level`)도 함께 표시한다.
 - JSON/HTML 보고서는 다운로드로 제공한다.
 
@@ -240,7 +250,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 ### 7.3 LLM 실패 표시 (W4)
 
 - `review.reviewer.status=failed`이면 화면 상단에 "LLM 리뷰 실패, 정적 분석 결과만 유효" 경고와 `failure_code`별 고정 문구를 띄운다.
-- finding의 `reason` 원문은 화면에 보여주지 않는다. 원문에는 endpoint URL(개인 PC 테스트 때는 서버 내부 IP), `Cause: {exc}`, 응답 미리보기(HTTP 오류 최대 300자, LLM 응답 파싱 실패 최대 200자)가 들어 있다.
+- finding의 `reason` 원문은 화면에 보여주지 않는다(W3부터 적용, §7.1). 원문에는 endpoint URL(개인 PC 테스트 때는 서버 내부 IP), `Cause: {exc}`, 응답 미리보기(HTTP 오류 최대 300자, LLM 응답 파싱 실패 최대 200자)가 들어 있다.
 
 ### 7.4 XSS 방지 확인 (W4)
 
@@ -269,10 +279,10 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 - 걸러내기: `.py`가 아닌 파일과 제외 폴더 아래 파일은 버려짐, 최상위 폴더 이름이 제외 폴더와 같아도 분석됨
 - 리뷰 모드: Mock은 연결 확인 없이 실행, `local` + 연결됨이면 LLM으로 실행, `local` + 미연결이면 `503`이고 job이 생기지 않음, `/models`의 401·5xx·깨진 JSON도 `503 llm_unavailable`
 - 실패와 복구: 분석 예외 시 `failed`, 재시작 시 `queued`·`running`이 `failed`로 바뀌고 원본 삭제, 분석 완료 후 원본 삭제
-- 경로: `NURILAB_WEB_DATA_DIR`이 상대 경로이거나 symlink를 거쳐도 보고서 JSON·HTML에 서버 절대 경로가 남지 않음
-- 응답: 모든 오류가 `{code, message}` 형태, 미완료 보고서 `409 report_not_ready`, 실패 보고서 `409 report_unavailable`
+- 경로: `NURILAB_WEB_DATA_DIR`이 상대 경로이거나 symlink를 거쳐도, LLM finding이 `../` 경로를 돌려줘도 보고서 JSON·HTML에 서버 절대 경로가 남지 않음. `C:\…`·`\\host\…` 이름은 파일 이름으로 처리됨
+- 응답: 모든 오류가 `{code, message}` 형태, 미완료 보고서 `409 report_not_ready`, 실패 보고서 `409 report_unavailable`, 없는 경로·UUID 형식이 아닌 id `404 not_found`, 잘못된 메서드 `405 method_not_allowed`
 - 동시성: 느린 가짜 LLM으로 분석하는 동안에도 `/healthz`와 상태 조회가 응답하고, job이 동시에 하나만 실행됨
-- 수동 시연: Mock 경로, LLM 미연결 차단 안내, 가능하면 LLM 경로
+- 수동 시연: Mock 경로, LLM 미연결 차단 안내, 가능하면 LLM 경로, 분석 도중 LLM이 실패해도 화면에 endpoint URL과 `Cause:` 원문이 보이지 않음
 
 ### 8.3 W4
 
@@ -300,6 +310,7 @@ README와 USAGE에 적을 것:
 
 - 인증이 없다. UUID job id는 추측만 막을 뿐, 링크를 아는 사람은 누구나 볼 수 있다.
 - 다운로드한 보고서에는 LLM 실패 finding의 원문(§7.3)이 남는다.
+- 업로드 원본은 지우지만 보고서와 SQLite 기록은 자동으로 지우지 않는다. 필요하면 `NURILAB_WEB_DATA_DIR`을 수동으로 정리한다.
 - 분석은 프로세스 격리와 전체 timeout 없이 실행된다.
 - 웹에서는 Ruff를 실행하지 않는다.
 - `.py`가 0개인 업로드는 CLI와 달리 거부된다.
