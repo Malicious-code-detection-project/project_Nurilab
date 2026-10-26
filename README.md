@@ -8,7 +8,9 @@ Project NuriLab은 로컬 환경에서 Python 소스의 정적 보안 신호를 
 이 프로젝트가 지향하는 장기 방향은 폐쇄적 환경에서도 사용할 수 있는
 의심 파일·소스 분석 보조 시스템입니다. 다만 현재 제품 계약은 **Python 정적 분석과
 선택적 Local LLM review**입니다. 코드의 악성 여부를 확정하거나 입력을 실행하지
-않습니다.
+않습니다. 실험적 opt-in 기능으로 이미 실행 중인 외부
+[jadx-ai-mcp](https://github.com/zinja-coder/jadx-ai-mcp) 서버의 읽기 전용 tool을
+호출해 그 기록을 보고서에 남길 수 있지만, 이 결과는 판정에 쓰지 않습니다.
 
 ## 배경과 원칙
 
@@ -40,12 +42,16 @@ flowchart TD
     L <-->|OpenAI-compatible API| S[외부 vLLM 서버]
     M --> P[보고서 생성]
     L --> P
+    X[선택적 jadx-ai-mcp 호출<br/>--jadx-mcp-class] -.->|호출 기록| P
+    X <-.->|MCP streamable HTTP| J[외부 jadx-mcp-server]
     P --> O[HTML · JSON · 선택적 Markdown]
 ```
 
 단일 파일은 분석 결과를 곧바로 review로 전달합니다. 디렉터리 입력은 파일별 분석을
-`ResultAggregator`가 프로젝트 요약으로 집계한 뒤 review합니다. 모듈별 책임과
-데이터 계약, 실패 경계는 [아키텍처 문서](docs/ARCHITECTURE.md)에 설명합니다.
+`ResultAggregator`가 프로젝트 요약으로 집계한 뒤 review합니다. `--jadx-mcp-class`를
+준 경우에만 review 뒤에 외부 MCP tool을 한 번 호출하고, 그 상태와 출처를 보고서의
+별도 영역에 기록합니다. 모듈별 책임과 데이터 계약, 실패 경계는
+[아키텍처 문서](docs/ARCHITECTURE.md)에 설명합니다.
 
 ```text
 project_nurilab/
@@ -53,6 +59,7 @@ project_nurilab/
 ├── analyzers/      # AST, 위험 호출, secret, Ruff 신호
 ├── aggregation/    # 프로젝트 summary와 risk 집계
 ├── llm/            # Mock / Local review client
+├── external/       # 외부 MCP tool 계약 판정과 client (실험적)
 ├── reports/        # HTML, JSON, Markdown 렌더링
 ├── schemas.py      # 단계 사이 데이터 계약
 ├── pipeline.py     # 분석 흐름 조정
@@ -65,6 +72,7 @@ project_nurilab/
 | 입력·정적 분석 | Python 소스 수집과 재현 가능한 위험 신호 생성 |
 | 집계 | 파일별 결과를 프로젝트 요약으로 결합 |
 | 리뷰 | Mock 또는 외부 Local LLM으로 신호를 해석 |
+| 외부 MCP (실험적) | 허용한 읽기 전용 tool 호출과 상태·출처 기록 |
 | 보고서 | 같은 결과를 HTML/JSON/선택적 Markdown으로 표현 |
 
 저장소의 `tests/`는 회귀 검증, `docs/`는 운영·설계 문서,
@@ -140,18 +148,26 @@ Local LLM에는 원본 source text가 아니라 정규화된 정적 분석 paylo
 - secret 탐지는 후보 신호이며, 실제 secret 또는 악성 여부의 판정이 아닙니다.
 - 기본값은 Mock입니다. Local LLM을 선택한 상태에서 서버가 없으면 실패 finding을
   남기며 Mock 성공으로 바꾸지 않습니다.
+- jadx-ai-mcp 연동은 실험적 opt-in이며 `get_class_source` 한 번만 호출합니다.
+  대상 APK는 NuriLab 정적 분석 범위가 아니고, JADX-GUI에 열린 APK와
+  `--jadx-mcp-target`이 일치하는지 검증하지 않습니다. 받은 결과는 비신뢰 보조
+  기록이며 finding, risk level, review 입력에 쓰지 않습니다.
 - remediation 코드 생성, 동적 분석, 실제 악성 샘플 실행, 이 저장소에서의
   파인튜닝은 현재 범위가 아닙니다.
 
 ## 로드맵과 MCP 연동
 
 현재 작업 순서와 완료 조건은 [개발 로드맵](docs/PLAN.md), 실제 상태는 Linear
-`The Debugging Water Deer` 팀의 `Nurilab` 프로젝트가 정본입니다. 다음 개발은
-사용자가 선정한 [jadx-ai-mcp](https://github.com/zinja-coder/jadx-ai-mcp)의 외부 도구를
-NuriLab에서 호출하는 MCP 클라이언트 연결입니다. 예정 순서는
-`THE-151` tool contract, `THE-154` 연결, `THE-155` report 반영입니다. `THE-154`
-연결과 `THE-155` report 표시는 실험적 옵션으로 구현되었습니다(사용법은
-[사용 가이드](docs/USAGE.md)). RAG와 Sandbox 구축·연동은 제외합니다. 파인튜닝 방향과 실행은
+`The Debugging Water Deer` 팀의 `Nurilab` 프로젝트가 정본입니다.
+
+사용자가 선정한 [jadx-ai-mcp](https://github.com/zinja-coder/jadx-ai-mcp)를 NuriLab에서
+호출하는 MCP 클라이언트 연결(`THE-150`)은 `THE-151` 연결 계약, `THE-154` 연결,
+`THE-155` 보고서 기록과 실패·반복 호출 검증까지 실험적 opt-in 기능으로
+구현했습니다. 사용법은 [사용 가이드](docs/USAGE.md), 계약과 실측 기록은
+[THE-151 연결 계약](docs/THE-151_jadx_mcp_contract.md)을 참조하세요. 다음 개발 범위는
+Linear에서 정합니다.
+
+RAG와 Sandbox 구축·연동은 제외합니다. 파인튜닝 방향과 실행은
 별도 프로젝트에서 재검토하며, NuriLab에는 준비된 외부 모델의 API 연결만 후속
 `THE-80`으로 남깁니다. 모델 준비는 MCP 연동의 선행 조건이 아닙니다.
 
@@ -178,8 +194,8 @@ uv run mypy .
 
 초기 설계는 Gilbut의
 [A2A × MCP 멀티에이전트 오케스트레이션 실전 / Code_Vulnerability](https://github.com/gilbutITbook/080493/tree/main/Code_Vulnerability)를
-참고했습니다. 이는 현재 MCP 구현을 뜻하지 않으며, 현재 앱은 단일 프로세스 Python
-pipeline입니다.
+참고하였으며, 단일 프로세스 Python pipeline이며, MCP는 선택적으로 외부 서버에 접속하는
+클라이언트로만 사용합니다.
 
 초기 설계도와 발표 Q&A, 당시의 가정 및 현재 결정과의 차이는
 [역사 기록](docs/HISTORY.md)에 보존합니다. 과거 문서는 현재 제품 계약을 대체하지
