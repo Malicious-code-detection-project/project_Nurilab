@@ -176,7 +176,8 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 - 응답 필드: `id`, `status`, `created_at`, `finished_at`, `upload_name`, `file_count`, `review`(`client`, `model`, `status`, `failure_code`), `risk_level`, `static_risk_level`, `error`(`failed`일 때 `{code, message}`, 아니면 `null`)
 - 위험도는 CLI와 같은 값을 쓰며 `completed`일 때만 채운다.
   - `risk_level`: 보고서의 `review.risk_level`. CLI 터미널의 `Risk Level`(`cli.py:140`)과 같고, LLM 리뷰가 실패하면 `unknown`이다. Mock도 단일 파일을 읽지 못하면(skipped) `unknown`이므로(`llm/review.py:128`), LLM 실패 여부는 `risk_level`이 아니라 `review.status`(보고서의 `review.reviewer.status`)로만 판단한다.
-  - `static_risk_level`: 폴더 업로드면 정적 분석의 `analysis.summary.risk_level`(폴더 HTML 보고서 상단 카드와 같은 값), 단일 파일이면 `null`이다.
+  - `static_risk_level`: 정적 분석 위험도다. 폴더 업로드면 `analysis.summary.risk_level`(폴더 HTML 보고서 상단 카드와 같은 값)이다. 단일 파일이면 집계기가 폴더 안의 파일마다 쓰는 규칙(`aggregation/result_aggregator.py`의 `_summarize_file()`·`_derive_file_risk()`)으로 계산한다. 위험 호출, secret, 문법 오류(`medium`), Ruff 결과의 severity 중 가장 높은 값이고, 신호가 없으면 `low`, 읽지 못한 파일이면 `unknown`이다.
+  - 단일 파일 계산은 웹에서 규칙을 다시 짜지 않고, 집계기의 규칙을 공용 함수로 꺼내 집계기와 웹이 함께 쓴다(W3). 계산한 값은 웹 응답과 SQLite에만 넣고 보고서 JSON·HTML에는 넣지 않으므로 CLI 출력은 바뀌지 않는다.
 - job 실패 코드는 `analysis_error`(분석 중 예외)와 `interrupted`(서버 재시작으로 중단)다.
 
 ## 5. 웹 실행 구조 (W3)
@@ -206,7 +207,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 - 앱 시작 시 `NURILAB_WEB_DATA_DIR`을 `expanduser().resolve()`한 절대 경로로 한 번 바꾸고, 업로드 저장·pipeline 입력·경로 치환 기준(§3.2)에 모두 이 값을 쓴다. 펼치지 않은 `~`를 쓰면 업로드는 현재 디렉터리 아래 `~` 폴더에 저장되고 pipeline은 홈 경로를 찾아 모든 job이 `failed`가 된다.
 - 분석이 끝나면(성공·실패 모두) 업로드 원본을 바로 삭제하고 보고서만 남긴다.
 - SQLite는 파일 하나, 테이블 하나다.
-  - 컬럼: id, 상태, 실패 코드, 생성·완료 시각, 업로드 이름, 파일 수, 리뷰 종류, 리뷰 모델, 리뷰 상태, 리뷰 실패 코드, 리뷰 위험도, 정적 위험도(폴더만, 단일 파일은 NULL), 보고서 경로
+  - 컬럼: id, 상태, 실패 코드, 생성·완료 시각, 업로드 이름, 파일 수, 리뷰 종류, 리뷰 모델, 리뷰 상태, 리뷰 실패 코드, 리뷰 위험도, 정적 위험도, 보고서 경로
   - 응답 필드(§4.4)는 보고서 JSON을 다시 읽지 않고 이 컬럼만으로 채운다.
   - 리뷰 상태·실패 코드 컬럼은 W4에서 쓰지만 테이블 구조를 나중에 바꾸지 않도록 처음부터 만든다.
   - 여러 스레드가 접근하므로 접근할 때마다 연결을 새로 열거나, 연결 하나에 잠금을 둔다.
@@ -237,7 +238,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 - 상태는 polling으로 조회한다.
 - 위험도, 요약, finding을 표시하며 문자열은 `textContent`로만 렌더링한다.
 - `review.status=failed`이면 `source=local_llm`인 finding의 `reason` 원문 대신 고정 문구를 보여준다(§7.3). `0.0.0.0` 시연에서 endpoint URL과 예외 원문이 보이지 않도록 W3부터 적용한다.
-- 대표 위험도는 CLI 터미널과 같은 `risk_level`(§4.4)이다. 폴더 업로드면 폴더 HTML 보고서처럼 정적 위험도(`static_risk_level`)도 함께 표시한다.
+- 대표 위험도는 CLI 터미널과 같은 `risk_level`(§4.4)이다. 정적 위험도(`static_risk_level`)도 함께 표시한다.
 - JSON/HTML 보고서는 다운로드로 제공한다.
 
 ### 7.2 출처 표시 (W4)
@@ -275,6 +276,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 ### 8.2 W3 TestClient
 
 - 정상 경로: 단일 `.py`, 중첩 폴더와 상대 경로 보존
+- 위험도: 단일 파일의 `static_risk_level`이 같은 파일을 폴더로 올렸을 때 집계기가 낸 파일 위험도와 같음, 보고서 JSON·HTML에는 이 값이 추가되지 않음
 - 거부: 경로 조작, 중복 경로, 최상위 폴더 2개 이상(`400 invalid_path`), multipart가 아닌 요청, 깨진 multipart와 안전 상한 초과(`400 invalid_upload`), `Content-Length` 초과(`413 too_large`), `.py` 수 초과(`413 too_many_files`), `.py` 0개(`422`)
 - 걸러내기: `.py`가 아닌 파일과 제외 폴더 아래 파일은 버려짐, 최상위 폴더 이름이 제외 폴더와 같아도 분석됨
 - 리뷰 모드: Mock은 연결 확인 없이 실행, `local` + 연결됨이면 LLM으로 실행, `local` + 미연결이면 `503`이고 job이 생기지 않음, `/models`의 401·5xx·깨진 JSON도 `503 llm_unavailable`
