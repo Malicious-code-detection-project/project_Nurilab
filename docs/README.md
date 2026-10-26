@@ -12,6 +12,7 @@
 | 상세 CLI 옵션·Local LLM 설정·오류 동작 | [사용 가이드](USAGE.md) |
 | 상세 실행 흐름·모듈 책임·데이터 및 실패 경계 | [아키텍처](ARCHITECTURE.md) |
 | 현재 개발 범위와 의존성 | [실행 계획](PLAN.md) |
+| 웹 MVP 설계·API 계약·검증 계획 | [웹 MVP 설계](WEB_MVP_DESIGN.md) |
 | 협업 규칙과 품질 검사 | [AGENTS](../AGENTS.md) |
 | 이슈·브랜치·검증·PR 절차 | [기여 가이드](CONTRIBUTING.md) |
 | 실제 진행 상태·담당자 | [Linear Nurilab](https://linear.app/the-debugging-water-deer/project/nurilab-0225bf5ed619) |

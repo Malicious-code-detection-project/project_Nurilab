@@ -164,8 +164,10 @@ Local LLM에는 원본 source text가 아니라 정규화된 정적 분석 paylo
 호출하는 MCP 클라이언트 연결(`THE-150`)은 `THE-151` 연결 계약, `THE-154` 연결,
 `THE-155` 보고서 기록과 실패·반복 호출 검증까지 실험적 opt-in 기능으로
 구현했습니다. 사용법은 [사용 가이드](docs/USAGE.md), 계약과 실측 기록은
-[THE-151 연결 계약](docs/THE-151_jadx_mcp_contract.md)을 참조하세요. 다음 개발 범위는
-Linear에서 정합니다.
+[THE-151 연결 계약](docs/THE-151_jadx_mcp_contract.md)을 참조하세요.
+
+다음 개발은 웹 분석 MVP(`THE-157`)입니다. 아직 구현 전이며, 범위와 설계는
+[개발 로드맵](docs/PLAN.md)과 [웹 MVP 설계](docs/WEB_MVP_DESIGN.md)를 따릅니다.
 
 RAG와 Sandbox 구축·연동은 제외합니다. 파인튜닝 방향과 실행은
 별도 프로젝트에서 재검토하며, NuriLab에는 준비된 외부 모델의 API 연결만 후속

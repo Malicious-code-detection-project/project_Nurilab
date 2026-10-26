@@ -4,7 +4,7 @@
 모듈 책임과 실패 경계를 설명합니다. 지원 범위와 빠른 실행은
 [`../README.md`](../README.md), CLI 및 Local LLM 설정은 [`USAGE.md`](USAGE.md)를
 참조하세요. 여기서 말하는 미래 연동은 구현 상태가 아니며 현재 동작을 설명하는
-문단과 구분합니다.
+문단과 구분합니다. 계획 중인 웹 계층은 마지막 절에 따로 적습니다.
 
 ## 시스템 경계
 
@@ -253,3 +253,26 @@ CLI --jadx-mcp-class
 별도 AegisLM endpoint 연결은 `THE-80`의 외부 LLM 백로그입니다. 기존
 OpenAI-compatible review 경계를 사용할 수 있는지 검토하는 항목이며 MCP 연동의
 선행 조건은 아닙니다.
+
+## 웹 계층 (계획, THE-157)
+
+웹 분석 MVP는 아직 구현되지 않았습니다. 설계와 계약은
+[웹 MVP 설계](WEB_MVP_DESIGN.md)가 정본이며, 이 절은 기존 구조 안에서 웹 계층이
+놓일 위치와 범위만 적습니다. 구현 뒤의 코드 구조 설명은 THE-162에서 갱신합니다.
+
+```text
+브라우저 (정적 HTML + vanilla JS)
+-> project_nurilab/web/: FastAPI 앱, 업로드 검증, job 대기열, SQLite 기록
+-> Phase1Pipeline.analyze(): 파일을 쓰지 않고 report 객체 반환 (THE-159에서 분리)
+-> 경로 상대화 함수 (reports/) -> ReportGenerator.write()
+```
+
+- 웹은 CLI와 같은 위치의 진입점입니다. `cli.py`처럼 얇게 두고 입력 수집, 분석,
+  review, 보고서 생성은 기존 모듈을 그대로 재사용합니다.
+- 입력은 CLI와 같이 `.py` 1개 또는 폴더이며, 업로드 원본은 분석이 끝나면 삭제합니다.
+- review는 CLI처럼 Mock이 기본이고 Local LLM은 명시적으로 켠 경우에만 이미 실행 중인
+  endpoint를 호출합니다. 웹은 LLM 서버를 시작하지 않습니다.
+- 분석은 전용 스레드 하나에서 한 번에 하나씩 실행합니다. 입력 코드를 실행하거나
+  import하지 않습니다.
+- 웹은 Ruff와 jadx-ai-mcp를 실행하지 않습니다.
+- 인증, 프로세스 격리, 배포 패키징은 이번 범위에 포함하지 않습니다.
