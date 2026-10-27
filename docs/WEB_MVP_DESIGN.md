@@ -285,7 +285,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 - 걸러내기: `.py`가 아닌 파일과 제외 폴더 아래 파일은 버려짐, 최상위 폴더 이름이 제외 폴더와 같아도 분석됨
 - 리뷰 모드: Mock은 연결 확인 없이 실행, `local` + 연결됨이면 LLM으로 실행, `local` + 미연결이면 `503`이고 job이 생기지 않음, `/models`의 401·5xx·깨진 JSON도 `503 llm_unavailable`
 - 실패와 복구: 분석 예외 시 `failed`, 재시작 시 `queued`·`running`이 `failed`로 바뀌고 원본 삭제, 분석 완료 후 원본 삭제
-- 경로: `NURILAB_WEB_DATA_DIR`이 상대 경로이거나 symlink를 거쳐도 보고서 JSON·HTML에 `NURILAB_WEB_DATA_DIR` 문자열이 남지 않음. 함께 넣을 경우는 job 폴더 밖까지 나간 LLM `../` 경로, LLM이 지어낸 절대 경로, 읽기 실패 사유, `.` 경로(빈 문자열)다. job 폴더 경로가 들어간 사용자 코드 문자열은 바뀌지 않음. `C:\…`·`\\host\…` 이름은 파일 이름으로 처리됨
+- 경로: `NURILAB_WEB_DATA_DIR`이 상대 경로이거나 symlink를 거쳐도 보고서 JSON·HTML에 `NURILAB_WEB_DATA_DIR` 문자열이 남지 않음. 함께 넣을 경우는 job 폴더 밖까지 나간 LLM `../` 경로, LLM이 지어낸 절대 경로, 읽기 실패 사유, `.` 경로(빈 문자열)다. 사용자 코드에 job 폴더 밖의 `NURILAB_WEB_DATA_DIR` 경로 문자열이 들어 있으면, 이 검사에서 그 문자열은 제외하고 원래 값 그대로 남는지 따로 확인함. `C:\…`·`\\host\…` 이름은 파일 이름으로 처리됨
 - 응답: 모든 오류가 `{code, message}` 형태, 미완료 보고서 `409 report_not_ready`, 실패 보고서 `409 report_unavailable`, 없는 경로·UUID 형식이 아닌 id `404 not_found`, 잘못된 메서드 `405 method_not_allowed`
 - 동시성: 느린 가짜 LLM으로 분석하는 동안에도 `/healthz`와 상태 조회가 응답하고, job이 동시에 하나만 실행됨
 - 수동 시연: Mock 경로, LLM 미연결 차단 안내, 가능하면 LLM 경로, 분석 도중 LLM이 실패해도 화면에 endpoint URL과 `Cause:` 원문이 보이지 않음
