@@ -65,9 +65,9 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
   - 기준 경로는 `expanduser().resolve()`한 뒤 비교한다. pipeline이 입력 경로를 같은 방식으로 바꿔(`pipeline.py`의 `analyze()`) 보고서에는 펼친 절대 경로만 들어가므로, 상대 경로·`~`·symlink가 든 기준은 일치하지 않아 서버 경로가 그대로 남는다.
   - 웹은 아래 순서로 세 번 거른다. 긴 기준부터 처리해야 하므로 순서를 바꾸지 않는다(3단계를 먼저 하면 `<data>/upload/a.py`가 된다).
     1. `relativize_report(report, <업로드 디렉터리>, "")`: 업로드를 담는 디렉터리(`NURILAB_WEB_DATA_DIR/<job_id>/upload/`) 접두어를 지운다. 단일 파일은 `file.py`, 폴더는 `myproj`와 `myproj/a.py`가 된다.
-    2. `name_absolute_finding_files(report, <업로드 디렉터리>)`: 그래도 절대 경로로 남은 리뷰 finding(`review.findings`)의 `file`은 파일 이름만 남긴다. POSIX와 Windows 형식(`C:\…`, `\\host\…`)의 절대 경로를 모두 대상으로 한다. 업로드 디렉터리 자체나 그 상위 폴더(`..`, `../..`, `/`, `..`을 섞어 쓴 절대 경로, Linux가 `/`와 같게 읽는 `//`로 시작하는 경로 포함)를 가리키면 파일 이름 대신 `None`으로 둔다. 파일 이름만 남기면 job UUID, 데이터 폴더 이름, 서버 사용자명 같은 상위 폴더 이름이 한 단계씩 드러나기 때문이다. 이름이 없는 경로(`C:\`)도 `None`이다. LLM finding의 `file`이 `../notes.py`처럼 기준 밖을 가리키면 `llm/review.py:313`·`:326`의 `resolve()` 결과가 업로드 디렉터리 밖이 되어 1단계에서 빠진다(단일 파일은 `../`부터, 폴더는 `../../`부터). job 폴더 밖까지 나간 경로와 LLM이 지어낸 절대 경로도 여기서 처리된다.
+    2. `name_absolute_finding_files(report, <업로드 디렉터리>)`: 그래도 절대 경로로 남은 리뷰 finding(`review.findings`)의 `file`은 파일 이름만 남긴다. POSIX와 Windows 형식(`C:\…`, `\\host\…`)의 절대 경로를 모두 대상으로 한다. 업로드 디렉터리 자체나 그 상위 폴더(`..`, `../..`, `/`, `..`을 섞어 쓴 절대 경로, Linux가 `/`와 같게 읽는 `//`로 시작하는 경로 포함)를 가리키면 파일 이름 대신 `None`으로 둔다. 파일 이름만 남기면 job UUID, 데이터 폴더 이름, 서버 사용자명 같은 상위 폴더 이름이 한 단계씩 드러나기 때문이다. 이름이 없는 경로(`C:\`)도 `None`이다. LLM finding의 `file`이 `../notes.py`처럼 기준 밖을 가리키면 `LocalLLMReviewClient.review()`가 상대 경로를 절대 경로로 바꾸는 `resolve()`의 결과가 업로드 디렉터리 밖이 되어 1단계에서 빠진다(단일 파일은 `../`부터, 폴더는 `../../`부터). job 폴더 밖까지 나간 경로와 LLM이 지어낸 절대 경로도 여기서 처리된다.
     3. `relativize_report(report, <job 폴더>, "<data>")`: 모든 문자열에 남은 job 폴더(`NURILAB_WEB_DATA_DIR/<job_id>`) 경로는 `<data>`로 바꾼다. 기준은 `NURILAB_WEB_DATA_DIR` 전체가 아니라 UUID가 들어간 job 폴더로 한정한다. 보고서에는 secret 미리보기 같은 사용자 코드 문자열도 들어가므로, 기준이 넓으면 코드 속 같은 경로 문자열까지 바뀌어 분석 근거가 달라지고 웹·CLI 결과도 어긋난다.
-  - 단일 파일에서 파일 경로나 그 상위 폴더를 기준으로 삼지 않는다. LLM finding의 `file`은 빈 값이면 `analysis.path`, 상대 경로면 `Path(analysis.path).parent` 기준의 절대 경로가 되므로(`llm/review.py:319`~`:326`), 기준에 따라 `file.py/file.py`처럼 어긋난다.
+  - 단일 파일에서 파일 경로나 그 상위 폴더를 기준으로 삼지 않는다. LLM finding의 `file`은 빈 값이면 `analysis.path`, 상대 경로면 `Path(analysis.path).parent` 기준의 절대 경로가 되므로(`LocalLLMReviewClient.review()`의 단일 파일 분기), 기준에 따라 `file.py/file.py`처럼 어긋난다.
   - LLM finding의 `file`이 `.`처럼 업로드 디렉터리 자체를 가리키면(단일 파일) 1단계에서 빈 값이 되어 `None`(JSON `null`)으로 저장된다. 보고서는 파일 없이 줄 번호만 표시한다(`_finding_location()`). 폴더의 `.`은 분석 루트를 가리키므로 `myproj`가 된다.
   - 테스트는 지금처럼 분석 루트를 `<ROOT>`로 바꾼다.
   - 치환 규칙은 `tests/test_external_regression.py`의 `_normalize_string()`을 `reports/paths.py`의 `replace_root()`로 옮겨 공용으로 쓰고, 테스트의 `normalize_report()`는 그 위에 얹는다. `generated_at` 제거는 테스트에 남긴다. 구분자까지 지우는 동작은 치환 문자열이 `""`일 때만 적용해 기존 `<ROOT>` 결과와 외부 회귀 기준선을 바꾸지 않는다.
@@ -87,25 +87,27 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 | `status` | `ok` / `failed` |
 | `failure_code` | 아래 표. 성공이면 `null` |
 
-| `failure_code` | 위치 (`llm/review.py`) | 원인 |
+| `failure_code` | 위치 (`LocalLLMReviewClient.review()`의 분기) | 원인 |
 | --- | --- | --- |
-| `timeout` | `:226` | 요청 timeout |
-| `http_error` | `:242` | HTTP 오류 응답 |
-| `connection_failed` | `:265` | 연결 실패, 잘못된 URL·schema |
-| `invalid_response` | `:286` | 응답 본문 디코드 실패, `choices[0].message.content` 구조 오류, 그 밖의 예외 |
-| `json_parse_failed` | `:331` | LLM이 만든 리뷰 JSON의 파싱 실패와 schema 검증 실패(필드 누락, 타입·값 오류) |
+| `timeout` | `except requests.exceptions.Timeout`, 그리고 연결 오류 분기 중 본문 읽기 timeout | 요청 timeout. 헤더를 기다리다 난 timeout과, 헤더를 받은 뒤 본문을 읽다 멈춘 경우(requests가 urllib3 `ReadTimeoutError`를 `ConnectionError`로 감싸 던진다)를 모두 포함한다 |
+| `http_error` | `except requests.exceptions.HTTPError` | HTTP 오류 응답 |
+| `connection_failed` | `except (requests.exceptions.ConnectionError, …)` | 연결 실패, 잘못된 URL·schema |
+| `invalid_response` | 요청 단계의 `except Exception` | 응답 본문 디코드 실패, `choices[0].message.content` 구조 오류, 그 밖의 예외 |
+| `json_parse_failed` | 파싱 단계의 `except Exception` | LLM이 만든 리뷰 JSON의 파싱 실패와 schema 검증 실패(필드 누락, 타입·값 오류). `message.content`가 `null`인 경우도 여기다 |
 
-- `:286`의 finding 제목은 "Local LLM connection failed"지만 실제 연결 오류는 `:265`에서 먼저 잡히므로 `invalid_response`로 분리한다. finding 제목과 문구는 바꾸지 않는다.
+- 요청 단계의 `except Exception`의 finding 제목은 "Local LLM connection failed"지만 실제 연결 오류는 그 앞의 연결 오류 분기에서 먼저 잡히므로 `invalid_response`로 분리한다. finding 제목과 문구는 바꾸지 않는다.
+- `message.content`가 `null`이면(예: gpt-oss가 추론에 토큰을 다 써 `finish_reason=length`로 끝난 경우) `json_parse_failed`로 둔다. 응답 구조는 맞지만 리뷰 내용이 없는 경우라, "모델 출력을 확인하라"는 `json_parse_failed`의 권고가 맞고 `invalid_response`의 "connection failed" 제목은 맞지 않기 때문이다.
 - 다섯 곳 모두 호출하는 `_local_llm_request_failure()`에 `failure_code`를 필수 인자로 추가해 빠짐없이 설정한다. finding 문구를 파싱해 실패를 판단하지 않는다.
 - 성공 경로도 각 client가 채운다.
-  - Mock: `ReviewResult`를 만드는 네 곳(`llm/review.py:124`, `:128`, `:144`, `:162`) 모두 `{"client": "mock", "model": null, "status": "ok", "failure_code": null}`이다. 읽지 못한 파일(skipped)의 리뷰도 Mock이 정상으로 만든 결과이므로 `ok`다.
-  - LLM 성공: `LocalLLMReviewClient.review()`가 `_parse_llm_review()` 결과를 받은 뒤(`:303`) `client=local`, 설정한 모델, `status=ok`로 채운다.
+  - Mock: `ReviewResult`를 만드는 네 곳(`MockReviewClient`의 폴더 결과, 단일 파일의 skipped·문법 오류·일반 결과) 모두 `{"client": "mock", "model": null, "status": "ok", "failure_code": null}`이다. 네 곳을 따로 고치지 않고 `MockReviewClient.review()`가 결과를 받은 뒤 한 번 채우므로, 반환 경로가 늘어도 빠지지 않는다. 읽지 못한 파일(skipped)의 리뷰도 Mock이 정상으로 만든 결과이므로 `ok`다.
+  - LLM 성공: `LocalLLMReviewClient.review()`가 `_parse_llm_review()` 결과를 받은 뒤 `client=local`, 설정한 모델, `status=ok`로 채운다.
 - `ReviewResult`의 `reviewer` 기본값은 `None`이다. 두 client 밖에서 직접 만든 ReviewClient처럼 값을 넣지 않으면 보고서 JSON에는 `"reviewer": null`로 나간다. 웹은 Mock과 LLM client만 쓰므로 항상 값이 있다.
-- 리뷰를 만든 주체의 정보이므로 최상위가 아닌 `review` 안에 둔다. 따라서 `review` 키 고정 테스트(`tests/test_review_and_report.py:384`)를 갱신한다. 최상위에 두어도 `:318`의 최상위 키 고정 테스트가 바뀌므로 테스트 비용은 같다.
+- 리뷰를 만든 주체의 정보이므로 최상위가 아닌 `review` 안에 둔다. 따라서 `review` 키 고정 검사(`tests/test_review_and_report.py`의 `test_project_report_to_dict_preserves_json_contract`)를 갱신한다. 최상위에 두어도 같은 테스트의 최상위 키 고정 검사가 바뀌므로 테스트 비용은 같다.
 
 ### 3.4 LLM 연결 확인
 
-- `llm/review.py`에 둔다. 설정된 endpoint의 `GET {base_url}/models`를 짧은 timeout으로 호출한다.
+- `llm/review.py`의 `LocalLLMReviewClient.check_connection()`이다. client가 읽은 `NURILAB_LLM_BASE_URL`·`NURILAB_LLM_MODEL`을 그대로 쓰므로, 웹은 같은 client로 확인하고 분석해 확인한 endpoint와 리뷰 요청을 보내는 endpoint 설정이 어긋나지 않는다. 설정된 endpoint의 `GET {base_url}/models`를 짧은 timeout(`config.py`의 `DEFAULT_LLM_STATUS_TIMEOUT_SECONDS`, 5초)으로 호출한다. requests의 timeout은 연결과 각 읽기 대기에 따로 걸리는 값이라 전체 시간 상한이 아니다. 조금씩 계속 보내는 서버라면 5초보다 오래 걸릴 수 있다. 본문을 읽다 멈춘 경우도 `timeout`이다.
+- 연결 확인은 redirect를 따라가지 않는다(§1의 "설정한 LLM endpoint 외 네트워크 호출 없음"). 3xx 응답은 `unreachable`이다. 리뷰 요청(`review()`의 `requests.post`)은 기존 CLI 동작대로 redirect를 따라가며 바꾸지 않는다(§9 알려진 한계).
 - 판정은 네 가지다. 응답이 있고 설정한 모델이 목록에 있을 때만 `connected`다.
 
 | 판정 | `status` | `local` 실행 |
@@ -117,6 +119,8 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 
 - 확인 함수는 예외를 밖으로 던지지 않고 항상 네 판정 중 하나를 반환한다. vLLM을 `--api-key`로 띄웠을 때의 401, 5xx, 깨진 JSON, `data` 목록이 없는 응답도 `unreachable`이다. 그래야 두 API가 `500` 대신 정해진 응답을 낸다.
 - 이 판정은 `GET /api/llm-status` 응답(§4.1)과 `POST /api/analyses`의 연결 확인(§4.2)이 함께 쓴다. 화면은 `status`별 고정 문구로 안내한다.
+  - `unreachable`은 연결 실패뿐 아니라 401·5xx·잘못된 응답도 포함하므로 문구를 넓게 쓴다. 예: "LLM 서버에 연결할 수 없거나 응답이 올바르지 않습니다. 서버 실행 상태, 주소, 인증 설정을 확인하세요." NuriLab은 API key를 보내지 않으므로 401은 서버 쪽 인증 설정 문제다.
+- 반환값은 `LLMConnectionCheck(status, detail)`이다. `detail`은 서버 로그에만 쓰는 짧은 원인이고 API 응답과 화면에는 내보내지 않는다(§4.3). 고정 문구(`invalid JSON`, `no model list`, `model not listed`), HTTP 상태 코드(`HTTP 401`), 예외 클래스 이름(`ConnectTimeout`)으로만 만들고 URL·응답 본문·예외 메시지는 넣지 않는다. `connected`이면 `None`이다. 로그 기록은 웹(W3)이 한다.
 
 ### 3.5 외부 회귀 기준선 (THE-92)
 
@@ -182,7 +186,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 - job id는 UUID4다. 순번이면 `0.0.0.0` 시연 중 같은 망의 누구나 다른 사람의 보고서를 조회할 수 있다.
 - 응답 필드: `id`, `status`, `created_at`, `finished_at`, `upload_name`, `file_count`, `review`(`client`, `model`, `status`, `failure_code`), `risk_level`, `static_risk_level`, `error`(`failed`일 때 `{code, message}`, 아니면 `null`)
 - 위험도는 CLI와 같은 값을 쓰며 `completed`일 때만 채운다.
-  - `risk_level`: 보고서의 `review.risk_level`. CLI 터미널의 `Risk Level`(`cli.py:140`)과 같고, LLM 리뷰가 실패하면 `unknown`이다. Mock도 단일 파일을 읽지 못하면(skipped) `unknown`이므로(`llm/review.py:128`), LLM 실패 여부는 `risk_level`이 아니라 `review.status`(보고서의 `review.reviewer.status`)로만 판단한다.
+  - `risk_level`: 보고서의 `review.risk_level`. CLI 터미널의 `Risk Level`(`cli.py:140`)과 같고, LLM 리뷰가 실패하면 `unknown`이다. Mock도 단일 파일을 읽지 못하면(skipped) `unknown`이므로(`MockReviewClient`의 skipped 분기), LLM 실패 여부는 `risk_level`이 아니라 `review.status`(보고서의 `review.reviewer.status`)로만 판단한다.
   - `static_risk_level`: 정적 분석 위험도다. 폴더 업로드면 `analysis.summary.risk_level`(폴더 HTML 보고서 상단 카드와 같은 값)이다. 단일 파일이면 집계기가 폴더 안의 파일마다 쓰는 규칙(`aggregation/result_aggregator.py`의 `_summarize_file()`·`_derive_file_risk()`)으로 계산한다. 위험 호출, secret, 문법 오류(`medium`), Ruff 결과의 severity 중 가장 높은 값이고, 신호가 없으면 `low`, 읽지 못한 파일이면 `unknown`이다.
   - 단일 파일 계산은 웹에서 규칙을 다시 짜지 않고, 집계기의 규칙을 공용 함수로 꺼내 집계기와 웹이 함께 쓴다(W3). 계산한 값은 웹 응답과 SQLite에만 넣고 보고서 JSON·HTML에는 넣지 않으므로 CLI 출력은 바뀌지 않는다.
 - job 실패 코드는 `analysis_error`(분석 중 예외)와 `interrupted`(서버 재시작으로 중단)다.
@@ -328,12 +332,24 @@ README와 USAGE에 적을 것:
 - 개인 PC 임시 테스트 방법. 서버 주소는 `<서버주소>`로만 적는다.
 - 업로드 제한값
 
-알려진 한계:
+알려진 한계는 원인과 대응 방침에 따라 세 가지로 나눈다.
+
+**구조적 한계** (현재 방식으로는 해결할 수 없음)
+
+- job 폴더 경로 바로 뒤에 `.bak`, `-old`처럼 이름 문자가 붙은 문자열은 경로 치환(§3.2)에서 빠진다. 같은 이름으로 시작하는 다른 폴더(`root-sibling`)와 구별할 수 없기 때문이다. LLM이 경로를 이렇게 바꿔 쓸 때만 생긴다.
+
+**MVP 범위 밖** (후속 작업에서 다룸)
 
 - 인증이 없다. UUID job id는 추측만 막을 뿐, 링크를 아는 사람은 누구나 볼 수 있다.
-- 다운로드한 보고서에는 LLM 실패 finding의 원문(§7.3)이 남는다.
-- LLM prompt에는 서버 절대 경로(`root_path`, 단일 파일의 `file`, 읽기 실패 사유)가 들어간다. LLM이 이 경로를 데이터 폴더나 그보다 위에서 잘라 요약·finding 문구에 쓰면 그 경로(서버 폴더 구조와 사용자명)는 경로 치환(§3.2)에서 빠져 화면과 보고서에 남는다. job 폴더 경로 바로 뒤에 `.bak`, `-old`처럼 이름 문자가 붙은 경우도 다른 폴더 이름과 구별할 수 없어 남는다.
+- LLM prompt에는 서버 절대 경로(`root_path`, 단일 파일의 `file`, 읽기 실패 사유)가 들어간다. LLM이 이 경로를 데이터 폴더나 그보다 위에서 잘라 요약·finding 문구에 쓰면 그 경로(서버 폴더 구조와 사용자명)는 경로 치환(§3.2)에서 빠져 화면과 보고서에 남는다. 근본 해결은 prompt에 상대 경로를 보내는 것이지만 CLI의 LLM 입력도 바뀌므로 후속 이슈로 다룬다.
 - 업로드 원본은 지우지만 보고서와 SQLite 기록은 자동으로 지우지 않는다. 필요하면 `NURILAB_WEB_DATA_DIR`을 수동으로 정리한다.
 - 분석은 프로세스 격리와 전체 timeout 없이 실행된다.
-- 웹에서는 Ruff를 실행하지 않는다.
+
+**설계상 수용** (의도한 동작이거나, 분석 결과에 영향이 없고 발생 가능성이 낮아 유지함)
+
+- 다운로드한 보고서에는 LLM 실패 finding의 원문(§7.3)이 남는다. 원인 확인용으로 남기고 화면에서만 숨긴다.
+- 웹에서는 Ruff를 실행하지 않는다(§5.2).
 - `.py`가 0개인 업로드는 CLI와 달리 거부된다.
+- 리뷰 요청은 endpoint가 보낸 redirect를 따라간다. vLLM은 redirect를 보내지 않고 endpoint는 관리자가 정하므로, 고치려고 기존 CLI 동작을 바꾸지 않는다. 연결 확인(§3.4)은 따라가지 않는다.
+- LLM 요청 timeout(연결 확인 5초, 리뷰 `NURILAB_LLM_TIMEOUT`)은 연결과 각 읽기 대기에 걸리는 값이라 전체 시간 상한이 아니다. 조금씩 계속 보내는 서버라면 더 오래 걸린다.
+- 응답 본문을 받는 도중 연결이 끊기면 `failure_code`가 `connection_failed`가 아니라 `invalid_response`가 된다. 실패로 기록되고 정적 분석 결과도 그대로 남으며, 안내 문구만 다르다.

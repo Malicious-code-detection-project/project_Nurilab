@@ -8,11 +8,21 @@ serialization simple for Markdown and JSON report generation.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 
 ALLOWED_SEVERITIES = {"info", "low", "medium", "high", "critical", "unknown"}
+ReviewClientName = Literal["mock", "local"]
+ReviewStatus = Literal["ok", "failed"]
+# One code per Local LLM failure path; the finding text is never parsed for it.
+ReviewFailureCode = Literal[
+    "timeout",
+    "http_error",
+    "connection_failed",
+    "invalid_response",
+    "json_parse_failed",
+]
 
 
 @dataclass(slots=True)
@@ -155,12 +165,25 @@ class ReviewFinding:
 
 
 @dataclass(slots=True)
+class ReviewerInfo:
+    """Which review client produced a review, and whether it succeeded."""
+
+    client: ReviewClientName
+    # Configured model for Local LLM reviews; Mock reviews have no model.
+    model: str | None
+    status: ReviewStatus
+    failure_code: ReviewFailureCode | None = None
+
+
+@dataclass(slots=True)
 class ReviewResult:
     """Structured output from a review client."""
 
     summary: str
     risk_level: str
     findings: list[ReviewFinding] = field(default_factory=list)
+    # Set by the Mock and Local LLM clients; other clients leave it None.
+    reviewer: ReviewerInfo | None = None
     input_metadata: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:

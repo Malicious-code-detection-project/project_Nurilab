@@ -34,6 +34,7 @@ from project_nurilab.schemas import (
     ProjectReport,
     ProjectSummary,
     PythonAnalysis,
+    ReviewerInfo,
     ReviewFinding,
     ReviewResult,
     RuffFinding,
@@ -389,7 +390,9 @@ def test_project_report_to_dict_preserves_json_contract() -> None:
     ]
 
     review = payload["review"]
-    assert set(review) == {"summary", "risk_level", "findings"}
+    assert set(review) == {"summary", "risk_level", "findings", "reviewer"}
+    # A ReviewResult built outside the Mock and Local LLM clients has no source.
+    assert review["reviewer"] is None
     assert review["risk_level"] == "high"
     assert review["findings"] == [
         {
@@ -1637,3 +1640,42 @@ def test_relativize_report_resolves_symlinked_relative_and_home_roots(
     for root in (tmp_path / "link" / "upload", "link/upload", "~/link/upload"):
         relativized = relativize_report(report, root, "")
         assert relativized.analysis.root_path == "myproj", root
+
+
+@pytest.mark.parametrize(
+    "analysis",
+    [
+        PythonAnalysis(path="clean.py", line_count=1),
+        PythonAnalysis(path="bad.py", line_count=0, skipped=True, skip_reason="x"),
+        PythonAnalysis(path="broken.py", line_count=1, syntax_error="bad syntax"),
+        ProjectAnalysis(
+            root_path="proj",
+            file_results=[PythonAnalysis(path="proj/a.py", line_count=1)],
+        ),
+    ],
+    ids=["file", "skipped", "syntax_error", "project"],
+)
+def test_mock_review_records_mock_reviewer(
+    analysis: PythonAnalysis | ProjectAnalysis,
+) -> None:
+    """Every Mock path is an ok review with no model, skipped files included."""
+
+    review = MockLLMReviewClient().review(analysis)
+
+    assert review.reviewer == ReviewerInfo(client="mock", model=None, status="ok")
+    assert review.to_dict()["reviewer"] == {
+        "client": "mock",
+        "model": None,
+        "status": "ok",
+        "failure_code": None,
+    }
+
+
+def test_relativize_report_keeps_reviewer(tmp_path: Path) -> None:
+    upload_root = tmp_path / "job" / "upload"
+    report = Phase1Pipeline(use_ruff=False).analyze(_write_upload(upload_root, "file"))
+
+    relativized = relativize_report(report, upload_root, "")
+
+    assert relativized.review.reviewer == report.review.reviewer
+    assert relativized.review.reviewer is not report.review.reviewer

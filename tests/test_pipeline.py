@@ -903,6 +903,12 @@ def test_pipeline_preserves_reports_when_local_llm_connection_fails(
     assert payload["review"]["findings"][0]["source"] == "local_llm"
     assert payload["review"]["findings"][0]["title"] == ("Local LLM connection failed")
     assert "Connection refused" in payload["review"]["findings"][0]["reason"]
+    assert payload["review"]["reviewer"] == {
+        "client": "local",
+        "model": "test-model",
+        "status": "failed",
+        "failure_code": "connection_failed",
+    }
 
 
 def test_pipeline_preserves_reports_when_local_llm_times_out(

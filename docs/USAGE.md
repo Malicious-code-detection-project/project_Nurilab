@@ -131,11 +131,30 @@ JSON/schema 파싱 실패 시에는 응답 content의 최대 200자 preview가 �
 정적 분석을 지우거나 pipeline 전체를 중단하지 않습니다. `review.risk_level`은
 `unknown`이며, `source="local_llm"`인 failure finding을 보고서에 남깁니다.
 
-- 연결 오류: 서버 실행 상태, URL, host/port, model name을 확인합니다.
-- timeout: 모델 로딩과 GPU 상태를 확인한 뒤 timeout을 조정합니다.
-- HTTP 오류: OpenAI-compatible endpoint와 server log를 확인합니다.
-- JSON/schema 오류: 모델이 JSON object만 반환하는지와 `low`/`medium`/`high`
-  severity 계약을 확인합니다.
+JSON 보고서의 `review.reviewer`는 리뷰를 만든 client와 결과를 기록합니다.
+LLM 실패 여부는 `review.reviewer.status`가 `failed`인지로 판단합니다.
+Mock도 읽지 못한 단일 파일(skipped)은 `risk_level`이 `unknown`이므로
+`risk_level`만으로는 LLM 실패와 구별되지 않습니다.
+
+```json
+"reviewer": {"client": "local", "model": "openai/gpt-oss-20b", "status": "failed", "failure_code": "timeout"}
+```
+
+- `client`: `mock` 또는 `local`. `model`은 Mock이면 `null`입니다.
+- `status`: `ok` 또는 `failed`. `failure_code`는 성공이면 `null`입니다.
+
+`failure_code`별 확인할 곳은 다음과 같습니다.
+
+- `connection_failed` (연결 오류): 서버 실행 상태, URL, host/port, model name을
+  확인합니다.
+- `timeout`: 모델 로딩과 GPU 상태를 확인한 뒤 timeout을 조정합니다. 응답 본문을
+  받다가 멈춘 경우도 포함합니다.
+- `http_error` (HTTP 오류): OpenAI-compatible endpoint와 server log를 확인합니다.
+- `invalid_response` (응답 shape 오류): 응답이 OpenAI-compatible
+  `choices[0].message.content` 구조인지 server log와 함께 확인합니다.
+- `json_parse_failed` (JSON/schema 오류): 모델이 JSON object만 반환하는지와
+  `low`/`medium`/`high` severity 계약을 확인합니다. `message.content`가 `null`인
+  응답(예: gpt-oss가 추론에 토큰을 다 쓴 경우)도 여기에 해당합니다.
 
 이 failure finding은 deterministic analyzer의 signal과 JSON/HTML report 생성을
 계속 유지한다는 뜻입니다. report가 생성되었다고 모든 optional backend가 성공한 것은
