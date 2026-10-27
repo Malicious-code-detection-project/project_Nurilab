@@ -1,21 +1,29 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from project_nurilab import __version__
 from project_nurilab.analyzers.python_static import PythonStaticAnalyzer
 from project_nurilab.input.manager import PythonFileLoader
-from project_nurilab.llm.review import MockLLMReviewClient
+from project_nurilab.llm.review import LocalLLMReviewClient, MockLLMReviewClient
+from project_nurilab.pipeline import Phase1Pipeline
 from project_nurilab.reports.generator import (
     EXTERNAL_STATUS_DISPLAY,
     ReportGenerator,
     _external_tool_call_css,
     _render_html_external_tool_calls,
+)
+from project_nurilab.reports.paths import (
+    name_absolute_finding_files,
+    relativize_report,
+    replace_root,
 )
 from project_nurilab.schemas import (
     ALLOWED_EXTERNAL_TOOL_CALL_STATUSES,
@@ -1303,3 +1311,329 @@ def test_external_status_meaning_names_every_cause(
     for cause in causes:
         assert cause in meaning
     assert "see Reason" in meaning
+
+
+def test_replace_root_respects_boundaries_and_drops_separator(tmp_path: Path) -> None:
+    root = (tmp_path / "upload").resolve()
+    windows_file = str(root / "a.py").replace("/", "\\")
+
+    assert replace_root(f"{root}/myproj/a.py", root, "") == "myproj/a.py"
+    assert replace_root(f"Cause: {root}/a.py failed", root, "") == "Cause: a.py failed"
+    assert replace_root(windows_file, root, "") == "a.py"
+    assert replace_root(str(root), root, "") == ""
+    assert replace_root(f"{root}-sibling/a.py", root, "") == f"{root}-sibling/a.py"
+    assert replace_root(f"{root}/a.py", root, "<ROOT>") == "<ROOT>/a.py"
+
+
+@pytest.mark.parametrize(
+    ("template", "expected"),
+    [
+        ("Checked {root}.", "Checked <data>."),
+        ("Checked {root}, then {root}: done", "Checked <data>, then <data>: done"),
+        ("path '{root}' and \"{root}\"", "path '<data>' and \"<data>\""),
+        ("({root}) [{root}] {{{root}}}", "(<data>) [<data>] {{<data>}}"),
+        ("{root} is the job", "<data> is the job"),
+        ("{root}..", "<data>.."),
+        ("{root}-sibling/a.py", "{root}-sibling/a.py"),
+        ("{root}_old", "{root}_old"),
+        ("{root}.bak/a.py", "{root}.bak/a.py"),
+        ("{root}2", "{root}2"),
+        ("{root}한글", "{root}한글"),
+    ],
+)
+def test_replace_root_treats_punctuation_as_boundary(
+    tmp_path: Path, template: str, expected: str
+) -> None:
+    """Free text ends a path with punctuation; name characters continue it."""
+
+    root = (tmp_path / "0b7c8f8e-1111-4222-8333-444455556666").resolve()
+
+    replaced = replace_root(template.format(root=root), root, "<data>")
+
+    assert replaced == expected.format(root=root)
+
+
+def test_replace_root_keeps_punctuation_after_dropped_root(tmp_path: Path) -> None:
+    """Only a separator is dropped with an empty replacement."""
+
+    root = (tmp_path / "upload").resolve()
+
+    assert replace_root(f"Files in {root}.", root, "") == "Files in ."
+    assert replace_root(f"({root}/a.py)", root, "") == "(a.py)"
+
+
+def _write_upload(upload_root: Path, kind: str) -> Path:
+    risky_source = "import os\n\n\ndef run(command):\n    return os.system(command)\n"
+    if kind == "file":
+        upload_root.mkdir(parents=True)
+        target = upload_root / "file.py"
+        target.write_text(risky_source, encoding="utf-8")
+        return target
+    project = upload_root / "myproj"
+    (project / "pkg").mkdir(parents=True)
+    (project / "a.py").write_text(risky_source, encoding="utf-8")
+    (project / "pkg" / "b.py").write_text(
+        "def load(text):\n    return eval(text)\n", encoding="utf-8"
+    )
+    return project
+
+
+def _assert_no_server_path(output_paths: dict[str, Path], server_path: Path) -> None:
+    for output_format in ("json", "html"):
+        text = output_paths[output_format].read_text(encoding="utf-8")
+        assert str(server_path) not in text, output_format
+
+
+@pytest.mark.parametrize("kind", ["file", "project"])
+def test_relativize_report_removes_upload_root_from_json_and_html(
+    tmp_path: Path, kind: str
+) -> None:
+    upload_root = tmp_path / "job" / "upload"
+    target = _write_upload(upload_root, kind)
+    report = Phase1Pipeline(use_ruff=False).analyze(target)
+    original = report.to_dict()
+
+    relativized = relativize_report(report, upload_root, "")
+    output_paths = ReportGenerator().write(relativized, tmp_path / "out")
+
+    assert report.to_dict() == original
+    assert relativized.review.findings
+    _assert_no_server_path(output_paths, tmp_path)
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    if kind == "file":
+        assert output_paths["json"].name == "file.analysis.json"
+        assert payload["analysis"]["path"] == "file.py"
+        assert {finding["file"] for finding in payload["review"]["findings"]} == {
+            "file.py"
+        }
+    else:
+        assert output_paths["json"].name == "myproj.analysis.json"
+        assert payload["analysis"]["root_path"] == "myproj"
+        assert sorted(
+            result["path"] for result in payload["analysis"]["file_results"]
+        ) == ["myproj/a.py", "myproj/pkg/b.py"]
+        assert {finding["file"] for finding in payload["review"]["findings"]} == {
+            "myproj/a.py",
+            "myproj/pkg/b.py",
+        }
+
+
+def _analyze_with_llm_findings(
+    monkeypatch: pytest.MonkeyPatch,
+    target: Path,
+    llm_files: Sequence[str | None],
+    summary: str = "Dynamic execution found.",
+) -> AnalysisReport | ProjectReport:
+    content = json.dumps(
+        {
+            "summary": summary,
+            "risk_level": "high",
+            "findings": [
+                {
+                    "title": "Dynamic execution",
+                    "severity": "high",
+                    "file": llm_file,
+                    "line": 5,
+                    "reason": "os.system runs shell commands.",
+                    "recommendation": "Use subprocess.run with a list.",
+                }
+                for llm_file in llm_files
+            ],
+        }
+    )
+
+    class ResponseStub:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {"choices": [{"message": {"content": content}}]}
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: ResponseStub())
+    pipeline = Phase1Pipeline(
+        use_ruff=False,
+        review_client=LocalLLMReviewClient(base_url="http://localhost:8000/v1"),
+    )
+    return pipeline.analyze(target)
+
+
+@pytest.mark.parametrize(
+    ("kind", "llm_files", "expected_files"),
+    [
+        ("file", ["", "file.py", "."], ["file.py", "file.py", None]),
+        ("project", ["pkg/b.py", None, "."], ["myproj/pkg/b.py", None, "myproj"]),
+    ],
+)
+def test_relativize_report_removes_upload_root_from_llm_finding_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    llm_files: list[str | None],
+    expected_files: list[str | None],
+) -> None:
+    """LLM finding files are made absolute by the client, then relativized here.
+
+    A single file's ``.`` is the upload directory itself. The emptied file is
+    rebuilt through ``ReviewFinding``, which stores an empty file as ``None``.
+    """
+
+    upload_root = tmp_path / "job" / "upload"
+    target = _write_upload(upload_root, kind)
+    report = _analyze_with_llm_findings(monkeypatch, target, llm_files)
+
+    relativized = relativize_report(report, upload_root, "")
+    output_paths = ReportGenerator().write(relativized, tmp_path / "out")
+
+    assert [finding.file for finding in relativized.review.findings] == expected_files
+    _assert_no_server_path(output_paths, tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("kind", "llm_files", "expected_files"),
+    [
+        (
+            "file",
+            [
+                "../notes.py",
+                "../../outside.py",
+                "/etc/passwd",
+                "//etc/passwd",
+                "C:\\work\\x.py",
+                "C:\\",
+            ],
+            ["notes.py", "outside.py", "passwd", "passwd", "x.py", None],
+        ),
+        (
+            "project",
+            ["../../notes.py", "../a.py", "pkg/b.py"],
+            ["notes.py", "a.py", "myproj/pkg/b.py"],
+        ),
+    ],
+)
+def test_web_path_steps_remove_paths_outside_upload_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    llm_files: list[str],
+    expected_files: list[str],
+) -> None:
+    """Upload root, then absolute finding files, then the job directory."""
+
+    job_dir = tmp_path / "data" / "0b7c8f8e-1111-4222-8333-444455556666"
+    upload_root = job_dir / "upload"
+    target = _write_upload(upload_root, kind)
+    report = _analyze_with_llm_findings(
+        monkeypatch, target, llm_files, summary=f"Checked {job_dir}/cache, {job_dir}."
+    )
+
+    step1 = relativize_report(report, upload_root, "")
+    step1_files = [finding.file for finding in step1.review.findings]
+    step2 = name_absolute_finding_files(step1, upload_root)
+    step3 = relativize_report(step2, job_dir, "<data>")
+    output_paths = ReportGenerator().write(step3, tmp_path / "out")
+
+    assert [finding.file for finding in step1.review.findings] == step1_files
+    assert [finding.file for finding in step3.review.findings] == expected_files
+    assert step3.review.summary == "Checked <data>/cache, <data>."
+    _assert_no_server_path(output_paths, tmp_path)
+
+
+@pytest.mark.parametrize("kind", ["file", "project"])
+def test_web_path_steps_hide_server_directory_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """Files naming the upload root or a parent become None, not a folder name."""
+
+    data_dir = tmp_path / "nurilab_data_SECRETNAME"
+    job_dir = data_dir / "0b7c8f8e-1111-4222-8333-444455556666"
+    upload_root = job_dir / "upload"
+    target = _write_upload(upload_root, kind)
+    # A single file resolves relative files from upload/, a folder from upload/myproj/.
+    up = [".."] * (1 if kind == "file" else 2)
+    parent_files = [
+        "..",
+        *("/".join(up + [".."] * extra) for extra in range(4)),
+        str(job_dir),
+        f"{job_dir}/../{job_dir.name}/",
+        str(data_dir),
+        "/",
+        # Linux reads a leading "//" as "/", so these name the same parents.
+        f"/{job_dir}",
+        f"/{data_dir}",
+        f"/{tmp_path}",
+        "//",
+    ]
+    report = _analyze_with_llm_findings(monkeypatch, target, parent_files)
+
+    step1 = relativize_report(report, upload_root, "")
+    step2 = name_absolute_finding_files(step1, upload_root)
+    step3 = relativize_report(step2, job_dir, "<data>")
+    output_paths = ReportGenerator().write(step3, tmp_path / "out")
+
+    assert [finding.file for finding in step3.review.findings] == [None] * len(
+        parent_files
+    )
+    for output_format in ("json", "html"):
+        text = output_paths[output_format].read_text(encoding="utf-8")
+        assert "SECRETNAME" not in text, output_format
+        assert job_dir.name not in text, output_format
+        assert tmp_path.name not in text, output_format
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected_reason"),
+    [
+        ("file", "UTF-8 decode failed while reading file.py: invalid start byte."),
+        (
+            "project",
+            "UTF-8 decode failed while reading myproj/bad.py: invalid start byte.",
+        ),
+    ],
+)
+def test_relativize_report_removes_upload_root_from_skip_reasons(
+    tmp_path: Path, kind: str, expected_reason: str
+) -> None:
+    """Read failure reasons carry the server path inside free text."""
+
+    upload_root = tmp_path / "job" / "upload"
+    target = _write_upload(upload_root, kind)
+    unreadable = target if kind == "file" else target / "bad.py"
+    unreadable.write_bytes(b"\xff\xfe not utf-8")
+    report = Phase1Pipeline(use_ruff=False).analyze(target)
+
+    relativized = relativize_report(report, upload_root, "")
+    output_paths = ReportGenerator().write(relativized, tmp_path / "out")
+
+    analyses = (
+        relativized.analysis.file_results
+        if isinstance(relativized, ProjectReport)
+        else [relativized.analysis]
+    )
+    assert [result.skip_reason for result in analyses if result.skipped] == [
+        expected_reason
+    ]
+    if kind == "file":
+        # Mock copies a single file's skip reason into its finding.
+        assert [finding.reason for finding in relativized.review.findings] == [
+            expected_reason
+        ]
+    _assert_no_server_path(output_paths, tmp_path)
+
+
+def test_relativize_report_resolves_symlinked_relative_and_home_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pipeline writes resolved paths, so the root is resolved the same way."""
+
+    _write_upload(tmp_path / "real" / "upload", "project")
+    (tmp_path / "link").symlink_to(tmp_path / "real")
+    report = Phase1Pipeline(use_ruff=False).analyze(
+        tmp_path / "link" / "upload" / "myproj"
+    )
+    assert isinstance(report, ProjectReport)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    for root in (tmp_path / "link" / "upload", "link/upload", "~/link/upload"):
+        relativized = relativize_report(report, root, "")
+        assert relativized.analysis.root_path == "myproj", root

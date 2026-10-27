@@ -56,19 +56,21 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 
 - 현재 보고서의 `root_path`와 `path`에는 서버 절대 경로가 들어간다. CLI 기본 동작은 유지한다.
 - 치환은 **report 객체 단계**에서 한다. HTML은 `to_dict()`를 거치지 않고 dataclass에서 바로 그리고(`generator.py:312` `analysis.path`, `:472` `analysis.root_path`, finding의 `file`), `schemas.py`에는 dict를 객체로 되돌리는 `from_dict`가 없기 때문이다.
-- `project_nurilab/reports/`에 함수 하나를 둔다. report 객체를 깊은 복사해 중첩된 dict·list 값(`input_metadata` 등)까지 모든 문자열을 치환한 새 report를 반환하고 원본은 바꾸지 않는다.
+- `project_nurilab/reports/paths.py`의 `relativize_report()`가 맡는다. report 객체를 깊은 복사해 중첩된 dict·list 값(`input_metadata` 등)까지 모든 문자열을 치환한 새 report를 반환하고 원본은 바꾸지 않는다.
+  - 복사본의 dataclass는 다시 만들어지므로 각 `__post_init__` 정규화를 다시 거친다. 예를 들어 `ReviewFinding.file`이 치환 뒤 빈 문자열이 되면 `None`이 된다.
   - 이 방식을 고른 이유: 서버 경로는 경로 필드뿐 아니라 읽기 실패 사유(`input/manager.py`의 `_skipped_load()` 문구)와 이를 옮긴 Mock finding 같은 자유 문장에도 들어간다. 경로를 만드는 곳마다 상대 경로로 바꾸면 이런 문장을 하나씩 고쳐야 하고 CLI 보고서와 외부 회귀 기준선도 바뀌므로, report 객체 단계에서 한 번에 거른다.
   - 치환 대상 예: `root_path`, `file_results[].path`, Ruff finding 파일명, 읽기 실패 사유, LLM finding 문구
   - 기준 경로와 치환 문자열은 인자로 받는다. 치환 문자열이 빈 문자열이면 뒤따르는 구분자도 함께 지운다.
-  - 기준 경로는 `expanduser().resolve()`한 뒤 비교한다. pipeline이 입력 경로를 같은 방식으로 바꿔(`pipeline.py`의 `run()`) 보고서에는 펼친 절대 경로만 들어가므로, 상대 경로·`~`·symlink가 든 기준은 일치하지 않아 서버 경로가 그대로 남는다.
+  - 기준 경로 바로 뒤에 글자·숫자·`_`·`-`나 "`.`+글자"가 오면 다른 이름(`root-sibling`, `root.bak`)으로 보고 두고, 그 밖의 문자(구분자, 문자열 끝, 문장부호, 공백, 따옴표, 괄호)가 오면 치환한다. LLM prompt에 서버 절대 경로가 들어가므로(`root_path`, `analysis.path`) LLM 요약·finding 문구와 응답 미리보기에 `<경로>.`처럼 문장부호가 바로 붙은 경로가 나올 수 있기 때문이다.
+  - 기준 경로는 `expanduser().resolve()`한 뒤 비교한다. pipeline이 입력 경로를 같은 방식으로 바꿔(`pipeline.py`의 `analyze()`) 보고서에는 펼친 절대 경로만 들어가므로, 상대 경로·`~`·symlink가 든 기준은 일치하지 않아 서버 경로가 그대로 남는다.
   - 웹은 아래 순서로 세 번 거른다. 긴 기준부터 처리해야 하므로 순서를 바꾸지 않는다(3단계를 먼저 하면 `<data>/upload/a.py`가 된다).
-    1. 업로드를 담는 디렉터리(`NURILAB_WEB_DATA_DIR/<job_id>/upload/`) 접두어를 지운다. 단일 파일은 `file.py`, 폴더는 `myproj`와 `myproj/a.py`가 된다.
-    2. 그래도 절대 경로로 남은 finding의 `file`은 파일 이름만 남긴다. LLM finding의 `file`이 `../notes.py`처럼 기준 밖을 가리키면 `llm/review.py:313`·`:326`의 `resolve()` 결과가 업로드 디렉터리 밖이 되어 1단계에서 빠진다(단일 파일은 `../`부터, 폴더는 `../../`부터). job 폴더 밖까지 나간 경로와 LLM이 지어낸 절대 경로도 여기서 처리된다.
-    3. 모든 문자열에 남은 job 폴더(`NURILAB_WEB_DATA_DIR/<job_id>`) 경로는 `<data>`로 바꾼다. 기준은 `NURILAB_WEB_DATA_DIR` 전체가 아니라 UUID가 들어간 job 폴더로 한정한다. 보고서에는 secret 미리보기 같은 사용자 코드 문자열도 들어가므로, 기준이 넓으면 코드 속 같은 경로 문자열까지 바뀌어 분석 근거가 달라지고 웹·CLI 결과도 어긋난다.
+    1. `relativize_report(report, <업로드 디렉터리>, "")`: 업로드를 담는 디렉터리(`NURILAB_WEB_DATA_DIR/<job_id>/upload/`) 접두어를 지운다. 단일 파일은 `file.py`, 폴더는 `myproj`와 `myproj/a.py`가 된다.
+    2. `name_absolute_finding_files(report, <업로드 디렉터리>)`: 그래도 절대 경로로 남은 리뷰 finding(`review.findings`)의 `file`은 파일 이름만 남긴다. POSIX와 Windows 형식(`C:\…`, `\\host\…`)의 절대 경로를 모두 대상으로 한다. 업로드 디렉터리 자체나 그 상위 폴더(`..`, `../..`, `/`, `..`을 섞어 쓴 절대 경로, Linux가 `/`와 같게 읽는 `//`로 시작하는 경로 포함)를 가리키면 파일 이름 대신 `None`으로 둔다. 파일 이름만 남기면 job UUID, 데이터 폴더 이름, 서버 사용자명 같은 상위 폴더 이름이 한 단계씩 드러나기 때문이다. 이름이 없는 경로(`C:\`)도 `None`이다. LLM finding의 `file`이 `../notes.py`처럼 기준 밖을 가리키면 `llm/review.py:313`·`:326`의 `resolve()` 결과가 업로드 디렉터리 밖이 되어 1단계에서 빠진다(단일 파일은 `../`부터, 폴더는 `../../`부터). job 폴더 밖까지 나간 경로와 LLM이 지어낸 절대 경로도 여기서 처리된다.
+    3. `relativize_report(report, <job 폴더>, "<data>")`: 모든 문자열에 남은 job 폴더(`NURILAB_WEB_DATA_DIR/<job_id>`) 경로는 `<data>`로 바꾼다. 기준은 `NURILAB_WEB_DATA_DIR` 전체가 아니라 UUID가 들어간 job 폴더로 한정한다. 보고서에는 secret 미리보기 같은 사용자 코드 문자열도 들어가므로, 기준이 넓으면 코드 속 같은 경로 문자열까지 바뀌어 분석 근거가 달라지고 웹·CLI 결과도 어긋난다.
   - 단일 파일에서 파일 경로나 그 상위 폴더를 기준으로 삼지 않는다. LLM finding의 `file`은 빈 값이면 `analysis.path`, 상대 경로면 `Path(analysis.path).parent` 기준의 절대 경로가 되므로(`llm/review.py:319`~`:326`), 기준에 따라 `file.py/file.py`처럼 어긋난다.
-  - LLM finding의 `file`이 `.`처럼 업로드 디렉터리 자체를 가리키면 1단계 뒤 빈 문자열이 된다. 보고서는 파일 없이 줄 번호만 표시한다(`_finding_location()`).
+  - LLM finding의 `file`이 `.`처럼 업로드 디렉터리 자체를 가리키면(단일 파일) 1단계에서 빈 값이 되어 `None`(JSON `null`)으로 저장된다. 보고서는 파일 없이 줄 번호만 표시한다(`_finding_location()`). 폴더의 `.`은 분석 루트를 가리키므로 `myproj`가 된다.
   - 테스트는 지금처럼 분석 루트를 `<ROOT>`로 바꾼다.
-  - 치환 규칙은 `tests/test_external_regression.py`의 `_normalize_string()`을 옮겨 공용으로 쓰고, 테스트의 `normalize_report()`는 그 위에 얹는다. `generated_at` 제거는 테스트에 남긴다. 구분자까지 지우는 동작은 치환 문자열이 `""`일 때만 적용해 기존 `<ROOT>` 결과와 외부 회귀 기준선을 바꾸지 않는다.
+  - 치환 규칙은 `tests/test_external_regression.py`의 `_normalize_string()`을 `reports/paths.py`의 `replace_root()`로 옮겨 공용으로 쓰고, 테스트의 `normalize_report()`는 그 위에 얹는다. `generated_at` 제거는 테스트에 남긴다. 구분자까지 지우는 동작은 치환 문자열이 `""`일 때만 적용해 기존 `<ROOT>` 결과와 외부 회귀 기준선을 바꾸지 않는다.
 - `_report_stem()`은 폴더 보고서면 `root_path`의 이름, 단일 파일 보고서면 `analysis.path`의 stem으로 파일명을 만든다. 두 경우 모두 치환 뒤에도 올바른지 확인한다.
 - 웹은 업로드 이름이 겹쳐도 충돌하지 않도록 보고서를 `NURILAB_WEB_DATA_DIR/<job_id>/` 아래에 저장한다.
 
@@ -298,7 +300,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 - 걸러내기: `.py`가 아닌 파일과 제외 폴더 아래 파일은 버려짐, 최상위 폴더 이름이 제외 폴더와 같아도 분석됨
 - 리뷰 모드: Mock은 연결 확인 없이 실행, `local` + 연결됨이면 LLM으로 실행, `local` + 미연결이면 `503`이고 job이 생기지 않음, `/models`의 401·5xx·깨진 JSON도 `503 llm_unavailable`
 - 실패와 복구: 분석 예외 시 `failed`, 재시작 시 `queued`·`running`이 `failed`로 바뀌고 원본 삭제, 분석 완료 후 원본 삭제
-- 경로: `NURILAB_WEB_DATA_DIR`이 상대 경로이거나 symlink를 거쳐도 보고서 JSON·HTML에 `NURILAB_WEB_DATA_DIR` 문자열이 남지 않음. 함께 넣을 경우는 job 폴더 밖까지 나간 LLM `../` 경로, LLM이 지어낸 절대 경로, 읽기 실패 사유, `.` 경로(빈 문자열)다. 사용자 코드에 job 폴더 밖의 `NURILAB_WEB_DATA_DIR` 경로 문자열이 들어 있으면, 이 검사에서 그 문자열은 제외하고 원래 값 그대로 남는지 따로 확인함. `C:\…`·`\\host\…` 이름은 파일 이름으로 처리됨
+- 경로: `NURILAB_WEB_DATA_DIR`이 상대 경로이거나 symlink를 거쳐도 보고서 JSON·HTML에 `NURILAB_WEB_DATA_DIR` 문자열이 남지 않음. 함께 넣을 경우는 job 폴더 밖까지 나간 LLM `../` 경로, LLM이 지어낸 절대 경로, 읽기 실패 사유, `.` 경로(`null`), 업로드 디렉터리 상위 폴더를 가리키는 `..`·`../..` 경로(`null`, 폴더 이름도 남지 않음), 문장부호가 바로 붙은 job 폴더 경로다. 사용자 코드에 job 폴더 밖의 `NURILAB_WEB_DATA_DIR` 경로 문자열이 들어 있으면, 이 검사에서 그 문자열은 제외하고 원래 값 그대로 남는지 따로 확인함. `C:\…`·`\\host\…` 이름은 파일 이름으로 처리됨
 - 화면용 결과: `review.status=failed`일 때 `/result` 응답에 endpoint URL과 `Cause:` 원문이 없고 `failure_code`별 고정 문구가 들어 있음, 저장된 `report.json`은 원문을 그대로 유지함
 - 응답: 모든 오류가 `{code, message}` 형태, 미완료 보고서 `409 report_not_ready`, 실패 보고서 `409 report_unavailable`, 없는 경로·UUID 형식이 아닌 id `404 not_found`, 잘못된 메서드 `405 method_not_allowed`
 - 동시성: 느린 가짜 LLM으로 분석하는 동안에도 `/healthz`와 상태 조회가 응답하고, job이 동시에 하나만 실행됨
@@ -330,6 +332,7 @@ README와 USAGE에 적을 것:
 
 - 인증이 없다. UUID job id는 추측만 막을 뿐, 링크를 아는 사람은 누구나 볼 수 있다.
 - 다운로드한 보고서에는 LLM 실패 finding의 원문(§7.3)이 남는다.
+- LLM prompt에는 서버 절대 경로(`root_path`, 단일 파일의 `file`, 읽기 실패 사유)가 들어간다. LLM이 이 경로를 데이터 폴더나 그보다 위에서 잘라 요약·finding 문구에 쓰면 그 경로(서버 폴더 구조와 사용자명)는 경로 치환(§3.2)에서 빠져 화면과 보고서에 남는다. job 폴더 경로 바로 뒤에 `.bak`, `-old`처럼 이름 문자가 붙은 경우도 다른 폴더 이름과 구별할 수 없어 남는다.
 - 업로드 원본은 지우지만 보고서와 SQLite 기록은 자동으로 지우지 않는다. 필요하면 `NURILAB_WEB_DATA_DIR`을 수동으로 정리한다.
 - 분석은 프로세스 격리와 전체 timeout 없이 실행된다.
 - 웹에서는 Ruff를 실행하지 않는다.

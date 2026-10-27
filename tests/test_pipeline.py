@@ -11,6 +11,7 @@ from mcp import types
 
 from project_nurilab.external.jadx_mcp_client import JadxMcpClient, McpSession
 from project_nurilab.pipeline import Phase1Pipeline
+from project_nurilab.reports.generator import ReportGenerator
 from project_nurilab.schemas import (
     AnalysisReport,
     ExternalToolCall,
@@ -65,6 +66,48 @@ def test_phase1_pipeline_generates_reports(tmp_path: Path) -> None:
     assert output_paths["json"].name == "clean_sample.analysis.json"
     assert output_paths["html"].exists()
     assert output_paths["json"].exists()
+
+
+class _NoWriteReportGenerator(ReportGenerator):
+    def write(self, *args: Any, **kwargs: Any) -> dict[str, Path]:
+        raise AssertionError("analyze() must not write report files")
+
+
+def _tree_snapshot(root: Path) -> list[str]:
+    return sorted(str(path.relative_to(root)) for path in root.rglob("*"))
+
+
+@pytest.mark.parametrize("kind", ["file", "project"])
+def test_pipeline_analyze_returns_run_report_without_writing_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """analyze() builds the report run() writes, without touching the disk."""
+
+    input_path = (
+        FIXTURES / "vulnerable_sample.py"
+        if kind == "file"
+        else _copy_mixed_risk_project_fixture(tmp_path)
+    )
+    workdir = tmp_path / "cwd"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    before = _tree_snapshot(tmp_path)
+
+    report = Phase1Pipeline(
+        use_ruff=False, report_generator=_NoWriteReportGenerator()
+    ).analyze(input_path)
+
+    assert isinstance(report, AnalysisReport if kind == "file" else ProjectReport)
+    assert _tree_snapshot(tmp_path) == before
+    run_report, output_paths = Phase1Pipeline(use_ruff=False).run(
+        input_path=input_path, output_dir=tmp_path / "out"
+    )
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload == run_report.to_dict()
+    payload.pop("generated_at")
+    analyzed = report.to_dict()
+    analyzed.pop("generated_at")
+    assert analyzed == payload
 
 
 def test_pipeline_generates_reports_for_large_python_file(tmp_path: Path) -> None:
