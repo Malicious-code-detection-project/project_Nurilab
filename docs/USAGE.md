@@ -151,7 +151,9 @@ Mock도 읽지 못한 단일 파일(skipped)은 `risk_level`이 `unknown`이므�
   받다가 멈춘 경우도 포함합니다.
 - `http_error` (HTTP 오류): OpenAI-compatible endpoint와 server log를 확인합니다.
 - `invalid_response` (응답 shape 오류): 응답이 OpenAI-compatible
-  `choices[0].message.content` 구조인지 server log와 함께 확인합니다.
+  `choices[0].message.content` 구조인지 server log와 함께 확인합니다. 응답 본문을
+  받는 도중 연결이 끊긴 경우도 여기에 해당하므로 서버 재시작이나 네트워크 상태도
+  확인합니다.
 - `json_parse_failed` (JSON/schema 오류): 모델이 JSON object만 반환하는지와
   `low`/`medium`/`high` severity 계약을 확인합니다. `message.content`가 `null`인
   응답(예: gpt-oss가 추론에 토큰을 다 쓴 경우)도 여기에 해당합니다.
