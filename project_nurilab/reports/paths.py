@@ -11,6 +11,7 @@ longer roots go first.
 from __future__ import annotations
 
 import copy
+import ntpath
 import posixpath
 from dataclasses import fields, is_dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -21,6 +22,7 @@ from project_nurilab.schemas import AnalysisReport, ProjectReport
 
 ReportT = TypeVar("ReportT", bound=AnalysisReport | ProjectReport)
 _SEPARATORS = frozenset({"/", "\\"})
+_OUTSIDE_MARKER = "<outside>"
 
 
 def replace_root(value: str, root_path: str | Path, replacement: str) -> str:
@@ -52,23 +54,42 @@ def relativize_report(
 
 
 def name_absolute_finding_files(report: ReportT, root_path: str | Path) -> ReportT:
-    """Return a copy of ``report`` keeping only the name of absolute finding files.
+    """Return a copy of ``report`` with finding files cleaned against ``root_path``.
 
     Run after ``relativize_report()`` with the same ``root_path``. A Local LLM
     finding ``file`` such as ``../notes.py`` or an invented ``/etc/passwd``
     resolves outside the root and stays absolute, so only its file name is
-    kept. A file that is ``root_path`` or one of its parents (``..``,
-    ``../..``, ``//<parent>``) would name a server directory, so it becomes
-    ``None``.
+    kept, as ``<outside>/notes.py``. A file that is ``root_path`` or one of its
+    parents (``..``, ``../..``, ``//<parent>``) would name a server directory,
+    so it becomes ``None``. A file that normalizes to a path inside
+    ``root_path`` keeps that relative path. A relative file with ``..`` is
+    resolved against ``root_path`` first, because ``relativize_report()``
+    turns ``<root>/../x`` into ``../x``. ``\\`` is read as a separator, as in
+    ``relativize_report()``.
     """
 
-    root = PurePosixPath(Path(root_path).expanduser().resolve().as_posix())
+    resolved = Path(root_path).expanduser().resolve().as_posix()
+    # Files are read with "\" as "/", so the root must be read the same way.
+    root = PurePosixPath(resolved.replace("\\", "/"))
     named = copy.deepcopy(report)
     for finding in named.review.findings:
-        if not finding.file or not _is_absolute(finding.file):
+        if not finding.file:
             continue
-        # normpath folds "a/../a" so a parent spelled with ".." is caught too.
-        normalized = posixpath.normpath(finding.file)
+        # Step 1 treats "\" as a separator too, so read it as one here.
+        slashed = finding.file.replace("\\", "/")
+        is_absolute = _is_absolute(finding.file)
+        # review() joins a "\srv\x.py" file under the root, leaving "myproj/\srv...";
+        # read the path from the "\" again. An absolute "/a//b" is already whole.
+        anchor = slashed.find("//")
+        if anchor > 0 and not is_absolute:
+            slashed = slashed[anchor + 1 :]
+        if is_absolute or slashed.startswith("/"):
+            # normpath folds "a/../a" so a parent spelled with ".." is caught too.
+            normalized = posixpath.normpath(slashed)
+        elif ".." in PurePosixPath(slashed).parts:
+            normalized = posixpath.normpath(f"{root}/{slashed}")
+        else:
+            continue
         # POSIX keeps exactly two leading slashes, but Linux reads "//a" as "/a".
         if normalized.startswith("//"):
             normalized = normalized[1:]
@@ -76,13 +97,22 @@ def name_absolute_finding_files(report: ReportT, root_path: str | Path) -> Repor
         if posix_file.is_absolute():
             if root.is_relative_to(posix_file):
                 finding.file = None
+            elif posix_file.is_relative_to(root):
+                finding.file = posix_file.relative_to(root).as_posix()
             else:
-                finding.file = posix_file.name or None
+                finding.file = _outside_name(posix_file.name)
         else:
             # PureWindowsPath splits on both separators, so this covers both forms.
-            # Bare roots such as "C:\" have no name and become None like "".
-            finding.file = PureWindowsPath(finding.file).name or None
+            # ntpath.normpath folds "C:\x\.." to "C:\"; bare roots have no name
+            # and become None like "".
+            windows_file = PureWindowsPath(ntpath.normpath(finding.file))
+            finding.file = _outside_name(windows_file.name)
     return named
+
+
+def _outside_name(name: str) -> str | None:
+    # Mark the name so it is not mistaken for an uploaded file with the same name.
+    return f"{_OUTSIDE_MARKER}/{name}" if name else None
 
 
 def _is_absolute(value: str) -> bool:

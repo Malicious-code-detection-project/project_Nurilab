@@ -65,7 +65,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
   - 기준 경로는 `expanduser().resolve()`한 뒤 비교한다. pipeline이 입력 경로를 같은 방식으로 바꿔(`pipeline.py`의 `analyze()`) 보고서에는 펼친 절대 경로만 들어가므로, 상대 경로·`~`·symlink가 든 기준은 일치하지 않아 서버 경로가 그대로 남는다.
   - 웹은 아래 순서로 세 번 거른다. 긴 기준부터 처리해야 하므로 순서를 바꾸지 않는다(3단계를 먼저 하면 `<data>/upload/a.py`가 된다).
     1. `relativize_report(report, <업로드 디렉터리>, "")`: 업로드를 담는 디렉터리(`NURILAB_WEB_DATA_DIR/<job_id>/upload/`) 접두어를 지운다. 단일 파일은 `file.py`, 폴더는 `myproj`와 `myproj/a.py`가 된다.
-    2. `name_absolute_finding_files(report, <업로드 디렉터리>)`: 그래도 절대 경로로 남은 리뷰 finding(`review.findings`)의 `file`은 파일 이름만 남긴다. POSIX와 Windows 형식(`C:\…`, `\\host\…`)의 절대 경로를 모두 대상으로 한다. 업로드 디렉터리 자체나 그 상위 폴더(`..`, `../..`, `/`, `..`을 섞어 쓴 절대 경로, Linux가 `/`와 같게 읽는 `//`로 시작하는 경로 포함)를 가리키면 파일 이름 대신 `None`으로 둔다. 파일 이름만 남기면 job UUID, 데이터 폴더 이름, 서버 사용자명 같은 상위 폴더 이름이 한 단계씩 드러나기 때문이다. 이름이 없는 경로(`C:\`)도 `None`이다. LLM finding의 `file`이 `../notes.py`처럼 기준 밖을 가리키면 `LocalLLMReviewClient.review()`가 상대 경로를 절대 경로로 바꾸는 `resolve()`의 결과가 업로드 디렉터리 밖이 되어 1단계에서 빠진다(단일 파일은 `../`부터, 폴더는 `../../`부터). job 폴더 밖까지 나간 경로와 LLM이 지어낸 절대 경로도 여기서 처리된다.
+    2. `name_absolute_finding_files(report, <업로드 디렉터리>)`: 그래도 절대 경로로 남은 리뷰 finding(`review.findings`)의 `file`은 경로를 지우고 `<outside>/파일 이름`으로 남긴다(`../notes.py` → `<outside>/notes.py`). 단일 파일 `notes.py`를 올렸을 때 업로드 밖을 가리킨 `../notes.py`가 업로드한 파일의 지적처럼 보이지 않게 하기 위해서다. POSIX와 Windows 형식(`C:\…`, `\\host\…`)의 절대 경로를 모두 대상으로 한다. 업로드 디렉터리 자체나 그 상위 폴더(`..`, `../..`, `/`, `..`을 섞어 쓴 절대 경로, Linux가 `/`와 같게 읽는 `//`로 시작하는 경로 포함)를 가리키면 파일 이름 대신 `None`으로 둔다. 파일 이름만 남기면 job UUID, 데이터 폴더 이름, 서버 사용자명 같은 상위 폴더 이름이 한 단계씩 드러나기 때문이다. 이름이 없는 경로(`C:\`)도 `None`이다. LLM이 `<업로드 디렉터리>/../..`처럼 업로드 디렉터리에서 시작해 `..`으로 올라가는 절대 경로를 주면 1단계 뒤 `../..`처럼 상대 경로로 남으므로, `..`이 든 상대 경로는 업로드 디렉터리에 붙여 정규화한 뒤 같은 규칙을 적용한다. 절대 경로와 `..`이 든 상대 경로 모두, 정규화 결과가 업로드 디렉터리 안이면 그 상대 경로(`myproj/a.py`)를 남긴다(예: `<data>/x/../<job>/upload/myproj/a.py`). 1단계가 기준 경로 뒤의 `/`와 `\`를 모두 구분자로 지우므로, 2단계도 `\`를 구분자로 읽어 `<업로드 디렉터리>\..\..`이나 `/…/nurilab_data\x.py`처럼 `\`를 쓴 경로에 같은 규칙을 적용한다. `\srv\data\x.py`처럼 `\`로 시작한 경로는 Linux에서 절대 경로가 아니라서 `review()`가 업로드 기준으로 붙이므로(`myproj/\srv\data\x.py`), 절대 경로가 아닌 값에 `\`로 시작한 조각이 있으면 그 조각부터 절대 경로로 읽는다. LLM finding의 `file`이 `../notes.py`처럼 기준 밖을 가리키면 `LocalLLMReviewClient.review()`가 상대 경로를 절대 경로로 바꾸는 `resolve()`의 결과가 업로드 디렉터리 밖이 되어 1단계에서 빠진다(단일 파일은 `../`부터, 폴더는 `../../`부터). job 폴더 밖까지 나간 경로와 LLM이 지어낸 절대 경로도 여기서 처리된다.
     3. `relativize_report(report, <job 폴더>, "<data>")`: 모든 문자열에 남은 job 폴더(`NURILAB_WEB_DATA_DIR/<job_id>`) 경로는 `<data>`로 바꾼다. 기준은 `NURILAB_WEB_DATA_DIR` 전체가 아니라 UUID가 들어간 job 폴더로 한정한다. 보고서에는 secret 미리보기 같은 사용자 코드 문자열도 들어가므로, 기준이 넓으면 코드 속 같은 경로 문자열까지 바뀌어 분석 근거가 달라지고 웹·CLI 결과도 어긋난다.
   - 단일 파일에서 파일 경로나 그 상위 폴더를 기준으로 삼지 않는다. LLM finding의 `file`은 빈 값이면 `analysis.path`, 상대 경로면 `Path(analysis.path).parent` 기준의 절대 경로가 되므로(`LocalLLMReviewClient.review()`의 단일 파일 분기), 기준에 따라 `file.py/file.py`처럼 어긋난다.
   - LLM finding의 `file`이 `.`처럼 업로드 디렉터리 자체를 가리키면(단일 파일) 1단계에서 빈 값이 되어 `None`(JSON `null`)으로 저장된다. 보고서는 파일 없이 줄 번호만 표시한다(`_finding_location()`). 폴더의 `.`은 분석 루트를 가리키므로 `myproj`가 된다.
@@ -228,6 +228,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 
 - 업로드 원본, 보고서, SQLite 파일은 `NURILAB_WEB_DATA_DIR` 아래에 둔다. 사내 소스가 실수로 커밋되지 않도록 기본값은 저장소 밖(예: `~/.local/share/nurilab-web`)이다.
 - 앱 시작 시 `NURILAB_WEB_DATA_DIR`을 `expanduser().resolve()`한 절대 경로로 한 번 바꾸고, 업로드 저장·pipeline 입력·경로 치환 기준(§3.2)에 모두 이 값을 쓴다. 펼치지 않은 `~`를 쓰면 업로드는 현재 디렉터리 아래 `~` 폴더에 저장되고 pipeline은 홈 경로를 찾아 모든 job이 `failed`가 된다.
+- 바꾼 경로에 `\`가 있으면 앱을 시작하지 않고 오류로 종료한다. Linux에서 `\`는 폴더 이름에 쓸 수 있는 글자지만, 경로 치환 2단계(§3.2)는 LLM이 쓴 `\`를 구분자로 읽으므로 데이터 경로에 `\`가 있으면 `..` 단계 수가 어긋나 상위 폴더 이름이 남을 수 있다.
 - 분석이 끝나면(성공·실패 모두) 업로드 원본을 바로 삭제하고 보고서만 남긴다.
 - SQLite는 파일 하나, 테이블 하나다.
   - 컬럼: id, 상태, 실패 코드, 생성·완료 시각, 업로드 이름, 파일 수, 리뷰 종류, 리뷰 모델, 리뷰 상태, 리뷰 실패 코드, 리뷰 위험도, 정적 위험도, 보고서 경로
@@ -247,7 +248,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
   - 폴더: 모든 파일이 최상위 폴더 하나 아래에 있다. 분석 루트와 업로드 이름은 그 폴더다.
 - `400 invalid_path`로 거부하는 경우:
   - `..`, 절대 경로, 드라이브 문자(`C:/` 등), 빈 이름이나 빈 경로 조각
-  - 백슬래시(`\`), NUL 문자
+  - 백슬래시(`\`), NUL 문자, `<`·`>`(업로드 밖 경로 표식 `<outside>`(§3.2)와 겹치지 않도록. Windows는 파일 이름에 쓸 수 없는 문자다)
   - 같은 상대 경로가 두 번 이상 온 경우
   - 최상위 폴더가 둘 이상, 파일과 폴더가 섞임, 경로 없는 파일이 2개 이상
 - `C:\evil\x.py`, `\\host\share\x.py`처럼 `X:\`나 `\\`로 시작하는 이름은 python-multipart가 핸들러에 넘기기 전에 파일 이름(`x.py`)만 남긴다(IE6 대응 코드). 이 경우는 따로 거부하지 않고 잘린 이름에 같은 규칙을 적용한다. 폴더 업로드에 섞이면 "파일과 폴더가 섞임"으로 `400`이 된다.
@@ -303,8 +304,9 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 - 거부: 경로 조작, 중복 경로, 최상위 폴더 2개 이상(`400 invalid_path`), multipart가 아닌 요청, 깨진 multipart와 안전 상한 초과(`400 invalid_upload`), `Content-Length` 초과(`413 too_large`), `.py` 수 초과(`413 too_many_files`), `.py` 0개(`422`)
 - 걸러내기: `.py`가 아닌 파일과 제외 폴더 아래 파일은 버려짐, 최상위 폴더 이름이 제외 폴더와 같아도 분석됨
 - 리뷰 모드: Mock은 연결 확인 없이 실행, `local` + 연결됨이면 LLM으로 실행, `local` + 미연결이면 `503`이고 job이 생기지 않음, `/models`의 401·5xx·깨진 JSON도 `503 llm_unavailable`
+- 시작 설정: `NURILAB_WEB_DATA_DIR`에 `\`가 있으면 앱이 시작되지 않음
 - 실패와 복구: 분석 예외 시 `failed`, 재시작 시 `queued`·`running`이 `failed`로 바뀌고 원본 삭제, 분석 완료 후 원본 삭제
-- 경로: `NURILAB_WEB_DATA_DIR`이 상대 경로이거나 symlink를 거쳐도 보고서 JSON·HTML에 `NURILAB_WEB_DATA_DIR` 문자열이 남지 않음. 함께 넣을 경우는 job 폴더 밖까지 나간 LLM `../` 경로, LLM이 지어낸 절대 경로, 읽기 실패 사유, `.` 경로(`null`), 업로드 디렉터리 상위 폴더를 가리키는 `..`·`../..` 경로(`null`, 폴더 이름도 남지 않음), 문장부호가 바로 붙은 job 폴더 경로다. 사용자 코드에 job 폴더 밖의 `NURILAB_WEB_DATA_DIR` 경로 문자열이 들어 있으면, 이 검사에서 그 문자열은 제외하고 원래 값 그대로 남는지 따로 확인함. `C:\…`·`\\host\…` 이름은 파일 이름으로 처리됨
+- 경로: `NURILAB_WEB_DATA_DIR`이 상대 경로이거나 symlink를 거쳐도 보고서 JSON·HTML에 `NURILAB_WEB_DATA_DIR`을 `expanduser().resolve()`한 절대 경로 문자열이 남지 않음. 설정값 문자열 그대로 검사하면 `data`처럼 짧은 상대 경로일 때 치환 결과 `<data>`에도 걸리므로 절대 경로로 검사한다. 함께 넣을 경우는 job 폴더 밖까지 나간 LLM `../` 경로, LLM이 지어낸 절대 경로, 읽기 실패 사유, `.` 경로(`null`), 업로드 디렉터리 상위 폴더를 가리키는 `..`·`../..` 경로(`null`, 폴더 이름도 남지 않음), `\`로 쓴 같은 경로, 문장부호가 바로 붙은 job 폴더 경로다. 사용자 코드에 job 폴더 밖의 `NURILAB_WEB_DATA_DIR` 경로 문자열이 들어 있으면, 이 검사에서 그 문자열은 제외하고 원래 값 그대로 남는지 따로 확인함. 업로드 밖 경로와 `C:\…`·`\\host\…` 경로는 `<outside>/파일 이름`으로 처리됨
 - 화면용 결과: `review.status=failed`일 때 `/result` 응답에 endpoint URL과 `Cause:` 원문이 없고 `failure_code`별 고정 문구가 들어 있음, 저장된 `report.json`은 원문을 그대로 유지함
 - 응답: 모든 오류가 `{code, message}` 형태, 미완료 보고서 `409 report_not_ready`, 실패 보고서 `409 report_unavailable`, 없는 경로·UUID 형식이 아닌 id `404 not_found`, 잘못된 메서드 `405 method_not_allowed`
 - 동시성: 느린 가짜 LLM으로 분석하는 동안에도 `/healthz`와 상태 조회가 응답하고, job이 동시에 하나만 실행됨
@@ -352,4 +354,5 @@ README와 USAGE에 적을 것:
 - `.py`가 0개인 업로드는 CLI와 달리 거부된다.
 - 리뷰 요청은 endpoint가 보낸 redirect를 따라간다. vLLM은 redirect를 보내지 않고 endpoint는 관리자가 정하므로, 고치려고 기존 CLI 동작을 바꾸지 않는다. 연결 확인(§3.4)은 따라가지 않는다.
 - LLM 요청 timeout(연결 확인 5초, 리뷰 `NURILAB_LLM_TIMEOUT`)은 연결과 각 읽기 대기에 걸리는 값이라 전체 시간 상한이 아니다. 조금씩 계속 보내는 서버라면 더 오래 걸린다.
+- 폴더 업로드에서 LLM finding의 `file`이 `../a.py`처럼 업로드한 폴더 밖이지만 업로드 디렉터리 안을 가리키면 `<outside>` 표식 없이 `a.py`로 남는다. 업로드한 파일은 항상 `myproj/…`로 표시되므로 구별할 수 있고, 표식을 붙이려면 1단계 기준을 바꿔야 해서 유지한다. 같은 이유로 폴더 업로드에서 LLM이 업로드 경로 자체를 `\`로 쓰면 `myproj/myproj\a.py`처럼 폴더 이름이 한 번 더 붙어 보인다. 서버 정보는 남지 않는다.
 - 응답 본문을 받는 도중 연결이 끊기면 `failure_code`가 `connection_failed`가 아니라 `invalid_response`가 된다. 실패로 기록되고 정적 분석 결과도 그대로 남으며, 안내 문구만 다르다.

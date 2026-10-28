@@ -1385,6 +1385,7 @@ def _assert_no_server_path(output_paths: dict[str, Path], server_path: Path) -> 
     for output_format in ("json", "html"):
         text = output_paths[output_format].read_text(encoding="utf-8")
         assert str(server_path) not in text, output_format
+        assert str(server_path).replace("/", "\\") not in text, output_format
 
 
 @pytest.mark.parametrize("kind", ["file", "project"])
@@ -1503,13 +1504,26 @@ def test_relativize_report_removes_upload_root_from_llm_finding_files(
                 "//etc/passwd",
                 "C:\\work\\x.py",
                 "C:\\",
+                "C:\\..",
+                "C:\\x\\..",
+                "C:\\x\\..\\y.py",
             ],
-            ["notes.py", "outside.py", "passwd", "passwd", "x.py", None],
+            [
+                "<outside>/notes.py",
+                "<outside>/outside.py",
+                "<outside>/passwd",
+                "<outside>/passwd",
+                "<outside>/x.py",
+                None,
+                None,
+                None,
+                "<outside>/y.py",
+            ],
         ),
         (
             "project",
             ["../../notes.py", "../a.py", "pkg/b.py"],
-            ["notes.py", "a.py", "myproj/pkg/b.py"],
+            ["<outside>/notes.py", "a.py", "myproj/pkg/b.py"],
         ),
     ],
 )
@@ -1539,6 +1553,9 @@ def test_web_path_steps_remove_paths_outside_upload_root(
     assert [finding.file for finding in step3.review.findings] == expected_files
     assert step3.review.summary == "Checked <data>/cache, <data>."
     _assert_no_server_path(output_paths, tmp_path)
+    html = output_paths["html"].read_text(encoding="utf-8")
+    assert "&lt;outside&gt;/notes.py" in html
+    assert "<outside>" not in html
 
 
 @pytest.mark.parametrize("kind", ["file", "project"])
@@ -1565,6 +1582,20 @@ def test_web_path_steps_hide_server_directory_names(
         f"/{data_dir}",
         f"/{tmp_path}",
         "//",
+        # Step 1 strips the upload root and leaves "../..", so step 2 resolves it.
+        f"{upload_root}/..",
+        f"{upload_root}/../../..",
+        f"{upload_root}/../../../{data_dir.name}",
+        f"{upload_root}/myproj/../../../../{data_dir.name}/",
+        # Step 1 also strips the root before "\", so "\" must be read the same way.
+        f"{upload_root}\\..\\..",
+        f"{upload_root}\\..\\..\\..\\{data_dir.name}",
+        # Server parents written entirely with "\".
+        str(data_dir).replace("/", "\\"),
+        str(job_dir).replace("/", "\\"),
+        # An absolute path with "//" inside is read whole, not from the "//".
+        f"{data_dir}//{job_dir.name}",
+        f"{tmp_path}//{data_dir.name}",
     ]
     report = _analyze_with_llm_findings(monkeypatch, target, parent_files)
 
@@ -1581,6 +1612,108 @@ def test_web_path_steps_hide_server_directory_names(
         assert "SECRETNAME" not in text, output_format
         assert job_dir.name not in text, output_format
         assert tmp_path.name not in text, output_format
+
+
+@pytest.mark.parametrize("kind", ["file", "project"])
+def test_web_path_steps_hide_parents_when_data_dir_has_backslash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """Linux allows "\\" in a directory name; the root is read like the files."""
+
+    data_dir = tmp_path / "nuri\\SECRETNAME"
+    job_dir = data_dir / "0b7c8f8e-1111-4222-8333-444455556666"
+    upload_root = job_dir / "upload"
+    target = _write_upload(upload_root, kind)
+    up = [".."] * (1 if kind == "file" else 2)
+    parent_files = [
+        "..",
+        *("/".join(up + [".."] * extra) for extra in range(3)),
+        str(job_dir),
+        str(data_dir),
+        f"{upload_root}/../..",
+    ]
+    report = _analyze_with_llm_findings(monkeypatch, target, parent_files)
+
+    step1 = relativize_report(report, upload_root, "")
+    step2 = name_absolute_finding_files(step1, upload_root)
+    step3 = relativize_report(step2, job_dir, "<data>")
+    output_paths = ReportGenerator().write(step3, tmp_path / "out")
+
+    assert [finding.file for finding in step3.review.findings] == [None] * len(
+        parent_files
+    )
+    for output_format in ("json", "html"):
+        text = output_paths[output_format].read_text(encoding="utf-8")
+        assert "SECRETNAME" not in text, output_format
+        assert job_dir.name not in text, output_format
+
+
+@pytest.mark.parametrize("kind", ["file", "project"])
+def test_web_path_steps_read_server_paths_written_with_backslash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """A "\\srv\\..." file is not absolute on Linux, so review() joins it under root."""
+
+    data_dir = tmp_path / "nurilab_data_SECRETNAME"
+    job_dir = data_dir / "0b7c8f8e-1111-4222-8333-444455556666"
+    upload_root = job_dir / "upload"
+    target = _write_upload(upload_root, kind)
+    backslash_data_dir = str(data_dir).replace("/", "\\")
+    llm_files = [
+        f"{backslash_data_dir}\\x.py",
+        f"{backslash_data_dir}\\..\\{data_dir.name}\\x.py",
+    ]
+    report = _analyze_with_llm_findings(monkeypatch, target, llm_files)
+
+    step1 = relativize_report(report, upload_root, "")
+    step2 = name_absolute_finding_files(step1, upload_root)
+    step3 = relativize_report(step2, job_dir, "<data>")
+    output_paths = ReportGenerator().write(step3, tmp_path / "out")
+
+    assert [finding.file for finding in step3.review.findings] == [
+        "<outside>/x.py",
+        "<outside>/x.py",
+    ]
+    _assert_no_server_path(output_paths, tmp_path)
+    for output_format in ("json", "html"):
+        text = output_paths[output_format].read_text(encoding="utf-8")
+        assert "SECRETNAME" not in text, output_format
+
+
+def test_web_path_steps_resolve_dotdot_left_after_upload_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Files are normalized: inside stays relative, outside is marked."""
+
+    data_dir = tmp_path / "nurilab_data_SECRETNAME"
+    job_dir = data_dir / "0b7c8f8e-1111-4222-8333-444455556666"
+    upload_root = job_dir / "upload"
+    target = _write_upload(upload_root, "project")
+    llm_files = [
+        f"{upload_root}/myproj/pkg/../a.py",
+        f"{upload_root}/../../../{data_dir.name}/other.py",
+        # Absolute, so step 1 does not match it; normalizing lands inside the root.
+        f"{data_dir}/x/../{job_dir.name}/upload/myproj/a.py",
+        f"{upload_root}\\..\\..\\..\\{data_dir.name}\\x.py",
+        f"{data_dir}\\x.py",
+    ]
+    report = _analyze_with_llm_findings(monkeypatch, target, llm_files)
+
+    step1 = relativize_report(report, upload_root, "")
+    step2 = name_absolute_finding_files(step1, upload_root)
+    step3 = relativize_report(step2, job_dir, "<data>")
+    output_paths = ReportGenerator().write(step3, tmp_path / "out")
+
+    assert [finding.file for finding in step3.review.findings] == [
+        "myproj/a.py",
+        "<outside>/other.py",
+        "myproj/a.py",
+        "<outside>/x.py",
+        "<outside>/x.py",
+    ]
+    for output_format in ("json", "html"):
+        text = output_paths[output_format].read_text(encoding="utf-8")
+        assert "SECRETNAME" not in text, output_format
 
 
 @pytest.mark.parametrize(
