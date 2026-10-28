@@ -124,7 +124,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 2. analyze 분리와 경로 치환 함수 이동 직후, 기존 기준선으로 통과를 확인한다. 리팩터링이 분석 결과를 바꾸지 않았다는 근거다.
 3. 출처 필드를 추가한 뒤 [외부 프로젝트 검증](external_project_validation.md) 절차로 기준선 6개를 갱신한다. 같은 PR이라도 별도 커밋으로 나누고, PR에 생성 결과의 차이, 고정 커밋, 도구 버전과 실행 근거를 남긴다. 차이는 추가 필드뿐이어야 한다.
 
-기본 테스트의 기대값 변경도 출처 필드 추가에 따른 것(예: `review` 키 집합에 `reviewer` 추가)만 허용한다.
+W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 것(예: `review` 키 집합에 `reviewer` 추가)만 허용한다. W4에서는 HTML 보고서의 Mock 배지(§7.2)에 따른 기대값 변경을 추가로 허용한다. 외부 회귀 기준선 6개는 JSON만 비교하므로 배지와 무관하다.
 
 ## 4. 웹 API 계약
 
@@ -138,6 +138,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 | `GET /api/upload-rules` | 허용 확장자, 제외 폴더(`DEFAULT_EXCLUDED_DIRS`), 크기·개수 상한 |
 | `POST /api/analyses` | 업로드와 분석 요청. 성공 시 `202 {id}` |
 | `GET /api/analyses/{id}` | job 상태와 응답 필드 (§4.4) |
+| `GET /api/analyses/{id}/result` | 화면용 결과 (§4.5). 화면은 이 응답만 쓰고 `report.json`을 읽지 않는다 |
 | `GET /api/analyses/{id}/report.json` | 보고서. `Content-Disposition: attachment` |
 | `GET /api/analyses/{id}/report.html` | 보고서. `Content-Disposition: attachment` |
 | `GET /healthz` | 상태 확인 |
@@ -184,6 +185,18 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
   - 단일 파일 계산은 웹에서 규칙을 다시 짜지 않고, 집계기의 규칙을 공용 함수로 꺼내 집계기와 웹이 함께 쓴다(W3). 계산한 값은 웹 응답과 SQLite에만 넣고 보고서 JSON·HTML에는 넣지 않으므로 CLI 출력은 바뀌지 않는다.
 - job 실패 코드는 `analysis_error`(분석 중 예외)와 `interrupted`(서버 재시작으로 중단)다.
 
+### 4.5 화면용 결과 (`GET /api/analyses/{id}/result`)
+
+- 저장된 보고서 JSON(§3.2 치환 뒤)에서 만든다. 오류는 보고서 엔드포인트와 같다(`404 not_found`, `409 report_not_ready`, `409 report_unavailable`).
+- 응답 필드:
+  - `analyzer_version`, `generated_at`
+  - `summary`: `review.summary`
+  - `findings`: `review.findings`의 각 항목(`title`, `severity`, `file`, `line`, `column`, `source`, `rule_id`, `reason`, `recommendation`)
+  - `static_signals`: 파일별 위험 호출·secret·문법 오류. 정적 분석 신호를 리뷰 결과와 구분해 보여주는 데 쓴다(§7.2, W4)
+  - `skipped_files`: 읽지 못한 파일의 상대 경로
+- `review.status=failed`이면 `source=local_llm`인 finding의 `reason`을 **서버에서** `failure_code`별 고정 문구(§7.3)로 바꿔 내려준다. LLM 실패 사유 원문(endpoint URL, `Cause:` 원문, 응답 미리보기)은 브라우저로 보내지 않는다. W3부터 적용한다.
+- 저장된 보고서 파일은 바꾸지 않는다. 다운로드한 보고서에 원문이 남는 점은 §9의 알려진 한계다.
+
 ## 5. 웹 실행 구조 (W3)
 
 ### 5.1 진입점과 의존성
@@ -212,8 +225,8 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 - 분석이 끝나면(성공·실패 모두) 업로드 원본을 바로 삭제하고 보고서만 남긴다.
 - SQLite는 파일 하나, 테이블 하나다.
   - 컬럼: id, 상태, 실패 코드, 생성·완료 시각, 업로드 이름, 파일 수, 리뷰 종류, 리뷰 모델, 리뷰 상태, 리뷰 실패 코드, 리뷰 위험도, 정적 위험도, 보고서 경로
-  - 응답 필드(§4.4)는 보고서 JSON을 다시 읽지 않고 이 컬럼만으로 채운다.
-  - 리뷰 상태·실패 코드 컬럼은 W4에서 쓰지만 테이블 구조를 나중에 바꾸지 않도록 처음부터 만든다.
+  - job 상태 응답(§4.4)은 보고서 JSON을 다시 읽지 않고 이 컬럼만으로 채운다. 화면용 결과(§4.5)만 저장된 보고서 JSON에서 만든다.
+  - 리뷰 상태·실패 코드 컬럼은 W3부터 채운다. job 상태 응답의 `review.status`와 W3의 원문 숨김(§4.5) 판단이 이 값을 쓰기 때문이다.
   - 여러 스레드가 접근하므로 접근할 때마다 연결을 새로 열거나, 연결 하나에 잠금을 둔다.
 - 재시작 복구는 lifespan 시작 단계에서 분석 스레드를 띄우기 전에 한다. 프로세스 안의 대기열은 재시작하면 사라지므로 `queued`·`running` job을 `failed`(`interrupted`)로 바꾸고, 남아 있던 업로드 원본도 삭제한다.
 
@@ -240,8 +253,8 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 
 - "LLM 리뷰 사용" 토글은 기본 꺼짐(Mock)이다. 켜면 `/api/llm-status`로 연결 상태와 모델 이름을 표시하고, 연결할 수 없으면 실행 버튼을 막고 안내를 띄운다.
 - 상태는 polling으로 조회한다.
-- 위험도, 요약, finding을 표시하며 문자열은 `textContent`로만 렌더링한다.
-- `review.status=failed`이면 `source=local_llm`인 finding의 `reason` 원문 대신 고정 문구를 보여준다(§7.3). `0.0.0.0` 시연에서 endpoint URL과 예외 원문이 보이지 않도록 W3부터 적용한다.
+- 위험도는 job 상태 응답(§4.4), 요약과 finding은 화면용 결과(§4.5)에서 받아 표시하며 문자열은 `textContent`로만 렌더링한다.
+- LLM 실패 사유 원문은 서버가 고정 문구로 바꿔 내려주므로(§4.5) 화면에 나오지 않는다. `0.0.0.0` 시연에서 endpoint URL과 예외 원문이 보이지 않도록 W3부터 적용한다.
 - 대표 위험도는 CLI 터미널과 같은 `risk_level`(§4.4)이다. 정적 위험도(`static_risk_level`)도 함께 표시한다.
 - JSON/HTML 보고서는 다운로드로 제공한다.
 
@@ -250,12 +263,12 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 - 분석기 버전, 생성 시각, 리뷰 종류와 모델, 업로드 이름, 파일 수, skipped 파일을 표시한다.
 - 정적 분석 신호와 리뷰 결과를 구분해서 보여준다.
 - 고정 해석 안내: Mock은 AI 리뷰가 아닌 규칙 기반 요약이다. 위험도 `low`는 안전하다는 뜻이 아니다. Python 정적 분석만 수행했다.
-- Mock 결과에는 화면과 HTML 보고서 모두에 "Mock 모드(LLM 미사용)" 배지를 붙인다.
+- Mock 결과에는 화면과 HTML 보고서 모두에 "Mock 모드(LLM 미사용)" 배지를 붙인다. 배지는 CLI와 공용인 `ReportGenerator`에 들어가므로 CLI가 만드는 Mock HTML 보고서도 바뀐다. 이는 의도한 HTML 출력 변경이며, THE-161 PR에 출력 변경으로 적는다. JSON 보고서는 바뀌지 않는다.
 
 ### 7.3 LLM 실패 표시 (W4)
 
 - `review.reviewer.status=failed`이면 화면 상단에 "LLM 리뷰 실패, 정적 분석 결과만 유효" 경고와 `failure_code`별 고정 문구를 띄운다.
-- finding의 `reason` 원문은 화면에 보여주지 않는다(W3부터 적용, §7.1). 원문에는 endpoint URL(개인 PC 테스트 때는 서버 내부 IP), `Cause: {exc}`, 응답 미리보기(HTTP 오류 최대 300자, LLM 응답 파싱 실패 최대 200자)가 들어 있다.
+- finding의 `reason` 원문은 화면에 보여주지 않는다. 서버가 화면용 결과에서 고정 문구로 바꾸며 W3부터 적용한다(§4.5). 원문에는 endpoint URL(개인 PC 테스트 때는 서버 내부 IP), `Cause: {exc}`, 응답 미리보기(HTTP 오류 최대 300자, LLM 응답 파싱 실패 최대 200자)가 들어 있다.
 
 ### 7.4 XSS 방지 확인 (W4)
 
@@ -286,9 +299,10 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 - 리뷰 모드: Mock은 연결 확인 없이 실행, `local` + 연결됨이면 LLM으로 실행, `local` + 미연결이면 `503`이고 job이 생기지 않음, `/models`의 401·5xx·깨진 JSON도 `503 llm_unavailable`
 - 실패와 복구: 분석 예외 시 `failed`, 재시작 시 `queued`·`running`이 `failed`로 바뀌고 원본 삭제, 분석 완료 후 원본 삭제
 - 경로: `NURILAB_WEB_DATA_DIR`이 상대 경로이거나 symlink를 거쳐도 보고서 JSON·HTML에 `NURILAB_WEB_DATA_DIR` 문자열이 남지 않음. 함께 넣을 경우는 job 폴더 밖까지 나간 LLM `../` 경로, LLM이 지어낸 절대 경로, 읽기 실패 사유, `.` 경로(빈 문자열)다. 사용자 코드에 job 폴더 밖의 `NURILAB_WEB_DATA_DIR` 경로 문자열이 들어 있으면, 이 검사에서 그 문자열은 제외하고 원래 값 그대로 남는지 따로 확인함. `C:\…`·`\\host\…` 이름은 파일 이름으로 처리됨
+- 화면용 결과: `review.status=failed`일 때 `/result` 응답에 endpoint URL과 `Cause:` 원문이 없고 `failure_code`별 고정 문구가 들어 있음, 저장된 `report.json`은 원문을 그대로 유지함
 - 응답: 모든 오류가 `{code, message}` 형태, 미완료 보고서 `409 report_not_ready`, 실패 보고서 `409 report_unavailable`, 없는 경로·UUID 형식이 아닌 id `404 not_found`, 잘못된 메서드 `405 method_not_allowed`
 - 동시성: 느린 가짜 LLM으로 분석하는 동안에도 `/healthz`와 상태 조회가 응답하고, job이 동시에 하나만 실행됨
-- 수동 시연: Mock 경로, LLM 미연결 차단 안내, 가능하면 LLM 경로, 분석 도중 LLM이 실패해도 화면에 endpoint URL과 `Cause:` 원문이 보이지 않음
+- 수동 시연: Mock 경로, LLM 미연결 차단 안내, 가능하면 LLM 경로
 
 ### 8.3 W4
 
