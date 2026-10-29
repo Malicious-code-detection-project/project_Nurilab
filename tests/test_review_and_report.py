@@ -1326,6 +1326,12 @@ def test_replace_root_respects_boundaries_and_drops_separator(tmp_path: Path) ->
     assert replace_root(str(root), root, "") == ""
     assert replace_root(f"{root}-sibling/a.py", root, "") == f"{root}-sibling/a.py"
     assert replace_root(f"{root}/a.py", root, "<ROOT>") == "<ROOT>/a.py"
+    # Inside a longer path the separator stays, so the pieces do not glue.
+    assert replace_root(f"/backup{root}/a.py", root, "") == "/backup/a.py"
+    assert replace_root(f"x/{root}/a.py", root, "") == "x//a.py"
+    # A separator that starts the next root is kept so that root still matches.
+    assert replace_root(f"{root}{root}", root, "") == ""
+    assert replace_root(f"{root}{root}/a.py", root, "") == "a.py"
 
 
 @pytest.mark.parametrize(
@@ -1696,6 +1702,11 @@ def test_web_path_steps_resolve_dotdot_left_after_upload_root(
         f"{data_dir}/x/../{job_dir.name}/upload/myproj/a.py",
         f"{upload_root}\\..\\..\\..\\{data_dir.name}\\x.py",
         f"{data_dir}\\x.py",
+        # "//" and "." inside the upload fold like "..", without leaving the root.
+        f"{upload_root}/myproj//a.py",
+        f"{upload_root}/myproj/./pkg//b.py",
+        # The upload root inside a longer absolute path is outside the upload.
+        f"/backup{upload_root}/a.py",
     ]
     report = _analyze_with_llm_findings(monkeypatch, target, llm_files)
 
@@ -1710,6 +1721,9 @@ def test_web_path_steps_resolve_dotdot_left_after_upload_root(
         "myproj/a.py",
         "<outside>/x.py",
         "<outside>/x.py",
+        "myproj/a.py",
+        "myproj/pkg/b.py",
+        "<outside>/a.py",
     ]
     for output_format in ("json", "html"):
         text = output_paths[output_format].read_text(encoding="utf-8")

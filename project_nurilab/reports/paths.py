@@ -10,7 +10,6 @@ longer roots go first.
 
 from __future__ import annotations
 
-import copy
 import ntpath
 import posixpath
 from dataclasses import fields, is_dataclass, replace
@@ -32,7 +31,9 @@ def replace_root(value: str, root_path: str | Path, replacement: str) -> str:
     ``-``) or a ``.`` followed by one comes next, so ``<root>-sibling`` and
     ``<root>.bak`` stay while ``<root>.``, ``<root>,`` and ``'<root>'`` in
     free text are replaced. An empty ``replacement`` also drops a separator
-    right after the root, so ``<root>/pkg/a.py`` becomes ``pkg/a.py``.
+    right after the root, so ``<root>/pkg/a.py`` becomes ``pkg/a.py``. The
+    separator stays when the root sits inside a longer path or starts the next
+    root, so ``/backup<root>/a.py`` becomes ``/backup/a.py``.
     """
 
     return _replace_variants(value, _root_variants(root_path), replacement)
@@ -62,16 +63,20 @@ def name_absolute_finding_files(report: ReportT, root_path: str | Path) -> Repor
     kept, as ``<outside>/notes.py``. A file that is ``root_path`` or one of its
     parents (``..``, ``../..``, ``//<parent>``) would name a server directory,
     so it becomes ``None``. A file that normalizes to a path inside
-    ``root_path`` keeps that relative path. A relative file with ``..`` is
-    resolved against ``root_path`` first, because ``relativize_report()``
-    turns ``<root>/../x`` into ``../x``. ``\\`` is read as a separator, as in
-    ``relativize_report()``.
+    ``root_path`` keeps that relative path. A relative file is resolved
+    against ``root_path`` first, because ``relativize_report()`` turns
+    ``<root>/../x`` into ``../x`` and ``<root>/myproj/./a.py`` into
+    ``myproj/./a.py``. ``\\`` is read as a separator, as in
+    ``relativize_report()``. Only ``review.findings`` are copied; the rest of
+    the returned report is shared with ``report``.
     """
 
     resolved = Path(root_path).expanduser().resolve().as_posix()
     # Files are read with "\" as "/", so the root must be read the same way.
     root = PurePosixPath(resolved.replace("\\", "/"))
-    named = copy.deepcopy(report)
+    # Only finding files change, so copy the findings and share the rest.
+    findings = [replace(finding) for finding in report.review.findings]
+    named = replace(report, review=replace(report.review, findings=findings))
     for finding in named.review.findings:
         if not finding.file:
             continue
@@ -79,17 +84,16 @@ def name_absolute_finding_files(report: ReportT, root_path: str | Path) -> Repor
         slashed = finding.file.replace("\\", "/")
         is_absolute = _is_absolute(finding.file)
         # review() joins a "\srv\x.py" file under the root, leaving "myproj/\srv...";
-        # read the path from the "\" again. An absolute "/a//b" is already whole.
-        anchor = slashed.find("//")
+        # read the path from the "\" again. A "//" written as such stays a separator.
+        anchor = finding.file.find("/\\")
         if anchor > 0 and not is_absolute:
             slashed = slashed[anchor + 1 :]
         if is_absolute or slashed.startswith("/"):
             # normpath folds "a/../a" so a parent spelled with ".." is caught too.
             normalized = posixpath.normpath(slashed)
-        elif ".." in PurePosixPath(slashed).parts:
-            normalized = posixpath.normpath(f"{root}/{slashed}")
         else:
-            continue
+            # Relative files are read from the root, so ".", "//" and ".." fold too.
+            normalized = posixpath.normpath(f"{root}/{slashed}")
         # POSIX keeps exactly two leading slashes, but Linux reads "//a" as "/a".
         if normalized.startswith("//"):
             normalized = normalized[1:]
@@ -138,10 +142,15 @@ def _replace_variants(value: str, variants: list[str], replacement: str) -> str:
         while (index := replaced.find(variant, start)) != -1:
             end = index + len(variant)
             if not _continues_name(replaced, end):
+                # Keep the separator when the root sits inside a longer path, so
+                # "/backup<root>/a.py" does not glue into "/backupa.py", and when
+                # it starts the next root, which must still match.
                 if (
                     not replacement
                     and end < len(replaced)
                     and replaced[end] in _SEPARATORS
+                    and _starts_path(replaced, index)
+                    and not any(replaced.startswith(item, end) for item in variants)
                 ):
                     end += 1
                 replaced = f"{replaced[:index]}{replacement}{replaced[end:]}"
@@ -157,6 +166,15 @@ def _continues_name(value: str, end: int) -> bool:
     if end < len(value) and _is_name_char(value[end]):
         return True
     return end + 1 < len(value) and value[end] == "." and _is_name_char(value[end + 1])
+
+
+def _starts_path(value: str, index: int) -> bool:
+    """Return whether ``value[index:]`` is not the tail of a longer path."""
+
+    if index == 0:
+        return True
+    previous = value[index - 1]
+    return not (_is_name_char(previous) or previous == "." or previous in _SEPARATORS)
 
 
 def _is_name_char(char: str) -> bool:
