@@ -19,6 +19,7 @@ PR 리뷰와 최종 병합 판단은 Repository Owner가 담당한다.
 | 에이전트/개발자 공통 운영 규칙 | `AGENTS.md` |
 | 실제 작업 상태와 담당자 | Linear `The Debugging Water Deer` / `Nurilab` |
 | 코드 리뷰와 병합 이력 | GitHub Pull Request |
+| 웹 MVP 설계와 API 계약 | `docs/WEB_MVP_DESIGN.md` |
 | SGLang과 vLLM 비교 | `docs/SGLANG_VLLM_COMPARISON.md` |
 | PR 본문 작성 참고 템플릿 | `docs/PR_DESCRIPTION.md` |
 | PR 작성 형식 | `.github/PULL_REQUEST_TEMPLATE.md` |
@@ -44,13 +45,19 @@ git status
 
 이 프로젝트는 로컬 환경에서 동작하는 LLM 기반 악성코드/의심 파일 분석 자동화 시스템이다.
 
-현재 우선순위는 `THE-150`의 외부 MCP 클라이언트 연결이다. 실제 작업 상태와
-담당자는 Linear `Nurilab` 프로젝트에서 확인한다. 기존 Phase 순차 종료 조건은
-선행 gate가 아니며, `phase4`는 브랜치·PR 명명 관례로 유지한다.
+현재 우선순위는 `THE-157`의 웹 분석 MVP다. 실제 작업 상태와 담당자는 Linear
+`Nurilab` 프로젝트에서 확인한다. 기존 Phase 순차 종료 조건은 선행 gate가 아니며,
+`phase4`는 브랜치·PR 명명 관례로 유지한다.
 
-연결 대상은 사용자가 선정한 `jadx-ai-mcp`다. 계약 확인 → 실제 연결 → 결과 보고와
-실패 검증 순서로 진행하며 아직 제공 중인 기능으로 문서화하지 않는다.
-실제 범위와 완료 기준은 [실행 계획](docs/PLAN.md)을 따른다.
+웹 MVP는 시연 가능한 최소 범위로 한정한다. 설계 승인(`THE-158`) → pipeline 분리와
+리뷰 출처(`THE-159`) → 웹 walking skeleton(`THE-160`) → 결과 표시와 LLM 실패
+처리(`THE-161`) → 웹·CLI 일치 검증과 실행 문서(`THE-162`) 순서로 진행한다.
+설계와 계약은 [웹 MVP 설계](docs/WEB_MVP_DESIGN.md), 범위와 완료 기준은
+[실행 계획](docs/PLAN.md)을 따르며 승인된 계약 밖으로 확장하지 않는다.
+구현 전에는 웹을 제공 중인 기능으로 문서화하지 않는다.
+
+`THE-150`의 `jadx-ai-mcp` 연결은 CLI의 실험적 opt-in 기능으로 유지하며 웹에서는
+다루지 않는다.
 
 RAG와 Sandbox 구축·연동은 현재 범위에서 제외한다. 파인튜닝 방향과 실행, 모델
 산출물과 서빙 준비는 별도 프로젝트에서 관리한다. NuriLab에는 준비된 외부 모델의
@@ -70,7 +77,8 @@ model weight, adapter, dataset, checkpoint는 이 저장소에 저장하지 않�
 ## 3. 작업 선택 규칙
 
 작업은 Linear `Nurilab` 프로젝트의 현재 우선순위와 선택한 이슈 범위에서 진행한다.
-다음 개발은 `THE-150`이며, 기존 회귀 검증과 승인된 문서 정리는 해당 이슈를 따른다.
+다음 개발은 `THE-157`의 하위 이슈(`THE-158`~`THE-162`)이며, 기존 회귀 검증과
+승인된 문서 정리는 해당 이슈를 따른다.
 
 ```text
 Linear Issue 생성 또는 선택
@@ -261,6 +269,6 @@ PR 본문에는 다음을 포함한다.
 
 ## 10. 유지보수 TODO
 
-- `THE-150`의 jadx-ai-mcp 계약·연결·결과 보고 검증
+- `THE-157` 웹 MVP 하위 이슈 진행과 [웹 MVP 설계](docs/WEB_MVP_DESIGN.md)의 코드 위치 동기화
 - 외부 모델 API가 준비된 뒤 `THE-80`의 연결 과정 검토
 - README와 `docs/PLAN.md`의 제공 기능과 계획 상태 주기적 정리
