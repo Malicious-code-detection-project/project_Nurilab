@@ -144,6 +144,8 @@ OpenAI-compatible `/chat/completions` endpoint에 전송합니다.
 `review.risk_level`은 선택한 review backend의 결과입니다. Local LLM이 실패해
 `unknown`이어도 deterministic analysis와 `analysis.summary.risk_level`은 같은
 report에 보존됩니다. Local LLM은 정적 분석 결과를 덮어쓰지 않습니다.
+Mock도 읽지 못한 단일 파일은 `unknown`이므로, LLM 실패 여부는 `risk_level`이 아니라
+`review.reviewer.status`(`failed`이면 `failure_code`도 함께 기록)로 판단합니다.
 
 ## 주요 데이터 계약
 
@@ -153,7 +155,7 @@ report에 보존됩니다. Local LLM은 정적 분석 결과를 덮어쓰지 않
 | 파일 로딩 | `LoadedPythonFile` | source, lines, 읽기 skip 상태 |
 | 파일 분석 | `PythonAnalysis` | AST, 위험 호출, secret, syntax, Ruff signal |
 | 프로젝트 집계 | `ProjectAnalysis` | 파일 결과, Ruff 결과, project summary |
-| review | `ReviewResult` | summary, review risk, review findings |
+| review | `ReviewResult` | summary, review risk, review findings, 리뷰 출처(`reviewer`) |
 | 단일 report | `AnalysisReport` | metadata, `PythonAnalysis`, review |
 | 프로젝트 report | `ProjectReport` | metadata, `ProjectAnalysis`, review |
 
