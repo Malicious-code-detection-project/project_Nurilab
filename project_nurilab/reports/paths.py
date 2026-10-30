@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ntpath
 import posixpath
+import re
 from dataclasses import fields, is_dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, TypeVar
@@ -22,6 +23,8 @@ from project_nurilab.schemas import AnalysisReport, ProjectReport
 ReportT = TypeVar("ReportT", bound=AnalysisReport | ProjectReport)
 _SEPARATORS = frozenset({"/", "\\"})
 _OUTSIDE_MARKER = "<outside>"
+# A "\" root or a drive root ("C:\", "C:/") right after a "/".
+_EMBEDDED_ROOT = re.compile(r"/(?=\\|[A-Za-z]:[\\/])")
 
 
 def replace_root(value: str, root_path: str | Path, replacement: str) -> str:
@@ -83,11 +86,18 @@ def name_absolute_finding_files(report: ReportT, root_path: str | Path) -> Repor
         # Step 1 treats "\" as a separator too, so read it as one here.
         slashed = finding.file.replace("\\", "/")
         is_absolute = _is_absolute(finding.file)
-        # review() joins a "\srv\x.py" file under the root, leaving "myproj/\srv...";
-        # read the path from the "\" again. A "//" written as such stays a separator.
-        anchor = finding.file.find("/\\")
-        if anchor > 0 and not is_absolute:
-            slashed = slashed[anchor + 1 :]
+        # review() joins a "\srv\x.py" or "C:\x.py" file under a folder root,
+        # leaving "myproj/\srv..." or "myproj/C:\..."; read the path from there
+        # again. A "//" written as such stays a separator.
+        embedded = _EMBEDDED_ROOT.search(finding.file)
+        if embedded and embedded.start() > 0 and not is_absolute:
+            piece = finding.file[embedded.start() + 1 :]
+            if PureWindowsPath(piece).drive:
+                finding.file = _outside_name(
+                    PureWindowsPath(ntpath.normpath(piece)).name
+                )
+                continue
+            slashed = slashed[embedded.start() + 1 :]
         if is_absolute or slashed.startswith("/"):
             # normpath folds "a/../a" so a parent spelled with ".." is caught too.
             normalized = posixpath.normpath(slashed)
