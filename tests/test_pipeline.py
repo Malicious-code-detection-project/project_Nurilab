@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from mcp import types
 
+from project_nurilab.aggregation.result_aggregator import file_risk_level
 from project_nurilab.external.jadx_mcp_client import JadxMcpClient, McpSession
 from project_nurilab.pipeline import Phase1Pipeline
 from project_nurilab.reports.generator import ReportGenerator
@@ -671,6 +672,29 @@ def test_pipeline_keeps_running_when_project_file_read_raises_os_error(
     assert len(skipped_payloads) == 1
     assert skipped_payloads[0]["path"] == str(unreadable_file.resolve())
     assert "Permission denied" in skipped_payloads[0]["skip_reason"]
+
+
+def test_file_risk_level_matches_project_file_summaries(tmp_path: Path) -> None:
+    target_project = _copy_mixed_risk_project_fixture(tmp_path)
+    (target_project / "invalid_utf8.py").write_bytes(b"\xff\xfe\x00")
+    (target_project / "plain.py").write_text("VALUE = 1\n", encoding="utf-8")
+    pipeline = Phase1Pipeline(use_ruff=False)
+
+    project_report = pipeline.analyze(target_project)
+
+    assert isinstance(project_report, ProjectReport)
+    assert project_report.analysis.summary is not None
+    project_risks = {
+        summary.path: summary.risk_level
+        for summary in project_report.analysis.summary.file_summaries
+    }
+    single_risks = {}
+    for path in sorted(target_project.glob("*.py")):
+        single_report = pipeline.analyze(path)
+        assert isinstance(single_report, AnalysisReport)
+        single_risks[path.name] = file_risk_level(single_report.analysis)
+    assert single_risks == project_risks
+    assert {"high", "medium", "low", "unknown"} <= set(single_risks.values())
 
 
 def test_pipeline_reviews_mixed_risk_project_fixture(tmp_path: Path) -> None:
