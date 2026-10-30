@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NuriLab 분석</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>NuriLab 분석</h1>
+      <p class="muted">Python 파일 1개 또는 폴더를 올리면 정적 분석과 리뷰 결과를 보여줍니다.</p>
+    </header>
+
+    <section class="panel" aria-labelledby="upload-title">
+      <h2 id="upload-title">업로드</h2>
+      <div class="pickers">
+        <label class="picker">
+          <span>파일 선택</span>
+          <input id="file-input" type="file" accept=".py">
+        </label>
+        <label class="picker">
+          <span>폴더 선택</span>
+          <input id="folder-input" type="file" webkitdirectory multiple>
+        </label>
+      </div>
+      <p id="selection" class="muted">선택한 파일이 없습니다.</p>
+
+      <label class="toggle">
+        <input id="llm-toggle" type="checkbox">
+        <span>LLM 리뷰 사용</span>
+      </label>
+      <p id="llm-status" class="muted" hidden></p>
+
+      <button id="run-button" type="button" disabled>분석 실행</button>
+      <p id="message" role="status"></p>
+    </section>
+
+    <section id="result" class="panel" hidden aria-labelledby="result-title">
+      <h2 id="result-title">결과</h2>
+      <p id="job-state" class="muted"></p>
+      <dl id="overview" class="overview"></dl>
+      <div id="downloads" class="downloads"></div>
+      <h3>요약</h3>
+      <p id="summary"></p>
+      <h3>Finding</h3>
+      <ol id="findings" class="findings"></ol>
+    </section>
+  </main>
+</body>
+</html>
