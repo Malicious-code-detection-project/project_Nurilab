@@ -64,10 +64,65 @@ h3 {
   gap: 16px;
 }
 
+/* The label is the visible button; clicking it opens its hidden input. */
 .picker {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: inline-block;
+  padding: 8px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.picker:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Hidden from view but still focusable and usable from the keyboard. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  border: 0;
+  white-space: nowrap;
+}
+
+.drop-zone {
+  margin-top: 16px;
+  padding: 28px 16px;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* Locked while an upload request is in flight. */
+.picker.disabled,
+.drop-zone.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.drop-zone.drag-over {
+  border-color: var(--accent);
+  background: #eef3fb;
+  color: var(--accent);
+}
+
+.selection {
+  margin: 8px 0 12px;
+  overflow-wrap: anywhere;
+}
+
+.selection-name {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .toggle {
@@ -75,6 +130,11 @@ h3 {
   align-items: center;
   gap: 8px;
   margin: 8px 0;
+}
+
+/* A block row, so the button stays below the toggle when the status line is hidden. */
+.actions {
+  margin-top: 12px;
 }
 
 button,

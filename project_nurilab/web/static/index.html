@@ -17,16 +17,20 @@
     <section class="panel" aria-labelledby="upload-title">
       <h2 id="upload-title">업로드</h2>
       <div class="pickers">
+        <!-- The inputs are hidden: their own file name text would repeat the selection line. -->
         <label class="picker">
-          <span>파일 선택</span>
-          <input id="file-input" type="file" accept=".py">
+          파일 선택
+          <input id="file-input" class="visually-hidden" type="file" accept=".py">
         </label>
         <label class="picker">
-          <span>폴더 선택</span>
-          <input id="folder-input" type="file" webkitdirectory multiple>
+          폴더 선택
+          <input id="folder-input" class="visually-hidden" type="file" webkitdirectory multiple>
         </label>
       </div>
-      <p id="selection" class="muted">선택한 파일이 없습니다.</p>
+      <div id="drop-zone" class="drop-zone">
+        파일 1개 또는 폴더 1개를 여기에 끌어 놓으세요.
+      </div>
+      <div id="selection" class="selection muted" role="status">선택한 파일이 없습니다.</div>
 
       <label class="toggle">
         <input id="llm-toggle" type="checkbox">
@@ -34,7 +38,9 @@
       </label>
       <p id="llm-status" class="muted" hidden></p>
 
-      <button id="run-button" type="button" disabled>분석 실행</button>
+      <div class="actions">
+        <button id="run-button" type="button" disabled>분석 실행</button>
+      </div>
       <p id="message" role="status"></p>
     </section>
 
