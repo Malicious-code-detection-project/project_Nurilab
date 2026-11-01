@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import re
@@ -116,6 +117,10 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         content_length = request.headers.get("content-length")
         if content_length is None:
             raise ApiError(411, "length_required")
+        # With Transfer-Encoding the server reads the chunked body past
+        # Content-Length, so the size check above would not hold.
+        if "transfer-encoding" in request.headers:
+            raise ApiError(400, "invalid_upload")
         if not _CONTENT_LENGTH_PATTERN.fullmatch(content_length):
             raise ApiError(400, "invalid_upload")
         if int(content_length) > settings.max_upload_bytes:
@@ -277,18 +282,25 @@ def _download(data_dir: Path, job: JobRecord, kind: str) -> FileResponse:
 
 
 def _save_uploads(target: Path, plan: UploadPlan, files: dict[str, UploadFile]) -> None:
-    target.mkdir(parents=True)
-    root = target.resolve()
-    for name in plan.python_files:
-        path = target / name
-        # plan_upload() already rejected path tricks; this is a second guard.
-        if not path.resolve().is_relative_to(root):
-            raise ApiError(400, "invalid_path")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        upload = files[name]
-        upload.file.seek(0)
-        with path.open("wb") as output:
-            shutil.copyfileobj(upload.file, output)
+    try:
+        target.mkdir(parents=True)
+        root = target.resolve()
+        for name in plan.python_files:
+            path = target / name
+            # plan_upload() already rejected path tricks; this is a second guard.
+            if not path.resolve().is_relative_to(root):
+                raise ApiError(400, "invalid_path")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            upload = files[name]
+            upload.file.seek(0)
+            with path.open("wb") as output:
+                shutil.copyfileobj(upload.file, output)
+    except OSError as exc:
+        # A name or path longer than the file system allows is a path problem;
+        # other errors such as a full disk stay server errors.
+        if exc.errno == errno.ENAMETOOLONG:
+            raise ApiError(400, "invalid_path") from None
+        raise
 
 
 def _remove_leftover_uploads(data_dir: Path) -> None:

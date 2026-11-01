@@ -12,6 +12,14 @@ from project_nurilab.web.errors import ApiError
 # "<" and ">" are kept out so no upload can look like the "<outside>" marker.
 _FORBIDDEN_CHARS = frozenset({"\\", "\x00", "<", ">"})
 _DRIVE_LETTER = re.compile(r"^[A-Za-z]:")
+# Python 3.12 shutil.rmtree() recurses per level and raises RecursionError even
+# with ignore_errors=True, so a deeper upload could never be deleted and would
+# stop the server from restarting. Real projects stay far below this.
+_MAX_PATH_DEPTH = 64
+# NAME_MAX of common Linux file systems (ext4, xfs, btrfs).
+_NAME_MAX_BYTES = 255
+# Longest suffix ReportGenerator adds; ".analysis.json" has the same length.
+_REPORT_SUFFIX = ".analysis.html"
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +50,11 @@ def plan_upload(
         raise ApiError(400, "invalid_path")
     upload_name, is_folder = _upload_root(split_paths)
     _reject_file_directory_clash(split_paths)
+    # Reports are saved as "<stem>.analysis.html"; a stem too long for that
+    # file name would pass the upload and then fail the job.
+    stem = upload_name if is_folder else PurePosixPath(upload_name).stem
+    if len(f"{stem}{_REPORT_SUFFIX}".encode()) > _NAME_MAX_BYTES:
+        raise ApiError(400, "invalid_path")
 
     python_files = [
         name
@@ -65,6 +78,8 @@ def _split_upload_path(name: str) -> tuple[str, ...]:
         raise ApiError(400, "invalid_path")
     parts = tuple(name.split("/"))
     if any(part in {"", ".", ".."} for part in parts):
+        raise ApiError(400, "invalid_path")
+    if len(parts) > _MAX_PATH_DEPTH:
         raise ApiError(400, "invalid_path")
     return parts
 

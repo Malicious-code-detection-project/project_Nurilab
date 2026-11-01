@@ -153,7 +153,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 
 - 핸들러는 `files: list[UploadFile] = File()`를 선언하지 않고 `Request`를 직접 받는다. 선언하면 FastAPI가 핸들러 진입 전에 본문 전체를 기본값 `max_files=1000`으로 파싱해서 `Content-Length` 선확인과 `max_files` 지정을 할 수 없다.
 - 처리 순서:
-  1. `Content-Type`이 `multipart/form-data`가 아니면 `400 invalid_upload`다. `request.form()`은 multipart가 아닌 요청에 예외를 던지지 않고 빈 form이나 urlencoded 값을 돌려주므로, 확인하지 않으면 `422 no_python_files`로 끝난다. `Content-Length`가 없으면 `411`, 상한을 넘으면 `413`이다. 다 받은 뒤 검사하면 Starlette가 임시 파일로 받는 동안 디스크가 찰 수 있다.
+  1. `Content-Type`이 `multipart/form-data`가 아니면 `400 invalid_upload`다. `request.form()`은 multipart가 아닌 요청에 예외를 던지지 않고 빈 form이나 urlencoded 값을 돌려주므로, 확인하지 않으면 `422 no_python_files`로 끝난다. `Content-Length`가 없으면 `411`, 상한을 넘으면 `413`이다. 다 받은 뒤 검사하면 Starlette가 임시 파일로 받는 동안 디스크가 찰 수 있다. `Content-Length`와 함께 `Transfer-Encoding`이 오면 `400 invalid_upload`다. uvicorn(h11)은 이때 chunked 본문을 `Content-Length`보다 길게 끝까지 읽으므로, 거부하지 않으면 작은 `Content-Length`로 상한을 우회할 수 있다(THE-160).
   2. `await request.form(max_files=<안전 상한>)`를 호출한다. 안전 상한은 1000 이하이면서 분석 대상 파일 수 상한보다 크게 정한다. Starlette는 파일·필드 수 초과와 multipart 형식 오류를 모두 `HTTPException(400)`으로 바꿔 던지고(`starlette/requests.py:294`) 원인은 메시지 문자열로만 구분된다. 메시지를 파싱하지 않고 이 예외는 모두 `400 invalid_upload`로 바꾼다.
   3. 같은 form에서 `review_mode`(`mock` / `local`, 기본 `mock`)를 꺼낸다.
   4. `local`이면 LLM 연결을 확인한다 (§2).
@@ -176,7 +176,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 | 코드 | HTTP | 상황 |
 | --- | --- | --- |
 | `invalid_path` | 400 | 경로 조작, 업로드 구조 오류 (§6) |
-| `invalid_upload` | 400 | multipart가 아닌 요청, 그리고 multipart 형식 오류·안전 상한 초과 등 `request.form()`이 던진 400 (§4.2) |
+| `invalid_upload` | 400 | multipart가 아닌 요청, `Content-Length`와 `Transfer-Encoding`을 함께 보낸 요청, 그리고 multipart 형식 오류·안전 상한 초과 등 `request.form()`이 던진 400 (§4.2) |
 | `length_required` | 411 | `Content-Length` 없음 |
 | `too_large` | 413 | 총 크기 초과 |
 | `too_many_files` | 413 | 걸러낸 뒤 `.py`가 분석 대상 파일 수 상한 초과 |
@@ -263,6 +263,9 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
   - 같은 상대 경로가 두 번 이상 온 경우
   - 최상위 폴더가 둘 이상, 파일과 폴더가 섞임, 경로 없는 파일이 2개 이상
   - 한 파일의 경로가 다른 파일의 폴더 경로와 같은 경우(`myproj/a.py`와 `myproj/a.py/b.py`). 둘 다 저장할 수 없기 때문이다
+  - 보고서 파일명 `<분석 루트 이름>.analysis.html`이 255바이트(ext4·xfs·btrfs의 이름 길이 상한)를 넘는 경우. 분석 루트 이름은 단일 파일이면 확장자를 뺀 이름, 폴더면 폴더 이름이다. 거부하지 않으면 업로드는 통과하고 보고서 저장에서 job이 실패한다(THE-160)
+  - 경로 깊이가 64단계(파일 이름 포함)를 넘는 경우. Python 3.12의 `shutil.rmtree()`는 단계마다 재귀하고 `ignore_errors=True`여도 `RecursionError`를 던지므로, 너무 깊은 업로드는 삭제되지 못해 job이 `running`에 남고 재시작 복구에서 앱이 시작되지 않는다(THE-160)
+  - 저장할 때 파일 이름이나 전체 경로가 파일시스템 상한을 넘는 경우(`ENAMETOOLONG`). 디스크 부족 같은 다른 저장 오류는 `500 internal_error`다(THE-160)
 - `C:\evil\x.py`, `\\host\share\x.py`처럼 `X:\`나 `\\`로 시작하는 이름은 python-multipart가 핸들러에 넘기기 전에 파일 이름(`x.py`)만 남긴다(IE6 대응 코드). 이 경우는 따로 거부하지 않고 잘린 이름에 같은 규칙을 적용한다. 폴더 업로드에 섞이면 "파일과 폴더가 섞임"으로 `400`이 된다.
 - 업로드 파일은 실행하거나 import하지 않는다. 분석은 기존 AST 정적 분석뿐이다.
 
@@ -367,5 +370,5 @@ README와 USAGE에 적을 것:
 - 리뷰 요청은 endpoint가 보낸 redirect를 따라간다. vLLM은 redirect를 보내지 않고 endpoint는 관리자가 정하므로, 고치려고 기존 CLI 동작을 바꾸지 않는다. 연결 확인(§3.4)은 따라가지 않는다.
 - LLM 요청 timeout(연결 확인 5초, 리뷰 `NURILAB_LLM_TIMEOUT`)은 연결과 각 읽기 대기에 걸리는 값이라 전체 시간 상한이 아니다. 조금씩 계속 보내는 서버라면 더 오래 걸린다.
 - 폴더 업로드에서 LLM finding의 `file`이 `../a.py`처럼 업로드한 폴더 밖이지만 업로드 디렉터리 안을 가리키면 `<outside>` 표식 없이 `a.py`로 남는다. 업로드한 파일은 항상 `myproj/…`로 표시되므로 구별할 수 있고, 표식을 붙이려면 1단계 기준을 바꿔야 해서 유지한다. 같은 이유로 폴더 업로드에서 LLM이 업로드 경로 자체를 `\`로 쓰면 `myproj/myproj\a.py`처럼 폴더 이름이 한 번 더 붙어 보인다. 서버 정보는 남지 않는다.
-- 폴더 업로드 안에 `C:`처럼 드라이브 문자 모양의 폴더가 있으면, 그 아래 파일을 가리킨 LLM finding도 `<outside>/파일 이름`으로 표시된다(§3.2 2단계). Windows에서는 쓸 수 없는 폴더 이름이라 드물고, 서버 정보는 남지 않는다.
+- 폴더 업로드 안에 `C:`처럼 드라이브 문자 모양의 폴더가 있으면, 그 아래 파일을 가리킨 리뷰 finding(Mock·LLM)의 `file`도 `<outside>/파일 이름`으로 표시되어 같은 입력의 CLI 결과와 다르다(§3.2 2단계). 정적 신호와 `file_results`의 경로는 그대로다. Windows에서는 쓸 수 없는 폴더 이름이라 드물고, 서버 정보는 남지 않는다.
 - 응답 본문을 받는 도중 연결이 끊기면 `failure_code`가 `connection_failed`가 아니라 `invalid_response`가 된다. 실패로 기록되고 정적 분석 결과도 그대로 남으며, 안내 문구만 다르다.

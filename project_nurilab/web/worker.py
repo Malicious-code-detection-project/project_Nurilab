@@ -64,7 +64,11 @@ class AnalysisWorker:
         self._queue.put(task)
 
     def stop(self, timeout: float = 10.0) -> None:
-        """Stop after the current job; jobs still queued are recovered on restart."""
+        """Stop once the jobs already queued are done, waiting up to ``timeout``.
+
+        Jobs still unfinished when the process exits are recovered as
+        ``interrupted`` on the next start.
+        """
 
         self._queue.put(None)
         self._thread.join(timeout)

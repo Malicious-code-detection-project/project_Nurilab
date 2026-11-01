@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 # Fixed user-facing text; never carries server paths or exception text.
 ERROR_MESSAGES = {
     "invalid_path": (
-        "업로드 경로가 올바르지 않습니다. 파일 1개 또는 최상위 폴더 하나만 "
-        "올릴 수 있습니다."
+        "업로드 경로를 처리할 수 없습니다. 파일 1개 또는 폴더 1개만 올릴 수 있고, "
+        "경로에 쓸 수 없는 문자가 있거나 이름이 너무 길거나 폴더가 너무 깊으면 "
+        "올릴 수 없습니다."
     ),
     "invalid_upload": "업로드 요청 형식이 올바르지 않습니다.",
     "length_required": "요청 크기(Content-Length)가 필요합니다.",

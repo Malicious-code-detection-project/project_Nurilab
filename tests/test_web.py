@@ -549,6 +549,103 @@ def test_missing_content_length_is_rejected(settings: WebSettings) -> None:
     assert_error(response, 411, "length_required")
 
 
+def test_transfer_encoding_with_content_length_is_rejected(
+    settings: WebSettings,
+) -> None:
+    # uvicorn reads a chunked body past Content-Length, so a small Content-Length
+    # must not let a large chunked body through the size check.
+    body = (
+        b'--x\r\nContent-Disposition: form-data; name="files"; filename="a.py"'
+        b"\r\n\r\nx = 1\n\r\n--x--\r\n"
+    )
+    with web_client(settings) as client:
+        response = client.post(
+            "/api/analyses",
+            content=body,
+            headers={
+                "content-type": "multipart/form-data; boundary=x",
+                "content-length": "10",
+                "transfer-encoding": "chunked",
+            },
+        )
+
+    assert_error(response, 400, "invalid_upload")
+    assert job_ids(settings) == []
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        # Single file whose report name "<stem>.analysis.html" would pass 255 bytes.
+        {"가" * 90 + ".py": CLEAN_SOURCE},
+        {"a" * 242 + ".py": CLEAN_SOURCE},
+        {"c" * 242 + "/a.py": CLEAN_SOURCE},
+        # A name or a whole path longer than the file system allows; about 4 KB
+        # stays under the multipart header limit and fails only when saving.
+        {"proj/" + "b" * 256 + ".py": CLEAN_SOURCE},
+        {"proj/" + ("d" * 200 + "/") * 20 + "a.py": CLEAN_SOURCE},
+    ],
+)
+def test_too_long_names_are_rejected_without_a_job(
+    settings: WebSettings, files: dict[str, bytes]
+) -> None:
+    with web_client(settings) as client:
+        assert_error(upload(client, files), 400, "invalid_path")
+
+    assert job_ids(settings) == []
+    assert job_dirs(settings) == []
+
+
+def test_longest_report_name_still_completes(settings: WebSettings) -> None:
+    with web_client(settings) as client:
+        single = analyze(client, {"a" * 241 + ".py": CLEAN_SOURCE})
+        folder = analyze(client, {"c" * 241 + "/a.py": CLEAN_SOURCE})
+
+    assert single["status"] == "completed"
+    assert folder["status"] == "completed"
+
+
+def _path_of_depth(depth: int) -> str:
+    """Return an upload path with ``depth`` parts, the file name included."""
+
+    return "proj/" + "d/" * (depth - 2) + "a.py"
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {_path_of_depth(65): CLEAN_SOURCE},
+        {_path_of_depth(1200): CLEAN_SOURCE},
+        # Each step alone is shallow enough for mkdir(parents=True) to recurse,
+        # but the finished tree is too deep for shutil.rmtree() to delete.
+        {_path_of_depth(depth): CLEAN_SOURCE for depth in range(100, 1601, 100)},
+        # Paths are checked before filtering, so a dropped file counts too.
+        {_path_of_depth(65)[:-3] + ".txt": b"x", "proj/a.py": CLEAN_SOURCE},
+    ],
+)
+def test_too_deep_paths_are_rejected_without_a_job(
+    settings: WebSettings, files: dict[str, bytes]
+) -> None:
+    with web_client(settings) as client:
+        assert_error(upload(client, files), 400, "invalid_path")
+
+    assert job_ids(settings) == []
+    assert job_dirs(settings) == []
+
+
+def test_deepest_allowed_path_completes_and_server_restarts(
+    settings: WebSettings,
+) -> None:
+    with web_client(settings) as client:
+        job = analyze(client, {_path_of_depth(64): DANGEROUS_SOURCE})
+
+    assert job["status"] == "completed"
+    assert job["static_risk_level"] == "high"
+    assert not (settings.data_dir / job["id"] / "upload").exists()
+    with web_client(settings) as client:
+        assert client.get("/healthz").status_code == 200
+
+
 def test_upload_over_size_limit_is_rejected(tmp_path: Path) -> None:
     settings = WebSettings(data_dir=tmp_path, max_upload_bytes=1000)
     with web_client(settings) as client:
