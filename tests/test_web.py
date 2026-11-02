@@ -987,6 +987,8 @@ def test_unreadable_file_is_listed_without_llm_warning(settings: WebSettings) ->
     assert job["review"]["status"] == "ok"
     assert result["review_failure_message"] is None
     assert result["skipped_files"] == ["bad.py"]
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    assert 'byId("review-warning").hidden = job.review.status !== "failed";' in script
 
 
 # Markup in results
@@ -1382,6 +1384,15 @@ def test_index_has_fixed_notes_warning_and_badge() -> None:
     assert "Mock 리뷰는 AI 리뷰가 아니라 규칙 기반 요약입니다." in index
     assert "위험도 low는 안전하다는 뜻이 아닙니다." in index
     assert "Python 정적 분석만 수행했습니다." in index
+
+
+def test_interpretation_notes_follow_job_status_not_screen_result() -> None:
+    index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    # Risk comes from the job response, so its notes must not wait for /result.
+    assert '<div id="result-notes" hidden>' in index
+    assert 'byId("result-notes").hidden = job.status !== "completed";' in script
 
 
 def test_every_element_used_by_app_js_exists_in_index() -> None:

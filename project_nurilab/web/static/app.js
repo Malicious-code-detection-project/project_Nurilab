@@ -376,6 +376,7 @@ function clearResult() {
   byId("review-warning").hidden = true;
   byId("review-warning-detail").textContent = "";
   byId("mock-badge").hidden = true;
+  byId("result-notes").hidden = true;
   byId("summary").textContent = "";
   for (const id of [
     "overview",
@@ -452,6 +453,8 @@ function renderOverview(job) {
   byId("mock-badge").hidden = job.review.client !== "mock";
   // review.status, not risk_level: Mock is also unknown for an unreadable file.
   byId("review-warning").hidden = job.review.status !== "failed";
+  // Tied to the job, not the screen result: the risk above shows without it.
+  byId("result-notes").hidden = job.status !== "completed";
 }
 
 function localTime(value) {
