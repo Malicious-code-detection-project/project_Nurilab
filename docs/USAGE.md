@@ -72,7 +72,8 @@ report payload의 view이므로 별도 분석을 다시 실행하지 않습니�
 
 `MockReviewClient`가 기본 backend입니다. 네트워크와 LLM 서버가 필요하지 않으며,
 정적 신호를 재현 가능한 review finding으로 바꿉니다. 일반 개발과 회귀 검증은 이
-경로를 기준으로 합니다.
+경로를 기준으로 합니다. Mock으로 만든 HTML 보고서의 제목 옆에는 `Mock 모드(LLM 미사용)`
+배지가 붙습니다. JSON과 Markdown 보고서에는 붙지 않습니다.
 
 ```bash
 uv run python main.py analyze tests --review-client mock

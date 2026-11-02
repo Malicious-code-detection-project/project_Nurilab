@@ -12,6 +12,7 @@ from project_nurilab.schemas import (
     ExternalToolCall,
     ProjectFileSummary,
     ProjectReport,
+    ReviewResult,
 )
 
 
@@ -24,6 +25,7 @@ SEVERITY_RANK = {
     "info": 1,
     "unknown": 0,
 }
+MOCK_BADGE_TEXT = "Mock 모드(LLM 미사용)"
 
 
 class NamedLineSymbol(Protocol):
@@ -287,14 +289,14 @@ class ReportGenerator:
     .finding.severity-medium {{ border-left-color: var(--medium); }}
     .finding.severity-high {{ border-left-color: var(--high); }}
     .finding.severity-critical {{ border-left-color: var(--critical); }}
-    .finding.severity-info {{ border-left-color: var(--info); }}{_external_tool_call_css(report.external_tool_calls)}
+    .finding.severity-info {{ border-left-color: var(--info); }}{_external_tool_call_css(report.external_tool_calls)}{_mock_badge_css(review)}
   </style>
 </head>
 <body>
   <main>
     <header>
       <h1>Python Code Review Report</h1>
-      <span class="badge {severity_class}">{_escape_html(review.risk_level)}</span>
+      <span class="badge {severity_class}">{_escape_html(review.risk_level)}</span>{_render_html_mock_badge(review)}
     </header>
 
     <section class="summary">
@@ -445,13 +447,13 @@ class ReportGenerator:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Python Project Review Report</title>
-  <style>{_shared_css()}{_external_tool_call_css(report.external_tool_calls)}</style>
+  <style>{_shared_css()}{_external_tool_call_css(report.external_tool_calls)}{_mock_badge_css(report.review)}</style>
 </head>
 <body>
   <main>
     <header>
       <h1>Python Project Review Report</h1>
-      <span class="badge {severity_class}">{_escape_html(report.review.risk_level)}</span>
+      <span class="badge {severity_class}">{_escape_html(report.review.risk_level)}</span>{_render_html_mock_badge(report.review)}
     </header>
     <section class="summary project-overview">
       <div>
@@ -613,6 +615,25 @@ def _escape_html(value: str) -> str:
 
 def _html_class_for_severity(severity: str) -> str:
     return f"severity-{severity.lower()}"
+
+
+def _is_mock_review(review: ReviewResult) -> bool:
+    return review.reviewer is not None and review.reviewer.client == "mock"
+
+
+def _render_html_mock_badge(review: ReviewResult) -> str:
+    # Only Mock reviews get the badge, so other reports keep their exact HTML.
+    if not _is_mock_review(review):
+        return ""
+    return f'\n      <span class="badge review-mock">{MOCK_BADGE_TEXT}</span>'
+
+
+def _mock_badge_css(review: ReviewResult) -> str:
+    if not _is_mock_review(review):
+        return ""
+    return """
+    .review-mock { background: var(--muted); }
+    """
 
 
 def _render_html_meta(label: str, value: str) -> str:
