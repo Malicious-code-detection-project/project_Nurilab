@@ -179,6 +179,10 @@ button:disabled {
   margin: 4px 0 0;
 }
 
+.notice {
+  color: var(--medium);
+}
+
 .result-status {
   display: flex;
   flex-wrap: wrap;

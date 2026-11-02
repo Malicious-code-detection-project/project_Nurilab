@@ -68,6 +68,10 @@ def build_screen_result(
         "generated_at": report.get("generated_at"),
         "summary": review.get("summary"),
         "review_failure_message": failure_message,
+        # A failed review has no LLM result the cut could limit.
+        "llm_input_truncation": (
+            None if failure_message is not None else _llm_input_truncation(review)
+        ),
         "findings": findings,
         "static_signals": [
             signals
@@ -77,6 +81,16 @@ def build_screen_result(
         "skipped_files": [
             result.get("path") for result in file_results if result.get("skipped")
         ],
+    }
+
+
+def _llm_input_truncation(review: dict[str, Any]) -> dict[str, Any] | None:
+    metadata = review.get("input_metadata") or {}
+    if not metadata.get("truncated"):
+        return None
+    return {
+        key: metadata.get(key)
+        for key in ("included_count", "omitted_count", "budget_bytes")
     }
 
 

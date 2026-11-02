@@ -79,8 +79,8 @@ class ResultAggregator:
 
         tool_findings = ruff_findings or []
         severity_counts = self._count_severities(file_results, tool_findings)
-        risk_level = self._derive_project_risk(severity_counts)
         skipped_files = self._count_skipped(collected_input, file_results)
+        risk_level = self._derive_project_risk(severity_counts, skipped_files)
         file_summaries = self._build_file_summaries(
             collected_input=collected_input,
             file_results=file_results,
@@ -120,9 +120,12 @@ class ResultAggregator:
             counts[finding.severity] = counts.get(finding.severity, 0) + 1
         return counts
 
-    def _derive_project_risk(self, severity_counts: dict[str, int]) -> str:
+    def _derive_project_risk(
+        self, severity_counts: dict[str, int], skipped_files: int
+    ) -> str:
+        # Same rule as derive_file_risk(): no signal from unread files is not low.
         if not severity_counts:
-            return "low"
+            return "unknown" if skipped_files else "low"
         return max(
             severity_counts,
             key=lambda severity: SEVERITY_ORDER.get(severity, 0),

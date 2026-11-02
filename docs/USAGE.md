@@ -134,8 +134,8 @@ JSON/schema 파싱 실패 시에는 응답 content의 최대 200자 preview가 �
 
 JSON 보고서의 `review.reviewer`는 리뷰를 만든 client와 결과를 기록합니다.
 LLM 실패 여부는 `review.reviewer.status`가 `failed`인지로 판단합니다.
-Mock도 읽지 못한 단일 파일(skipped)은 `risk_level`이 `unknown`이므로
-`risk_level`만으로는 LLM 실패와 구별되지 않습니다.
+Mock도 읽지 못한 단일 파일(skipped)과 신호 없이 읽지 못한 파일이 있는 폴더는
+`risk_level`이 `unknown`이므로 `risk_level`만으로는 LLM 실패와 구별되지 않습니다.
 
 ```json
 "reviewer": {"client": "local", "model": "openai/gpt-oss-20b", "status": "failed", "failure_code": "timeout"}

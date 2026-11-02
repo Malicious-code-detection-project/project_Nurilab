@@ -1214,3 +1214,33 @@ def test_pipeline_keeps_reports_when_mcp_result_classification_fails(
     assert baseline.review.findings
     assert payload["analysis"] == baseline.to_dict()["analysis"]
     assert payload["review"] == baseline.to_dict()["review"]
+
+
+@pytest.mark.parametrize(
+    ("files", "expected_risk"),
+    [
+        ({"bad.py": b"\xff\xfe\x00"}, "unknown"),
+        ({"bad.py": b"\xff\xfe\x00", "ok.py": b"VALUE = 1\n"}, "unknown"),
+        (
+            {"bad.py": b"\xff\xfe\x00", "risky.py": b"import os\nos.system(x)\n"},
+            "high",
+        ),
+        ({"ok.py": b"VALUE = 1\n"}, "low"),
+    ],
+    ids=["only-unread", "unread-and-clean", "unread-and-signal", "all-read"],
+)
+def test_project_risk_counts_unread_files_when_no_signal_exists(
+    tmp_path: Path, files: dict[str, bytes], expected_risk: str
+) -> None:
+    project = tmp_path / "proj"
+    project.mkdir()
+    for name, content in files.items():
+        (project / name).write_bytes(content)
+
+    report = Phase1Pipeline(use_ruff=False).analyze(project)
+
+    assert isinstance(report, ProjectReport)
+    assert report.analysis.summary is not None
+    assert report.analysis.summary.risk_level == expected_risk
+    assert report.review.risk_level == expected_risk
+    assert f"Overall project risk is {expected_risk}." in report.review.summary

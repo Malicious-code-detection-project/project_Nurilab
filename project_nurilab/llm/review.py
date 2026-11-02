@@ -144,6 +144,8 @@ class MockReviewClient:
 
         findings = _sort_review_findings(findings)
         risk_level = _derive_risk_level([finding.severity for finding in findings])
+        if analysis.summary and analysis.summary.risk_level == "unknown":
+            risk_level = "unknown"
         summary = _build_project_summary(analysis, findings, risk_level)
         return ReviewResult(summary=summary, risk_level=risk_level, findings=findings)
 

@@ -377,6 +377,7 @@ function clearResult() {
   byId("review-warning-detail").textContent = "";
   byId("mock-badge").hidden = true;
   byId("result-notes").hidden = true;
+  byId("llm-input-notice").hidden = true;
   byId("summary").textContent = "";
   for (const id of [
     "overview",
@@ -446,9 +447,12 @@ function renderRows(listId, rows) {
 }
 
 function renderOverview(job) {
+  // The static risk is the basis of judgment, so it comes before the review's.
   renderRows("overview", [
-    ["위험도", job.risk_level || "-"],
     ["정적 분석 위험도", job.static_risk_level || "-"],
+    ["리뷰 위험도", job.risk_level || "-"],
+    ["리뷰", reviewLabel(job.review)],
+    ["리뷰 상태", REVIEW_STATUS_TEXT[job.review.status] || "-"],
   ]);
   byId("mock-badge").hidden = job.review.client !== "mock";
   // review.status, not risk_level: Mock is also unknown for an unreadable file.
@@ -470,8 +474,6 @@ function renderProvenance(job, result) {
   renderRows("provenance", [
     ["분석기 버전", result ? result.analyzer_version : "-"],
     ["생성 시각", localTime(result ? result.generated_at : null)],
-    ["리뷰", reviewLabel(job.review)],
-    ["리뷰 상태", REVIEW_STATUS_TEXT[job.review.status] || "-"],
     ["업로드", job.upload_name],
     ["분석 대상 .py", `${job.file_count}개`],
     ["읽지 못한 파일", result ? `${result.skipped_files.length}개` : "-"],
@@ -515,6 +517,18 @@ function renderStaticSignals(signals) {
   }
 }
 
+function renderLlmInputNotice(truncation) {
+  const notice = byId("llm-input-notice");
+  notice.hidden = !truncation;
+  if (truncation) {
+    const { included_count: included, omitted_count: omitted } = truncation;
+    const kib = Math.floor(truncation.budget_bytes / 1024);
+    notice.textContent =
+      `LLM 입력이 상한(${kib} KiB)을 넘어 신호 ${included + omitted}개 중 ${included}개만 ` +
+      "LLM에 보냈습니다. 정적 분석 결과는 모두 유지됩니다.";
+  }
+}
+
 function renderSkippedFiles(paths) {
   const list = byId("skipped-files");
   list.replaceChildren();
@@ -547,6 +561,7 @@ async function renderResult(jobId, job) {
   byId("review-warning-detail").textContent = result.body.review_failure_message || "";
   renderStaticSignals(result.body.static_signals);
   renderSkippedFiles(result.body.skipped_files);
+  renderLlmInputNotice(result.body.llm_input_truncation);
   showResultParts(true);
   byId("summary").textContent = result.body.summary || "";
   const findings = byId("findings");

@@ -31,6 +31,9 @@ from project_nurilab.web.uploads import plan_upload
 STATIC_DIR = Path(__file__).parents[1] / "project_nurilab" / "web" / "static"
 DANGEROUS_SOURCE = b"import os\n\n\ndef run(command):\n    return os.system(command)\n"
 CLEAN_SOURCE = b"VALUE = 1\n"
+UNREADABLE_SOURCE = b"\xff\xfe\x00"
+# Enough signals to pass the default 64 KiB LLM input budget.
+OVER_BUDGET_SOURCE = b"os.system(x)\n" * 3000
 MARKUP = "<script>alert(1)</script>"
 JOB_FIELDS = {
     "id",
@@ -369,6 +372,7 @@ def test_single_file_upload_completes_with_static_risk(settings: WebSettings) ->
         "generated_at",
         "summary",
         "review_failure_message",
+        "llm_input_truncation",
         "findings",
         "static_signals",
         "skipped_files",
@@ -991,6 +995,79 @@ def test_unreadable_file_is_listed_without_llm_warning(settings: WebSettings) ->
     assert 'byId("review-warning").hidden = job.review.status !== "failed";' in script
 
 
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"proj/bad.py": UNREADABLE_SOURCE},
+        {"proj/bad.py": UNREADABLE_SOURCE, "proj/ok.py": CLEAN_SOURCE},
+    ],
+    ids=["only-unreadable", "with-clean-file"],
+)
+def test_folder_with_unread_file_and_no_signal_is_not_low(
+    settings: WebSettings, files: dict[str, bytes]
+) -> None:
+    with web_client(settings) as client:
+        job = analyze(client, files)
+
+    assert job["risk_level"] == "unknown"
+    assert job["static_risk_level"] == "unknown"
+    assert job["review"]["status"] == "ok"
+
+
+def test_llm_keeps_review_risk_when_folder_static_risk_is_unknown(
+    settings: WebSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The review schema has no unknown, so the static risk carries the limit.
+    fake_llm(monkeypatch)
+    with web_client(settings) as client:
+        job = analyze(client, {"proj/bad.py": UNREADABLE_SOURCE}, review_mode="local")
+
+    assert job["risk_level"] == "low"
+    assert job["static_risk_level"] == "unknown"
+
+
+def test_llm_input_truncation_is_shown_when_review_succeeds(
+    settings: WebSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_llm(monkeypatch)
+    with web_client(settings) as client:
+        job = analyze(client, {"big.py": OVER_BUDGET_SOURCE}, review_mode="local")
+        result = client.get(f"/api/analyses/{job['id']}/result").json()
+        report = client.get(f"/api/analyses/{job['id']}/report.json").json()
+
+    metadata = report["review"]["input_metadata"]
+    assert metadata["truncated"] is True
+    assert result["llm_input_truncation"] == {
+        "included_count": metadata["included_count"],
+        "omitted_count": metadata["omitted_count"],
+        "budget_bytes": metadata["budget_bytes"],
+    }
+    assert metadata["omitted_count"] > 0
+
+
+def test_llm_input_truncation_is_null_without_a_cut_or_a_result(
+    settings: WebSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(url: str, **kwargs: Any) -> _Response:
+        raise requests.exceptions.ConnectionError("gone")
+
+    with web_client(settings) as client:
+        fake_llm(monkeypatch)
+        small = analyze(client, {"a.py": DANGEROUS_SOURCE}, review_mode="local")
+        small_result = client.get(f"/api/analyses/{small['id']}/result").json()
+        fake_llm(monkeypatch, review=refuse)
+        failed = analyze(client, {"big.py": OVER_BUDGET_SOURCE}, review_mode="local")
+        failed_result = client.get(f"/api/analyses/{failed['id']}/result").json()
+        failed_report = client.get(f"/api/analyses/{failed['id']}/report.json").json()
+        mock = analyze(client, {"big.py": OVER_BUDGET_SOURCE})
+        mock_result = client.get(f"/api/analyses/{mock['id']}/result").json()
+
+    assert small_result["llm_input_truncation"] is None
+    assert failed_report["review"]["input_metadata"]["truncated"] is True
+    assert failed_result["llm_input_truncation"] is None
+    assert mock_result["llm_input_truncation"] is None
+
+
 # Markup in results
 
 
@@ -1384,6 +1461,17 @@ def test_index_has_fixed_notes_warning_and_badge() -> None:
     assert "Mock 리뷰는 AI 리뷰가 아니라 규칙 기반 요약입니다." in index
     assert "위험도 low는 안전하다는 뜻이 아닙니다." in index
     assert "Python 정적 분석만 수행했습니다." in index
+
+
+def test_overview_shows_static_risk_first_and_names_review_risk() -> None:
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    overview = script[script.index("function renderOverview") :]
+    overview = overview[: overview.index("byId(")]
+
+    # The LLM is not the final judge, so its risk must not read as the result.
+    assert '["위험도"' not in overview
+    assert overview.index('"정적 분석 위험도"') < overview.index('"리뷰 위험도"')
+    assert overview.index('"리뷰 위험도"') < overview.index("reviewLabel(job.review)")
 
 
 def test_interpretation_notes_follow_job_status_not_screen_result() -> None:

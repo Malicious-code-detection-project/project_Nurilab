@@ -118,7 +118,8 @@ PythonAnalysis[] + RuffFinding[] + CollectedInput
 
 `ResultAggregator`는 analyzed/skipped 파일 수, severity count, 파일별 요약과
 프로젝트 risk level을 계산합니다. `analysis.summary.risk_level`은 deterministic
-signal의 최고 severity를 요약한 값입니다.
+signal의 최고 severity를 요약한 값입니다. signal이 없고 읽지 못한 파일이 있으면
+단일 파일과 같은 기준으로 `unknown`입니다.
 
 ## review 경계
 
@@ -144,7 +145,8 @@ OpenAI-compatible `/chat/completions` endpoint에 전송합니다.
 `review.risk_level`은 선택한 review backend의 결과입니다. Local LLM이 실패해
 `unknown`이어도 deterministic analysis와 `analysis.summary.risk_level`은 같은
 report에 보존됩니다. Local LLM은 정적 분석 결과를 덮어쓰지 않습니다.
-Mock도 읽지 못한 단일 파일은 `unknown`이므로, LLM 실패 여부는 `risk_level`이 아니라
+Mock도 읽지 못한 단일 파일과 signal 없이 읽지 못한 파일이 있는 폴더는 `unknown`이므로,
+LLM 실패 여부는 `risk_level`이 아니라
 `review.reviewer.status`(`failed`이면 `failure_code`도 함께 기록)로 판단합니다.
 
 ## 주요 데이터 계약
