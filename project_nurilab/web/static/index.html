@@ -46,13 +46,39 @@
 
     <section id="result" class="panel" hidden aria-labelledby="result-title">
       <h2 id="result-title">결과</h2>
-      <p id="job-state" class="muted"></p>
+      <div id="review-warning" class="warning" role="alert" hidden>
+        <strong>LLM 리뷰 실패, 정적 분석 결과만 유효</strong>
+        <p id="review-warning-detail"></p>
+        <p>자세한 원인은 다운로드한 보고서에서 확인하세요.</p>
+      </div>
+      <div class="result-status">
+        <span id="job-state" class="muted"></span>
+        <span id="mock-badge" class="mock-badge" hidden>Mock 모드(LLM 미사용)</span>
+      </div>
       <dl id="overview" class="overview"></dl>
+      <h3>출처</h3>
+      <dl id="provenance" class="overview"></dl>
+      <div class="result-part" hidden>
+        <h3>해석 안내</h3>
+        <ul class="notes">
+          <li>Mock 리뷰는 AI 리뷰가 아니라 규칙 기반 요약입니다.</li>
+          <li>위험도 low는 안전하다는 뜻이 아닙니다.</li>
+          <li>Python 정적 분석만 수행했습니다. 코드를 실행하지 않았고 Python 외 파일은 검사하지 않았습니다.</li>
+        </ul>
+      </div>
       <div id="downloads" class="downloads"></div>
-      <h3>요약</h3>
-      <p id="summary"></p>
-      <h3>Finding</h3>
-      <ol id="findings" class="findings"></ol>
+      <div class="result-part" hidden>
+        <h3>정적 분석 신호</h3>
+        <p class="muted">분석기가 규칙으로 찾은 결과입니다. 리뷰 성공 여부와 관계없이 유효합니다.</p>
+        <ul id="static-signals" class="signals"></ul>
+        <h3>리뷰 요약</h3>
+        <p class="muted">Mock 또는 LLM이 정적 분석 결과를 해석한 내용입니다.</p>
+        <p id="summary"></p>
+        <h3>리뷰 Finding</h3>
+        <ol id="findings" class="findings"></ol>
+        <h3>읽지 못한 파일</h3>
+        <ul id="skipped-files" class="signals"></ul>
+      </div>
     </section>
   </main>
 </body>

@@ -45,18 +45,21 @@ def build_screen_result(
 
     ``review_status`` and ``failure_code`` come from the job record. When the
     review failed, Local LLM finding reasons are replaced on the server so raw
-    failure text never reaches the browser.
+    failure text never reaches the browser. The same fixed text is returned as
+    ``review_failure_message`` for the warning at the top of the result.
     """
 
     review = report.get("review") or {}
-    hide_llm_reason = review_status == "failed"
+    failure_message = None
+    if review_status == "failed":
+        failure_message = LLM_FAILURE_MESSAGES.get(
+            failure_code or "", _LLM_FAILURE_FALLBACK
+        )
     findings = []
     for raw in review.get("findings") or []:
         finding = {field: raw.get(field) for field in _FINDING_FIELDS}
-        if hide_llm_reason and finding["source"] == "local_llm":
-            finding["reason"] = LLM_FAILURE_MESSAGES.get(
-                failure_code or "", _LLM_FAILURE_FALLBACK
-            )
+        if failure_message is not None and finding["source"] == "local_llm":
+            finding["reason"] = failure_message
         findings.append(finding)
 
     file_results = _file_results(report.get("analysis") or {})
@@ -64,6 +67,7 @@ def build_screen_result(
         "analyzer_version": report.get("analyzer_version"),
         "generated_at": report.get("generated_at"),
         "summary": review.get("summary"),
+        "review_failure_message": failure_message,
         "findings": findings,
         "static_signals": [
             signals

@@ -20,6 +20,10 @@ const JOB_STATUS_TEXT = {
   completed: "완료",
   failed: "실패",
 };
+const REVIEW_STATUS_TEXT = {
+  ok: "성공",
+  failed: "실패",
+};
 
 const state = {
   rules: null,
@@ -331,11 +335,7 @@ async function runAnalysis() {
   updateRunButton();
   showSelectionNotice(null, false);
   showMessage("업로드하는 중입니다.", false);
-  byId("result").hidden = true;
-  // Clear the previous job's result so it never shows under the new job.
-  byId("summary").textContent = "";
-  byId("findings").replaceChildren();
-  byId("downloads").replaceChildren();
+  clearResult();
   setUploading(true);
   try {
     const result = await requestJson("/api/analyses", { method: "POST", body: form });
@@ -370,6 +370,33 @@ function finishJob() {
   updateRunButton();
 }
 
+// Clears the previous job's result so it never shows under the new job.
+function clearResult() {
+  byId("result").hidden = true;
+  byId("review-warning").hidden = true;
+  byId("review-warning-detail").textContent = "";
+  byId("mock-badge").hidden = true;
+  byId("summary").textContent = "";
+  for (const id of [
+    "overview",
+    "provenance",
+    "downloads",
+    "static-signals",
+    "findings",
+    "skipped-files",
+  ]) {
+    byId(id).replaceChildren();
+  }
+  showResultParts(false);
+}
+
+// Sections filled from the screen result; hidden until it arrives.
+function showResultParts(visible) {
+  for (const node of document.querySelectorAll(".result-part")) {
+    node.hidden = !visible;
+  }
+}
+
 async function pollJob(jobId) {
   let job;
   try {
@@ -388,8 +415,11 @@ async function pollJob(jobId) {
   byId("result").hidden = false;
   byId("job-state").textContent = `상태: ${JOB_STATUS_TEXT[job.status] || job.status}`;
   renderOverview(job);
+  renderProvenance(job, null);
   if (job.status === "completed") {
-    await renderResult(jobId).catch(() => showMessage("서버에 연결할 수 없습니다.", true));
+    await renderResult(jobId, job).catch(() =>
+      showMessage("서버에 연결할 수 없습니다.", true),
+    );
     finishJob();
   } else if (job.status === "failed") {
     showMessage(job.error ? job.error.message : "분석에 실패했습니다.", true);
@@ -406,19 +436,90 @@ function reviewLabel(review) {
   return `LLM (${review.model || "모델 미상"})`;
 }
 
+function renderRows(listId, rows) {
+  const list = byId(listId);
+  list.replaceChildren();
+  for (const [label, value] of rows) {
+    list.append(element("dt", null, label), element("dd", null, value));
+  }
+}
+
 function renderOverview(job) {
-  const rows = [
+  renderRows("overview", [
     ["위험도", job.risk_level || "-"],
     ["정적 분석 위험도", job.static_risk_level || "-"],
+  ]);
+  byId("mock-badge").hidden = job.review.client !== "mock";
+  // review.status, not risk_level: Mock is also unknown for an unreadable file.
+  byId("review-warning").hidden = job.review.status !== "failed";
+}
+
+function localTime(value) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("ko-KR");
+}
+
+// result is null until the job completes.
+function renderProvenance(job, result) {
+  renderRows("provenance", [
+    ["분석기 버전", result ? result.analyzer_version : "-"],
+    ["생성 시각", localTime(result ? result.generated_at : null)],
     ["리뷰", reviewLabel(job.review)],
-    ["리뷰 상태", job.review.status || "-"],
+    ["리뷰 상태", REVIEW_STATUS_TEXT[job.review.status] || "-"],
     ["업로드", job.upload_name],
-    ["분석 대상 .py", job.file_count],
-  ];
-  const overview = byId("overview");
-  overview.replaceChildren();
-  for (const [label, value] of rows) {
-    overview.append(element("dt", null, label), element("dd", null, value));
+    ["분석 대상 .py", `${job.file_count}개`],
+    ["읽지 못한 파일", result ? `${result.skipped_files.length}개` : "-"],
+  ]);
+}
+
+function severityLabel(severity) {
+  return element("span", `severity severity-${severity}`, severity);
+}
+
+function signalRow(severity, text) {
+  const row = element("li");
+  row.append(severityLabel(severity), ` ${text}`);
+  return row;
+}
+
+function renderStaticSignals(signals) {
+  const list = byId("static-signals");
+  list.replaceChildren();
+  if (signals.length === 0) {
+    list.append(
+      element("li", "muted", "찾은 신호가 없습니다. 안전하다는 뜻은 아닙니다."),
+    );
+  }
+  for (const signal of signals) {
+    const rows = element("ul");
+    for (const call of signal.suspicious_calls) {
+      rows.append(
+        signalRow(call.severity, `위험 호출 ${call.name} (Line ${call.line}, ${call.category})`),
+      );
+    }
+    for (const secret of signal.secrets) {
+      rows.append(signalRow(secret.severity, `비밀값 후보 ${secret.kind} (Line ${secret.line})`));
+    }
+    if (signal.syntax_error) {
+      rows.append(signalRow("medium", `문법 오류: ${signal.syntax_error}`));
+    }
+    const item = element("li");
+    item.append(element("strong", null, signal.file), rows);
+    list.append(item);
+  }
+}
+
+function renderSkippedFiles(paths) {
+  const list = byId("skipped-files");
+  list.replaceChildren();
+  if (paths.length === 0) {
+    list.append(element("li", "muted", "없습니다."));
+  }
+  for (const path of paths) {
+    list.append(element("li", null, path));
   }
 }
 
@@ -428,7 +529,7 @@ function findingLocation(finding) {
   return `${finding.file ? `${finding.file}: ` : ""}${line}${column}`;
 }
 
-async function renderResult(jobId) {
+async function renderResult(jobId, job) {
   const downloads = byId("downloads");
   downloads.replaceChildren(
     reportLink(jobId, "json", "JSON 보고서"),
@@ -439,6 +540,11 @@ async function renderResult(jobId) {
     showMessage(errorText(result), true);
     return;
   }
+  renderProvenance(job, result.body);
+  byId("review-warning-detail").textContent = result.body.review_failure_message || "";
+  renderStaticSignals(result.body.static_signals);
+  renderSkippedFiles(result.body.skipped_files);
+  showResultParts(true);
   byId("summary").textContent = result.body.summary || "";
   const findings = byId("findings");
   findings.replaceChildren();
@@ -448,10 +554,7 @@ async function renderResult(jobId) {
   for (const finding of result.body.findings) {
     const item = element("li", "finding");
     const heading = element("div", "finding-heading");
-    heading.append(
-      element("span", `severity severity-${finding.severity}`, finding.severity),
-      element("strong", null, finding.title),
-    );
+    heading.append(severityLabel(finding.severity), element("strong", null, finding.title));
     item.append(
       heading,
       element("div", "muted", `${findingLocation(finding)} · ${finding.source}`),
