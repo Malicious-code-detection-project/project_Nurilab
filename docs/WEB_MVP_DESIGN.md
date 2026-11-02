@@ -207,6 +207,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 - 응답 필드:
   - `analyzer_version`, `generated_at`
   - `summary`: `review.summary`
+  - `review_failure_message`: `review.status=failed`일 때 `failure_code`별 고정 문구, 아니면 `null`. 화면 상단 경고(§7.3)에 쓴다(THE-161)
   - `findings`: `review.findings`의 각 항목(`title`, `severity`, `file`, `line`, `column`, `source`, `rule_id`, `reason`, `recommendation`)
   - `static_signals`: 파일별 위험 호출·secret·문법 오류. 정적 분석 신호를 리뷰 결과와 구분해 보여주는 데 쓴다(§7.2, W4). 신호가 있는 파일만 `{file, suspicious_calls[{name, line, category, severity}], secrets[{kind, line, severity}], syntax_error}`로 담고, secret 미리보기는 넣지 않는다(THE-160)
   - `skipped_files`: 읽지 못한 파일의 상대 경로
@@ -286,25 +287,27 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 ### 7.2 출처 표시 (W4)
 
 - 분석기 버전, 생성 시각, 리뷰 종류와 모델, 업로드 이름, 파일 수, skipped 파일을 표시한다.
-- 정적 분석 신호와 리뷰 결과를 구분해서 보여준다.
-- 고정 해석 안내: Mock은 AI 리뷰가 아닌 규칙 기반 요약이다. 위험도 `low`는 안전하다는 뜻이 아니다. Python 정적 분석만 수행했다.
-- Mock 결과에는 화면과 HTML 보고서 모두에 "Mock 모드(LLM 미사용)" 배지를 붙인다. 배지는 CLI와 공용인 `ReportGenerator`에 들어가므로 CLI가 만드는 Mock HTML 보고서도 바뀐다. 이는 의도한 HTML 출력 변경이며, THE-161 PR에 출력 변경으로 적는다. JSON 보고서는 바뀌지 않는다.
+- 정적 분석 신호와 리뷰 결과를 구분해서 보여준다. LLM이 실패하면 리뷰 finding은 실패 항목 하나뿐이므로, 정적 분석 결과는 이 정적 분석 신호 영역에서 확인한다.
+- 고정 해석 안내: Mock은 AI 리뷰가 아닌 규칙 기반 요약이다. 위험도 `low`는 안전하다는 뜻이 아니다. Python 정적 분석만 수행했다. 세 문장은 리뷰 종류와 관계없이 완료된 결과에 항상 표시하며 `web/static/index.html`에 둔다.
+- Mock 결과에는 화면과 HTML 보고서 모두에 "Mock 모드(LLM 미사용)" 배지를 붙인다. 배지는 CLI와 공용인 `ReportGenerator`에 들어가므로 CLI가 만드는 Mock HTML 보고서도 바뀐다. 이는 의도한 HTML 출력 변경이며, THE-161 PR에 출력 변경으로 적는다. JSON과 Markdown 보고서, Mock이 아닌 리뷰의 HTML 보고서는 바뀌지 않는다.
 
 ### 7.3 LLM 실패 표시 (W4)
 
-- `review.reviewer.status=failed`이면 화면 상단에 "LLM 리뷰 실패, 정적 분석 결과만 유효" 경고와 `failure_code`별 고정 문구를 띄운다.
+- `review.reviewer.status=failed`이면 결과 영역 맨 위에 "LLM 리뷰 실패, 정적 분석 결과만 유효" 경고와 `failure_code`별 고정 문구를 띄운다. 경고 표시는 job 상태 응답의 `review.status`로 판단하므로 `/result` 요청이 실패해도 뜨고, 고정 문구는 `/result`의 `review_failure_message`(§4.5)에서 받는다. 원문을 볼 수 있는 다운로드 보고서도 함께 안내한다.
 - finding의 `reason` 원문은 화면에 보여주지 않는다. 서버가 화면용 결과에서 고정 문구로 바꾸며 W3부터 적용한다(§4.5). 원문에는 endpoint URL(개인 PC 테스트 때는 서버 내부 IP), `Cause: {exc}`, 응답 미리보기(HTTP 오류 최대 300자, LLM 응답 파싱 실패 최대 200자)가 들어 있다.
 
 ### 7.4 XSS 방지 확인 (W4)
 
-이 환경에는 Node와 브라우저 자동화가 없고 TestClient는 JS를 실행하지 못하므로 세 가지로 나눠 확인한다.
+이 환경에는 Node가 없고 TestClient는 JS를 실행하지 못하므로 세 가지로 나눠 확인한다.
 
-1. pytest: `<script>`를 담은 파일명·문자열 fixture로 만든 `report.html`에 `&lt;script&gt;`처럼 escape되어 있는지 확인한다.
+업로드는 `<`·`>`가 든 파일 이름을 거부하고(§6) Mock은 secret 미리보기를 가리므로, 온전한 태그가 웹 보고서와 화면에 도달하는 경로는 LLM 응답뿐이다. fixture는 이 경로를 쓴다(THE-161).
+
+1. pytest: `<script>`를 담은 경로와 리뷰 문자열로 `to_html()`을 직접 호출한 결과, 그리고 가짜 LLM이 `summary`·`title`·`reason`·`recommendation`·`file`에 `<script>`를 돌려준 `report.html`에 `&lt;script&gt;`처럼 escape되어 있는지 확인한다. 업로드할 수 있는 특수문자(`&`, `'`)는 파일 이름으로 확인한다.
 2. pytest: 정적 JS·HTML 파일을 문자열로 검사한다. 실수로 입력 문자열이 HTML이나 코드로 해석되는 길이 생기는 것을 잡는 장치이며, 실제 실행 여부는 3번으로 확인한다.
-   - JS: HTML을 해석하는 API(`innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`)와 문자열 실행(`eval`, `new Function`)이 없다.
+   - JS: HTML을 해석하는 API(`innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`)와 문자열 실행(`eval`, `new Function`)이 없다. `.href =` 검사를 피해 가지 않도록 `setAttribute`로 `href`·`src`·`on…`을 넣는 코드도 없다.
    - `href`는 보고서 다운로드 링크를 만드는 함수 한 곳에서만, UUID 정규식으로 확인한 job id와 고정 경로로 만든다. 테스트는 `.href =`가 그 한 곳에만 있는지 센다.
    - HTML: `on…=` 속성과 본문이 있는 `<script>`가 없다. JS는 같은 서버의 파일을 `src`로만 불러온다.
-3. 수동: 같은 fixture를 브라우저에서 올려 스크립트가 실행되지 않는 것을 확인하고 기록한다.
+3. 수동: 같은 내용을 돌려주는 가짜 OpenAI 호환 서버를 `NURILAB_LLM_BASE_URL`로 연결해 브라우저에서 분석하고, 스크립트가 실행되지 않는 것을 확인해 기록한다. 가짜 서버는 저장소에 넣지 않는다.
 
 보고서는 `Content-Disposition: attachment`로 내려서 같은 origin에서 바로 렌더링되지 않게 한다.
 
@@ -332,8 +335,9 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 
 ### 8.3 W4
 
-- Mock/LLM 각각 출처 표시
-- 가짜 endpoint로 분석 도중 timeout과 잘못된 JSON에서 경고 표시
+- Mock/LLM 각각 출처 표시. job·`/result` 응답과 HTML 보고서의 배지로 확인한다
+- 가짜 endpoint로 분석 도중 `failure_code` 다섯 가지에서 `review.status=failed`, 고정 문구, 정적 신호 유지, 원문 미노출을 확인한다. pytest는 JS를 실행하지 못하므로 경고가 화면에 뜨는지는 브라우저에서 확인해 기록한다
+- 읽지 못한 파일로 Mock이 `unknown`을 내도 LLM 실패 경고 조건이 되지 않음
 - §7.4의 XSS 확인과 attachment 헤더
 
 ### 8.4 W5
