@@ -93,11 +93,11 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 | `http_error` | `except requests.exceptions.HTTPError` | HTTP 오류 응답 |
 | `connection_failed` | `except (requests.exceptions.ConnectionError, …)` | 연결 실패, 잘못된 URL·schema |
 | `invalid_response` | 요청 단계의 `except Exception` | 응답 본문 디코드 실패, `choices[0].message.content` 구조 오류, 그 밖의 예외 |
-| `json_parse_failed` | 파싱 단계의 `except Exception` | LLM이 만든 리뷰 JSON의 파싱 실패와 schema 검증 실패(필드 누락, 타입·값 오류). `message.content`가 `null`인 경우도 여기다 |
+| `json_parse_failed` | 파싱 단계의 `except Exception` | LLM이 만든 리뷰 JSON의 파싱 실패와 schema 검증 실패(필드 누락, 타입·값 오류). `message.content`가 `null`인 경우와, 파싱은 되지만 UTF-8 보고서에 쓸 수 없는 짝 없는 서로게이트(`\ud83d`)가 든 리뷰도 여기다(THE-161) |
 
 - 요청 단계의 `except Exception`의 finding 제목은 "Local LLM connection failed"지만 실제 연결 오류는 그 앞의 연결 오류 분기에서 먼저 잡히므로 `invalid_response`로 분리한다. finding 제목과 문구는 바꾸지 않는다.
 - `message.content`가 `null`이면(예: gpt-oss가 추론에 토큰을 다 써 `finish_reason=length`로 끝난 경우) `json_parse_failed`로 둔다. 응답 구조는 맞지만 리뷰 내용이 없는 경우라, "모델 출력을 확인하라"는 `json_parse_failed`의 권고가 맞고 `invalid_response`의 "connection failed" 제목은 맞지 않기 때문이다.
-- 다섯 곳 모두 호출하는 `_local_llm_request_failure()`에 `failure_code`를 필수 인자로 추가해 빠짐없이 설정한다. finding 문구를 파싱해 실패를 판단하지 않는다.
+- 다섯 곳 모두 호출하는 `_local_llm_request_failure()`에 `failure_code`를 필수 인자로 추가해 빠짐없이 설정한다. 같은 함수는 실패 사유(`reason`)의 UTF-8로 쓸 수 없는 문자를 `\ud83d`처럼 escape한다. 사유에는 예상 밖 키 이름, HTTP 오류 응답 미리보기 같은 endpoint 문자열이 그대로 들어가므로, 짝 없는 서로게이트가 있으면 보고서 쓰기에서 job이 실패하기 때문이다(THE-161). finding 문구를 파싱해 실패를 판단하지 않는다.
 - 성공 경로도 각 client가 채운다.
   - Mock: `ReviewResult`를 만드는 네 곳(`MockReviewClient`의 폴더 결과, 단일 파일의 skipped·문법 오류·일반 결과) 모두 `{"client": "mock", "model": null, "status": "ok", "failure_code": null}`이다. 네 곳을 따로 고치지 않고 `MockReviewClient.review()`가 결과를 받은 뒤 한 번 채우므로, 반환 경로가 늘어도 빠지지 않는다. 읽지 못한 파일(skipped)의 리뷰도 Mock이 정상으로 만든 결과이므로 `ok`다.
   - LLM 성공: `LocalLLMReviewClient.review()`가 `_parse_llm_review()` 결과를 받은 뒤 `client=local`, 설정한 모델, `status=ok`로 채운다.
@@ -340,6 +340,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 - Mock/LLM 각각 출처 표시. job·`/result` 응답과 HTML 보고서의 배지로 확인한다
 - 가짜 endpoint로 분석 도중 `failure_code` 다섯 가지에서 `review.status=failed`, 고정 문구, 정적 신호 유지, 원문 미노출을 확인한다. pytest는 JS를 실행하지 못하므로 경고가 화면에 뜨는지는 브라우저에서 확인해 기록한다
 - 읽지 못한 파일로 Mock이 `unknown`을 내도 LLM 실패 경고 조건이 되지 않음
+- LLM 응답의 짝 없는 서로게이트는 job 실패가 아니라 리뷰 실패이고 정적 결과와 보고서가 남음. 값과 예상 밖 키는 `json_parse_failed`, HTTP 오류 응답 본문은 `http_error`이며, CLI도 종료 코드 0으로 보고서를 남김
 - 폴더 위험도: 전부 또는 일부를 읽지 못하고 신호가 없으면 `unknown`, 신호가 있으면 그 값, 모두 읽었고 신호가 없으면 `low`
 - LLM 입력 잘림: 리뷰가 성공했을 때만 `llm_input_truncation`이 채워지고, 잘리지 않은 경우와 실패한 리뷰, Mock은 `null`
 - §7.4의 XSS 확인과 attachment 헤더
@@ -373,6 +374,7 @@ README와 USAGE에 적을 것:
 - 업로드 원본은 지우지만 보고서와 SQLite 기록은 자동으로 지우지 않는다. 필요하면 `NURILAB_WEB_DATA_DIR`을 수동으로 정리한다.
 - 분석은 프로세스 격리와 전체 timeout 없이 실행된다.
 - 요청의 `Origin`과 `Host`를 확인하지 않는다. multipart POST는 브라우저가 사전 확인 없이 보내는 요청이라, 사용자가 다른 사이트를 열기만 해도 그 페이지가 이 서버에 분석을 걸 수 있다(브라우저에서 재현). `Host`를 확인하지 않으므로 DNS rebinding으로 응답을 읽을 수도 있다. 다른 사람의 결과는 UUID job id를 알아야 해서 읽기 어렵고, 주된 위험은 대기열 점유, 보고서로 디스크 채우기, LLM 호출 같은 자원 남용이다. 실사용 전에 `Origin` 검사와 `Host` 허용 목록을 넣는다(THE-160 리뷰).
+- 웹 화면은 `정적 분석 위험도`와 `리뷰 위험도`를 구분하지만, 보고서 헤더 배지와 CLI 터미널의 `Risk Level`, 폴더 HTML `Metadata`의 `Risk Level`, Markdown의 `Risk Level`은 리뷰 값을 구분 없이 표시한다. LLM 모드에서는 LLM 값이 최종 판단처럼 보일 수 있고, 터미널과 단일 파일 보고서에는 정적 위험도 값도 없다. 실사용 전에 보고서의 정적 분석·리뷰 구분과 함께 처리한다(취소된 THE-113의 범위).
 
 **설계상 수용** (의도한 동작이거나, 분석 결과에 영향이 없고 발생 가능성이 낮아 유지함)
 

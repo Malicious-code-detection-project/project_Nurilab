@@ -11,6 +11,7 @@ from mcp import types
 
 from project_nurilab.aggregation.result_aggregator import file_risk_level
 from project_nurilab.external.jadx_mcp_client import JadxMcpClient, McpSession
+from project_nurilab.llm.review import LocalLLMReviewClient
 from project_nurilab.pipeline import Phase1Pipeline
 from project_nurilab.reports.generator import ReportGenerator
 from project_nurilab.schemas import (
@@ -1244,3 +1245,33 @@ def test_project_risk_counts_unread_files_when_no_signal_exists(
     assert report.analysis.summary.risk_level == expected_risk
     assert report.review.risk_level == expected_risk
     assert f"Overall project risk is {expected_risk}." in report.review.summary
+
+
+def test_lone_surrogate_from_llm_keeps_reports_and_static_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Response:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, Any]:
+            content = '{"summary": "x \\ud83d y", "risk_level": "low", "findings": []}'
+            return {"choices": [{"message": {"content": content}}]}
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+    source = tmp_path / "a.py"
+    source.write_text("import os\nos.system(x)\n", encoding="utf-8")
+
+    _, output_paths = Phase1Pipeline(
+        review_client=LocalLLMReviewClient(
+            base_url="http://localhost:8000/v1", model="test-model"
+        ),
+        use_ruff=False,
+    ).run(source, tmp_path / "reports")
+
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload["review"]["reviewer"]["failure_code"] == "json_parse_failed"
+    assert [call["name"] for call in payload["analysis"]["suspicious_calls"]] == [
+        "os.system"
+    ]
+    assert output_paths["html"].exists()

@@ -477,7 +477,9 @@ def _local_llm_request_failure(
                 severity="medium",
                 line=None,
                 source="local_llm",
-                reason=reason,
+                # Endpoint text such as an unexpected key or a response
+                # preview may hold a lone surrogate the report cannot write.
+                reason=reason.encode("utf-8", "backslashreplace").decode("utf-8"),
                 recommendation=recommendation
                 or (
                     "Check that vLLM is running, the network is accessible, "
@@ -1296,11 +1298,15 @@ def _parse_llm_review(content: str) -> ReviewResult:
         for item in review_payload["findings"]
     ]
 
-    return ReviewResult(
+    review = ReviewResult(
         summary=review_payload["summary"],
         risk_level=review_payload["risk_level"],
         findings=findings,
     )
+    # A lone surrogate such as "\ud83d" is valid JSON, but the report writer
+    # would fail on it and lose the static result with the job.
+    json.dumps(review.to_dict(), ensure_ascii=False).encode("utf-8")
+    return review
 
 
 def _validate_llm_review_payload(payload: Any, content: str) -> dict[str, Any]:

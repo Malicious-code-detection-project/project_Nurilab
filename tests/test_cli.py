@@ -27,6 +27,43 @@ def _restore_root_log_handlers():
             root.removeHandler(handler)
 
 
+def test_cli_keeps_reports_when_llm_failure_text_has_lone_surrogate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Response:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, Any]:
+            # An unexpected key goes into the failure reason as written.
+            content = (
+                r'{"summary": "s", "risk_level": "low", "findings": [], "k\ud83d": 1}'
+            )
+            return {"choices": [{"message": {"content": content}}]}
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+    source = tmp_path / "a.py"
+    source.write_text("import os\nos.system(x)\n", encoding="utf-8")
+    output_dir = tmp_path / "reports"
+
+    exit_code = main(
+        [
+            "analyze",
+            str(source),
+            "--out",
+            str(output_dir),
+            "--no-ruff",
+            "--review-client",
+            "local",
+        ]
+    )
+
+    payload = json.loads((output_dir / "a.analysis.json").read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["review"]["reviewer"]["failure_code"] == "json_parse_failed"
+    assert (output_dir / "a.analysis.html").stat().st_size > 0
+
+
 def test_cli_analyze_project_directory_generates_reports_with_no_ruff(
     tmp_path: Path,
     monkeypatch,

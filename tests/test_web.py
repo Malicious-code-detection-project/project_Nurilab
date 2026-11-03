@@ -35,6 +35,7 @@ UNREADABLE_SOURCE = b"\xff\xfe\x00"
 # Enough signals to pass the default 64 KiB LLM input budget.
 OVER_BUDGET_SOURCE = b"os.system(x)\n" * 3000
 MARKUP = "<script>alert(1)</script>"
+LONE_SURROGATE = "x \ud83d y"
 JOB_FIELDS = {
     "id",
     "status",
@@ -931,6 +932,130 @@ def test_llm_failure_during_review_keeps_static_result_and_warns(
     assert MOCK_BADGE_TEXT not in html.text
 
 
+@pytest.mark.parametrize(
+    "files",
+    [{"a.py": DANGEROUS_SOURCE}, {"proj/a.py": DANGEROUS_SOURCE}],
+    ids=["file", "folder"],
+)
+@pytest.mark.parametrize(
+    "field", ["summary", "title", "file", "reason", "recommendation"]
+)
+def test_lone_surrogate_from_llm_fails_the_review_not_the_job(
+    settings: WebSettings,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    files: dict[str, bytes],
+) -> None:
+    finding = {
+        "title": "t",
+        "severity": "high",
+        "file": "a.py",
+        "line": 1,
+        "reason": "r",
+        "recommendation": "c",
+    }
+    review: dict[str, Any] = {"summary": "s", "risk_level": "high"}
+    if field == "summary":
+        review[field] = LONE_SURROGATE
+    else:
+        finding[field] = LONE_SURROGATE
+    fake_llm(monkeypatch, review={**review, "findings": [finding]})
+
+    with web_client(settings) as client:
+        job = analyze(client, files, review_mode="local")
+        result = client.get(f"/api/analyses/{job['id']}/result")
+        report = client.get(f"/api/analyses/{job['id']}/report.json")
+        html = client.get(f"/api/analyses/{job['id']}/report.html")
+
+    assert job["status"] == "completed"
+    assert job["review"]["status"] == "failed"
+    assert job["review"]["failure_code"] == "json_parse_failed"
+    assert job["static_risk_level"] == "high"
+    assert result.status_code == 200
+    body = result.json()
+    assert body["review_failure_message"] == LLM_FAILURE_MESSAGES["json_parse_failed"]
+    assert len(body["static_signals"]) == 1
+    assert report.status_code == 200
+    assert html.status_code == 200
+
+
+def _chat(content: str) -> _Response:
+    return _Response({"choices": [{"message": {"content": content}}]})
+
+
+def _http_error_with_text(text: str) -> _Response:
+    response = _Response(status_code=500)
+    response.text = text
+    return response
+
+
+@pytest.mark.parametrize(
+    ("review", "failure_code"),
+    [
+        (
+            _respond(
+                _chat(
+                    r'{"summary": "s", "risk_level": "low", "findings": [], '
+                    r'"k\ud83d": 1}'
+                )
+            ),
+            "json_parse_failed",
+        ),
+        (
+            _respond(
+                _chat(
+                    r'{"summary": "s", "risk_level": "low", "findings": [{"title": '
+                    r'"t", "severity": "low", "file": "a.py", "line": 1, "reason": '
+                    r'"r", "recommendation": "c", "k\ud83d": 1}]}'
+                )
+            ),
+            "json_parse_failed",
+        ),
+        (_respond(_http_error_with_text("err \ud83d x")), "http_error"),
+    ],
+    ids=["top-level-key", "finding-key", "http-error-preview"],
+)
+def test_lone_surrogate_in_failure_reason_keeps_the_job(
+    settings: WebSettings,
+    monkeypatch: pytest.MonkeyPatch,
+    review: Any,
+    failure_code: str,
+) -> None:
+    fake_llm(monkeypatch, review=review)
+    with web_client(settings) as client:
+        job = analyze(client, {"a.py": DANGEROUS_SOURCE}, review_mode="local")
+        result = client.get(f"/api/analyses/{job['id']}/result")
+        report = client.get(f"/api/analyses/{job['id']}/report.json")
+
+    assert job["status"] == "completed"
+    assert job["review"]["failure_code"] == failure_code
+    assert result.status_code == 200
+    assert (
+        result.json()["review_failure_message"] == (LLM_FAILURE_MESSAGES[failure_code])
+    )
+    assert "\\\\ud83d" in report.text
+
+
+def test_emoji_pair_from_llm_is_kept(
+    settings: WebSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Python keeps the pair as two surrogates; json.dumps writes both escapes.
+    fake_llm(
+        monkeypatch,
+        review={
+            "summary": "x 😀 y",
+            "risk_level": "low",
+            "findings": [],
+        },
+    )
+    with web_client(settings) as client:
+        job = analyze(client, {"a.py": CLEAN_SOURCE}, review_mode="local")
+        result = client.get(f"/api/analyses/{job['id']}/result").json()
+
+    assert job["review"]["status"] == "ok"
+    assert result["summary"] == "x \U0001f600 y"
+
+
 # Result provenance
 
 
@@ -1461,6 +1586,23 @@ def test_index_has_fixed_notes_warning_and_badge() -> None:
     assert "Mock 리뷰는 AI 리뷰가 아니라 규칙 기반 요약입니다." in index
     assert "위험도 low는 안전하다는 뜻이 아닙니다." in index
     assert "Python 정적 분석만 수행했습니다." in index
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'byId("mock-badge").hidden = job.review.client !== "mock";',
+        "renderLlmInputNotice(result.body.llm_input_truncation);",
+        (
+            'byId("review-warning-detail").textContent = '
+            'result.body.review_failure_message || "";'
+        ),
+    ],
+    ids=["mock-badge", "input-notice", "warning-detail"],
+)
+def test_app_js_connects_results_to_the_page(line: str) -> None:
+    # pytest cannot run the page, so these lines stay pinned as text.
+    assert line in (STATIC_DIR / "app.js").read_text(encoding="utf-8")
 
 
 def test_overview_shows_static_risk_first_and_names_review_risk() -> None:

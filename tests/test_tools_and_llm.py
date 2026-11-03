@@ -2127,16 +2127,21 @@ class _ChatResponseStub:
         *,
         json_error: Exception | None = None,
         http_status: int | None = None,
+        http_body: bytes = b"server error",
+        http_encoding: str | None = None,
     ) -> None:
         self.payload = payload
         self.json_error = json_error
         self.http_status = http_status
+        self.http_body = http_body
+        self.http_encoding = http_encoding
 
     def raise_for_status(self) -> None:
         if self.http_status is not None:
             response = requests.Response()
             response.status_code = self.http_status
-            response._content = b"server error"
+            response._content = self.http_body
+            response.encoding = self.http_encoding
             raise requests.exceptions.HTTPError(
                 f"{self.http_status} Server Error", response=response
             )
@@ -2149,6 +2154,20 @@ class _ChatResponseStub:
 
 def _chat_content(content: str) -> _ChatResponseStub:
     return _ChatResponseStub({"choices": [{"message": {"content": content}}]})
+
+
+# Endpoint text the schema error or HTTP preview copies into the failure reason.
+_TOP_LEVEL_SURROGATE_KEY = (
+    r'{"summary": "s", "risk_level": "low", "findings": [], "k\ud83d": 1}'
+)
+_FINDING_SURROGATE_KEY = (
+    r'{"summary": "s", "risk_level": "low", "findings": [{"title": "t", '
+    r'"severity": "low", "file": "a.py", "line": 1, "reason": "r", '
+    r'"recommendation": "c", "k\ud83d": 1}]}'
+)
+_SURROGATE_HTTP_ERROR = _ChatResponseStub(
+    http_status=500, http_body=b"err \\ud83d x", http_encoding="unicode_escape"
+)
 
 
 @pytest.mark.parametrize(
@@ -2200,6 +2219,25 @@ def _chat_content(content: str) -> _ChatResponseStub:
             "json_parse_failed",
             "Local LLM JSON parsing failed",
         ),
+        (
+            # Valid JSON, but a lone surrogate cannot be written to a report.
+            _chat_content(
+                '{"summary": "x \\ud83d y", "risk_level": "low", "findings": []}'
+            ),
+            "json_parse_failed",
+            "Local LLM JSON parsing failed",
+        ),
+        (
+            _chat_content(_TOP_LEVEL_SURROGATE_KEY),
+            "json_parse_failed",
+            "Local LLM JSON parsing failed",
+        ),
+        (
+            _chat_content(_FINDING_SURROGATE_KEY),
+            "json_parse_failed",
+            "Local LLM JSON parsing failed",
+        ),
+        (_SURROGATE_HTTP_ERROR, "http_error", "Local LLM HTTP error"),
     ],
 )
 def test_local_llm_review_failures_record_failure_code(
@@ -2231,6 +2269,31 @@ def test_local_llm_review_failures_record_failure_code(
         "status": "failed",
         "failure_code": failure_code,
     }
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        _chat_content(_TOP_LEVEL_SURROGATE_KEY),
+        _chat_content(_FINDING_SURROGATE_KEY),
+        _SURROGATE_HTTP_ERROR,
+    ],
+    ids=["top-level-key", "finding-key", "http-error-preview"],
+)
+def test_local_llm_failure_reason_escapes_lone_surrogates(
+    monkeypatch: pytest.MonkeyPatch, outcome: _ChatResponseStub
+) -> None:
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: outcome)
+
+    review = LocalLLMReviewClient(
+        base_url="http://localhost:8000/v1", model="test-model"
+    ).review(PythonAnalysis(path="sample.py", line_count=10))
+
+    assert review.reviewer is not None
+    assert review.reviewer.status == "failed"
+    # The report writer encodes this; a raw surrogate would raise here.
+    json.dumps(review.to_dict(), ensure_ascii=False).encode("utf-8")
+    assert "\\ud83d" in review.findings[0].reason
 
 
 def test_local_llm_review_success_records_configured_model(
