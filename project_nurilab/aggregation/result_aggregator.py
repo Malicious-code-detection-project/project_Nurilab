@@ -24,6 +24,48 @@ SEVERITY_ORDER = {
 }
 
 
+def file_risk_level(
+    analysis: PythonAnalysis, ruff_findings: list[RuffFinding] | None = None
+) -> str:
+    """Return the risk the aggregator gives ``analysis`` as one file of a project.
+
+    Without ``ruff_findings`` the file's own ``analysis.ruff_findings`` count,
+    which is where a single-file run keeps them.
+    """
+
+    severities = _file_severities(
+        [call.severity for call in analysis.suspicious_calls],
+        [secret.severity for secret in analysis.secrets],
+        analysis.syntax_error is not None,
+        ruff_findings if ruff_findings is not None else analysis.ruff_findings,
+    )
+    return derive_file_risk(severities, analysis.skipped)
+
+
+def derive_file_risk(severities: list[str], skipped: bool) -> str:
+    """Return the highest severity, ``unknown`` for unread files, else ``low``."""
+
+    if severities:
+        return max(severities, key=lambda severity: SEVERITY_ORDER.get(severity, 0))
+    if skipped:
+        return "unknown"
+    return "low"
+
+
+def _file_severities(
+    suspicious_severities: list[str],
+    secret_severities: list[str],
+    has_syntax_error: bool,
+    ruff_findings: list[RuffFinding],
+) -> list[str]:
+    return [
+        *suspicious_severities,
+        *secret_severities,
+        *(["medium"] if has_syntax_error else []),
+        *(finding.severity for finding in ruff_findings),
+    ]
+
+
 class ResultAggregator:
     """Aggregate file-level findings into one project analysis."""
 
@@ -158,12 +200,9 @@ class ResultAggregator:
         ruff_findings: list[RuffFinding],
         skipped: bool,
     ) -> ProjectFileSummary:
-        severities = [
-            *suspicious_severities,
-            *secret_severities,
-            *(["medium"] if has_syntax_error else []),
-            *(finding.severity for finding in ruff_findings),
-        ]
+        severities = _file_severities(
+            suspicious_severities, secret_severities, has_syntax_error, ruff_findings
+        )
         finding_count = (
             len(suspicious_severities)
             + len(secret_severities)
@@ -173,7 +212,7 @@ class ResultAggregator:
 
         return ProjectFileSummary(
             path=self._relative_path(path, root_path),
-            risk_level=self._derive_file_risk(severities, skipped),
+            risk_level=derive_file_risk(severities, skipped),
             finding_count=finding_count,
             suspicious_call_count=len(suspicious_severities),
             secret_count=len(secret_severities),
@@ -181,13 +220,6 @@ class ResultAggregator:
             ruff_finding_count=len(ruff_findings),
             skipped=skipped,
         )
-
-    def _derive_file_risk(self, severities: list[str], skipped: bool) -> str:
-        if severities:
-            return max(severities, key=lambda severity: SEVERITY_ORDER.get(severity, 0))
-        if skipped:
-            return "unknown"
-        return "low"
 
     def _file_summary_sort_key(
         self, summary: ProjectFileSummary

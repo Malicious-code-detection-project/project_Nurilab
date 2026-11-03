@@ -1528,8 +1528,24 @@ def test_relativize_report_removes_upload_root_from_llm_finding_files(
         ),
         (
             "project",
-            ["../../notes.py", "../a.py", "pkg/b.py"],
-            ["<outside>/notes.py", "a.py", "myproj/pkg/b.py"],
+            [
+                "../../notes.py",
+                "../a.py",
+                "pkg/b.py",
+                "C:\\work\\x.py",
+                "C:/work/y.py",
+                "C:\\x\\..",
+                "\\\\host\\share\\z.py",
+            ],
+            [
+                "<outside>/notes.py",
+                "a.py",
+                "myproj/pkg/b.py",
+                "<outside>/x.py",
+                "<outside>/y.py",
+                None,
+                "<outside>/z.py",
+            ],
         ),
     ],
 )

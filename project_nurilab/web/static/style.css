@@ -1,0 +1,224 @@
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --text: #1d232b;
+  --muted: #5d6773;
+  --border: #d9dde3;
+  --accent: #2459b3;
+  --error: #b42318;
+  --critical: #7a1010;
+  --high: #b42318;
+  --medium: #b54708;
+  --low: #3f6212;
+  --info: #475467;
+  font-family: system-ui, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+main {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 1.6rem;
+}
+
+h2 {
+  margin-top: 0;
+  font-size: 1.2rem;
+}
+
+h3 {
+  font-size: 1rem;
+  margin: 20px 0 8px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.error {
+  color: var(--error);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin-top: 16px;
+}
+
+.pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+/* The label is the visible button; clicking it opens its hidden input. */
+.picker {
+  display: inline-block;
+  padding: 8px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.picker:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Hidden from view but still focusable and usable from the keyboard. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  border: 0;
+  white-space: nowrap;
+}
+
+.drop-zone {
+  margin-top: 16px;
+  padding: 28px 16px;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* Locked while an upload request is in flight. */
+.picker.disabled,
+.drop-zone.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.drop-zone.drag-over {
+  border-color: var(--accent);
+  background: #eef3fb;
+  color: var(--accent);
+}
+
+.selection {
+  margin: 8px 0 12px;
+  overflow-wrap: anywhere;
+}
+
+.selection-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+/* A block row, so the button stays below the toggle when the status line is hidden. */
+.actions {
+  margin-top: 12px;
+}
+
+button,
+.button-link {
+  display: inline-block;
+  padding: 8px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #ffffff;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.downloads {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.overview {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 12px 0;
+}
+
+.overview dt {
+  color: var(--muted);
+}
+
+.overview dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.findings {
+  padding-left: 20px;
+}
+
+.finding {
+  margin-bottom: 16px;
+  overflow-wrap: anywhere;
+}
+
+.finding p {
+  margin: 4px 0;
+}
+
+.finding-heading {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.recommendation {
+  color: var(--muted);
+}
+
+.severity {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--info);
+}
+
+.severity-critical {
+  color: var(--critical);
+}
+
+.severity-high {
+  color: var(--high);
+}
+
+.severity-medium {
+  color: var(--medium);
+}
+
+.severity-low {
+  color: var(--low);
+}

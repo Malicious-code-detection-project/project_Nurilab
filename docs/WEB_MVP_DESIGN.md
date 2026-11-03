@@ -65,7 +65,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
   - 기준 경로는 `expanduser().resolve()`한 뒤 비교한다. pipeline이 입력 경로를 같은 방식으로 바꿔(`pipeline.py`의 `analyze()`) 보고서에는 펼친 절대 경로만 들어가므로, 상대 경로·`~`·symlink가 든 기준은 일치하지 않아 서버 경로가 그대로 남는다.
   - 웹은 아래 순서로 세 번 거른다. 긴 기준부터 처리해야 하므로 순서를 바꾸지 않는다(3단계를 먼저 하면 `<data>/upload/a.py`가 된다).
     1. `relativize_report(report, <업로드 디렉터리>, "")`: 업로드를 담는 디렉터리(`NURILAB_WEB_DATA_DIR/<job_id>/upload/`) 접두어를 지운다. 단일 파일은 `file.py`, 폴더는 `myproj`와 `myproj/a.py`가 된다.
-    2. `name_absolute_finding_files(report, <업로드 디렉터리>)`: 그래도 절대 경로로 남은 리뷰 finding(`review.findings`)의 `file`은 경로를 지우고 `<outside>/파일 이름`으로 남긴다(`../notes.py` → `<outside>/notes.py`). 단일 파일 `notes.py`를 올렸을 때 업로드 밖을 가리킨 `../notes.py`가 업로드한 파일의 지적처럼 보이지 않게 하기 위해서다. POSIX와 Windows 형식(`C:\…`, `\\host\…`)의 절대 경로를 모두 대상으로 한다. 업로드 디렉터리 자체나 그 상위 폴더(`..`, `../..`, `/`, `..`을 섞어 쓴 절대 경로, Linux가 `/`와 같게 읽는 `//`로 시작하는 경로 포함)를 가리키면 파일 이름 대신 `None`으로 둔다. 파일 이름만 남기면 job UUID, 데이터 폴더 이름, 서버 사용자명 같은 상위 폴더 이름이 한 단계씩 드러나기 때문이다. 이름이 없는 경로(`C:\`)도 `None`이다. LLM이 `<업로드 디렉터리>/../..`처럼 업로드 디렉터리에서 시작해 `..`으로 올라가는 절대 경로를 주면 1단계 뒤 `../..`처럼 상대 경로로 남으므로, 상대 경로는 업로드 디렉터리에 붙여 정규화한 뒤 같은 규칙을 적용한다. 이때 `..`과 함께 `.`과 겹친 구분자도 접혀 `myproj/./a.py`, `myproj//a.py`는 `myproj/a.py`가 된다. 절대 경로와 상대 경로 모두, 정규화 결과가 업로드 디렉터리 안이면 그 상대 경로(`myproj/a.py`)를 남긴다(예: `<data>/x/../<job>/upload/myproj/a.py`). 1단계가 기준 경로 뒤의 `/`와 `\`를 모두 구분자로 지우므로, 2단계도 `\`를 구분자로 읽어 `<업로드 디렉터리>\..\..`이나 `/…/nurilab_data\x.py`처럼 `\`를 쓴 경로에 같은 규칙을 적용한다. `\srv\data\x.py`처럼 `\`로 시작한 경로는 Linux에서 절대 경로가 아니라서 `review()`가 업로드 기준으로 붙이므로(`myproj/\srv\data\x.py`), 절대 경로가 아닌 값에 `/` 바로 뒤 `\`로 시작한 조각이 있으면 그 조각부터 절대 경로로 읽는다. 처음부터 `//`로 쓴 경로는 구분자 두 개로 보고 이렇게 읽지 않는다. LLM finding의 `file`이 `../notes.py`처럼 기준 밖을 가리키면 `LocalLLMReviewClient.review()`가 상대 경로를 절대 경로로 바꾸는 `resolve()`의 결과가 업로드 디렉터리 밖이 되어 1단계에서 빠진다(단일 파일은 `../`부터, 폴더는 `../../`부터). job 폴더 밖까지 나간 경로와 LLM이 지어낸 절대 경로도 여기서 처리된다.
+    2. `name_absolute_finding_files(report, <업로드 디렉터리>)`: 그래도 절대 경로로 남은 리뷰 finding(`review.findings`)의 `file`은 경로를 지우고 `<outside>/파일 이름`으로 남긴다(`../notes.py` → `<outside>/notes.py`). 단일 파일 `notes.py`를 올렸을 때 업로드 밖을 가리킨 `../notes.py`가 업로드한 파일의 지적처럼 보이지 않게 하기 위해서다. POSIX와 Windows 형식(`C:\…`, `\\host\…`)의 절대 경로를 모두 대상으로 한다. 업로드 디렉터리 자체나 그 상위 폴더(`..`, `../..`, `/`, `..`을 섞어 쓴 절대 경로, Linux가 `/`와 같게 읽는 `//`로 시작하는 경로 포함)를 가리키면 파일 이름 대신 `None`으로 둔다. 파일 이름만 남기면 job UUID, 데이터 폴더 이름, 서버 사용자명 같은 상위 폴더 이름이 한 단계씩 드러나기 때문이다. 이름이 없는 경로(`C:\`)도 `None`이다. LLM이 `<업로드 디렉터리>/../..`처럼 업로드 디렉터리에서 시작해 `..`으로 올라가는 절대 경로를 주면 1단계 뒤 `../..`처럼 상대 경로로 남으므로, 상대 경로는 업로드 디렉터리에 붙여 정규화한 뒤 같은 규칙을 적용한다. 이때 `..`과 함께 `.`과 겹친 구분자도 접혀 `myproj/./a.py`, `myproj//a.py`는 `myproj/a.py`가 된다. 절대 경로와 상대 경로 모두, 정규화 결과가 업로드 디렉터리 안이면 그 상대 경로(`myproj/a.py`)를 남긴다(예: `<data>/x/../<job>/upload/myproj/a.py`). 1단계가 기준 경로 뒤의 `/`와 `\`를 모두 구분자로 지우므로, 2단계도 `\`를 구분자로 읽어 `<업로드 디렉터리>\..\..`이나 `/…/nurilab_data\x.py`처럼 `\`를 쓴 경로에 같은 규칙을 적용한다. `\srv\data\x.py`처럼 `\`로 시작한 경로는 Linux에서 절대 경로가 아니라서 `review()`가 업로드 기준으로 붙이므로(`myproj/\srv\data\x.py`), 절대 경로가 아닌 값에 `/` 바로 뒤 `\`로 시작한 조각이 있으면 그 조각부터 절대 경로로 읽는다. 폴더 업로드에서 `C:\x.py`·`C:/x.py`도 같은 이유로 `myproj/C:\x.py`가 되므로, `/` 바로 뒤 드라이브 문자(`C:\`, `C:/`)로 시작한 조각은 Windows 절대 경로로 읽어 `<outside>/x.py`로 남긴다(THE-160). 단일 파일은 1단계 뒤 `C:\x.py`만 남아 원래 이 규칙으로 처리된다. 처음부터 `//`로 쓴 경로는 구분자 두 개로 보고 이렇게 읽지 않는다. LLM finding의 `file`이 `../notes.py`처럼 기준 밖을 가리키면 `LocalLLMReviewClient.review()`가 상대 경로를 절대 경로로 바꾸는 `resolve()`의 결과가 업로드 디렉터리 밖이 되어 1단계에서 빠진다(단일 파일은 `../`부터, 폴더는 `../../`부터). job 폴더 밖까지 나간 경로와 LLM이 지어낸 절대 경로도 여기서 처리된다.
     3. `relativize_report(report, <job 폴더>, "<data>")`: 모든 문자열에 남은 job 폴더(`NURILAB_WEB_DATA_DIR/<job_id>`) 경로는 `<data>`로 바꾼다. 기준은 `NURILAB_WEB_DATA_DIR` 전체가 아니라 UUID가 들어간 job 폴더로 한정한다. 보고서에는 secret 미리보기 같은 사용자 코드 문자열도 들어가므로, 기준이 넓으면 코드 속 같은 경로 문자열까지 바뀌어 분석 근거가 달라지고 웹·CLI 결과도 어긋난다.
   - 단일 파일에서 파일 경로나 그 상위 폴더를 기준으로 삼지 않는다. LLM finding의 `file`은 빈 값이면 `analysis.path`, 상대 경로면 `Path(analysis.path).parent` 기준의 절대 경로가 되므로(`LocalLLMReviewClient.review()`의 단일 파일 분기), 기준에 따라 `file.py/file.py`처럼 어긋난다.
   - LLM finding의 `file`이 `.`처럼 업로드 디렉터리 자체를 가리키면(단일 파일) 1단계에서 빈 값이 되어 `None`(JSON `null`)으로 저장된다. 보고서는 파일 없이 줄 번호만 표시한다(`_finding_location()`). 폴더의 `.`은 분석 루트를 가리키므로 `myproj`가 된다.
@@ -119,7 +119,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 
 - 확인 함수는 예외를 밖으로 던지지 않고 항상 네 판정 중 하나를 반환한다. vLLM을 `--api-key`로 띄웠을 때의 401, 5xx, 깨진 JSON, `data` 목록이 없는 응답도 `unreachable`이다. 그래야 두 API가 `500` 대신 정해진 응답을 낸다.
 - 이 판정은 `GET /api/llm-status` 응답(§4.1)과 `POST /api/analyses`의 연결 확인(§4.2)이 함께 쓴다. 화면은 `status`별 고정 문구로 안내한다.
-  - `unreachable`은 연결 실패뿐 아니라 401·5xx·잘못된 응답도 포함하므로 문구를 넓게 쓴다. 예: "LLM 서버에 연결할 수 없거나 응답이 올바르지 않습니다. 서버 실행 상태, 주소, 인증 설정을 확인하세요." NuriLab은 API key를 보내지 않으므로 401은 서버 쪽 인증 설정 문제다.
+  - `unreachable`은 연결 실패뿐 아니라 401·5xx·잘못된 응답도 포함하므로 문구를 넓게 쓴다. 예: "LLM 서버에 연결할 수 없거나 응답이 올바르지 않습니다. 서버 실행 상태, 주소, 인증 설정을 확인하세요." NuriLab은 API key를 보내지 않으므로 401은 서버 쪽 인증 설정 문제다. 네 가지 문구는 `web/static/app.js`의 `LLM_STATUS_TEXT`에 둔다.
 - 반환값은 `LLMConnectionCheck(status, detail)`이다. `detail`은 서버 로그에만 쓰는 짧은 원인이고 API 응답과 화면에는 내보내지 않는다(§4.3). 고정 문구(`invalid JSON`, `no model list`, `model not listed`), HTTP 상태 코드(`HTTP 401`), 예외 클래스 이름(`ConnectTimeout`)으로만 만들고 URL·응답 본문·예외 메시지는 넣지 않는다. `connected`이면 `None`이다. 로그 기록은 웹(W3)이 한다.
 
 ### 3.5 외부 회귀 기준선 (THE-92)
@@ -153,12 +153,20 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 
 - 핸들러는 `files: list[UploadFile] = File()`를 선언하지 않고 `Request`를 직접 받는다. 선언하면 FastAPI가 핸들러 진입 전에 본문 전체를 기본값 `max_files=1000`으로 파싱해서 `Content-Length` 선확인과 `max_files` 지정을 할 수 없다.
 - 처리 순서:
-  1. `Content-Type`이 `multipart/form-data`가 아니면 `400 invalid_upload`다. `request.form()`은 multipart가 아닌 요청에 예외를 던지지 않고 빈 form이나 urlencoded 값을 돌려주므로, 확인하지 않으면 `422 no_python_files`로 끝난다. `Content-Length`가 없으면 `411`, 상한을 넘으면 `413`이다. 다 받은 뒤 검사하면 Starlette가 임시 파일로 받는 동안 디스크가 찰 수 있다.
+  1. `Content-Type`이 `multipart/form-data`가 아니면 `400 invalid_upload`다. `request.form()`은 multipart가 아닌 요청에 예외를 던지지 않고 빈 form이나 urlencoded 값을 돌려주므로, 확인하지 않으면 `422 no_python_files`로 끝난다. `Content-Length`가 없으면 `411`, 상한을 넘으면 `413`이다. 다 받은 뒤 검사하면 Starlette가 임시 파일로 받는 동안 디스크가 찰 수 있다. `Content-Length`와 함께 `Transfer-Encoding`이 오면 `400 invalid_upload`다. uvicorn(h11)은 이때 chunked 본문을 `Content-Length`보다 길게 끝까지 읽으므로, 거부하지 않으면 작은 `Content-Length`로 상한을 우회할 수 있다(THE-160).
   2. `await request.form(max_files=<안전 상한>)`를 호출한다. 안전 상한은 1000 이하이면서 분석 대상 파일 수 상한보다 크게 정한다. Starlette는 파일·필드 수 초과와 multipart 형식 오류를 모두 `HTTPException(400)`으로 바꿔 던지고(`starlette/requests.py:294`) 원인은 메시지 문자열로만 구분된다. 메시지를 파싱하지 않고 이 예외는 모두 `400 invalid_upload`로 바꾼다.
   3. 같은 form에서 `review_mode`(`mock` / `local`, 기본 `mock`)를 꺼낸다.
   4. `local`이면 LLM 연결을 확인한다 (§2).
   5. 업로드 규칙으로 걸러내고 검증한다 (§6). 남은 `.py`가 분석 대상 파일 수 상한을 넘으면 `413 too_many_files`, 0개면 `422 no_python_files`다.
-- 총 크기 상한, 분석 대상 `.py` 파일 수 상한, `max_files` 안전 상한의 환경 변수 이름과 기본값은 THE-160에서 정해 이 문서와 `/api/upload-rules`에 반영한다.
+- 상한값은 THE-160에서 아래처럼 정했다. 기본값은 `config.py`, 값 검증은 `web/settings.py`가 맡으며 잘못된 값이면 앱이 시작되지 않는다. `/api/upload-rules`는 세 값을 그대로 내려준다.
+
+| 환경 변수 | 기본값 | 내용 |
+| --- | --- | --- |
+| `NURILAB_WEB_MAX_UPLOAD_BYTES` | 52428800 (50 MiB) | `Content-Length`로 비교하는 요청 본문 전체 크기. multipart 헤더도 포함하므로 브라우저의 파일 크기 합계 확인을 통과해도 상한 근처에서는 `413`이 날 수 있다 |
+| `NURILAB_WEB_MAX_PYTHON_FILES` | 500 | 걸러낸 뒤 분석 대상 `.py` 수 |
+| `NURILAB_WEB_MAX_FORM_FILES` | 1000 | `request.form(max_files=…)`. `NURILAB_WEB_MAX_PYTHON_FILES`보다 크고 1000 이하여야 한다 |
+
+- `review_mode`가 `mock`·`local`이 아니면 `400 invalid_request`다.
 - 파일은 multipart 필드 `files`로 받는다. 기본 `append(name, file)`는 파일 이름만 보내 폴더 경로가 빠지므로, 브라우저는 `FormData.append("files", file, file.webkitRelativePath || file.name)`처럼 상대 경로를 세 번째 인자로 넘긴다.
 
 ### 4.3 오류 형태
@@ -168,7 +176,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 | 코드 | HTTP | 상황 |
 | --- | --- | --- |
 | `invalid_path` | 400 | 경로 조작, 업로드 구조 오류 (§6) |
-| `invalid_upload` | 400 | multipart가 아닌 요청, 그리고 multipart 형식 오류·안전 상한 초과 등 `request.form()`이 던진 400 (§4.2) |
+| `invalid_upload` | 400 | multipart가 아닌 요청, `Content-Length`와 `Transfer-Encoding`을 함께 보낸 요청, 그리고 multipart 형식 오류·안전 상한 초과 등 `request.form()`이 던진 400 (§4.2) |
 | `length_required` | 411 | `Content-Length` 없음 |
 | `too_large` | 413 | 총 크기 초과 |
 | `too_many_files` | 413 | 걸러낸 뒤 `.py`가 분석 대상 파일 수 상한 초과 |
@@ -176,18 +184,20 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 | `llm_unavailable` | 503 | `local`인데 LLM 연결 안 됨 |
 | `not_found` | 404 | 없는 job id, UUID 형식이 아닌 job id, 없는 경로 |
 | `method_not_allowed` | 405 | 경로는 있지만 허용하지 않는 메서드 |
-| `invalid_request` | 400 | 그 밖의 요청 검증 오류(`RequestValidationError`) |
+| `invalid_request` | 400 | 그 밖의 요청 검증 오류(`RequestValidationError`), 허용하지 않는 `review_mode` 값 |
 | `report_not_ready` | 409 | `queued`/`running` job의 보고서 요청 |
 | `report_unavailable` | 409 | `failed` job의 보고서 요청 |
+| `internal_error` | 500 | 처리되지 않은 서버 예외(THE-160에서 추가). 원문은 서버 로그에만 남긴다 |
 
 ### 4.4 job
 
 - 상태는 `queued`, `running`, `completed`, `failed` 네 가지다.
 - job id는 UUID4다. 순번이면 `0.0.0.0` 시연 중 같은 망의 누구나 다른 사람의 보고서를 조회할 수 있다.
 - 응답 필드: `id`, `status`, `created_at`, `finished_at`, `upload_name`, `file_count`, `review`(`client`, `model`, `status`, `failure_code`), `risk_level`, `static_risk_level`, `error`(`failed`일 때 `{code, message}`, 아니면 `null`)
+  - `file_count`는 걸러낸 뒤 분석 대상으로 저장한 `.py` 수다. `review`의 `client`·`model`은 요청 시점에, `status`·`failure_code`는 완료 뒤 채운다.
 - 위험도는 CLI와 같은 값을 쓰며 `completed`일 때만 채운다.
   - `risk_level`: 보고서의 `review.risk_level`. CLI 터미널의 `Risk Level`(`cli.py:140`)과 같고, LLM 리뷰가 실패하면 `unknown`이다. Mock도 단일 파일을 읽지 못하면(skipped) `unknown`이므로(`MockReviewClient`의 skipped 분기), LLM 실패 여부는 `risk_level`이 아니라 `review.status`(보고서의 `review.reviewer.status`)로만 판단한다.
-  - `static_risk_level`: 정적 분석 위험도다. 폴더 업로드면 `analysis.summary.risk_level`(폴더 HTML 보고서 상단 카드와 같은 값)이다. 단일 파일이면 집계기가 폴더 안의 파일마다 쓰는 규칙(`aggregation/result_aggregator.py`의 `_summarize_file()`·`_derive_file_risk()`)으로 계산한다. 위험 호출, secret, 문법 오류(`medium`), Ruff 결과의 severity 중 가장 높은 값이고, 신호가 없으면 `low`, 읽지 못한 파일이면 `unknown`이다.
+  - `static_risk_level`: 정적 분석 위험도다. 폴더 업로드면 `analysis.summary.risk_level`(폴더 HTML 보고서 상단 카드와 같은 값)이다. 단일 파일이면 집계기가 폴더 안의 파일마다 쓰는 규칙(`aggregation/result_aggregator.py`의 `_summarize_file()`·`derive_file_risk()`)으로 계산한다. 위험 호출, secret, 문법 오류(`medium`), Ruff 결과의 severity 중 가장 높은 값이고, 신호가 없으면 `low`, 읽지 못한 파일이면 `unknown`이다.
   - 단일 파일 계산은 웹에서 규칙을 다시 짜지 않고, 집계기의 규칙을 공용 함수로 꺼내 집계기와 웹이 함께 쓴다(W3). 계산한 값은 웹 응답과 SQLite에만 넣고 보고서 JSON·HTML에는 넣지 않으므로 CLI 출력은 바뀌지 않는다.
 - job 실패 코드는 `analysis_error`(분석 중 예외)와 `interrupted`(서버 재시작으로 중단)다.
 
@@ -198,9 +208,9 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
   - `analyzer_version`, `generated_at`
   - `summary`: `review.summary`
   - `findings`: `review.findings`의 각 항목(`title`, `severity`, `file`, `line`, `column`, `source`, `rule_id`, `reason`, `recommendation`)
-  - `static_signals`: 파일별 위험 호출·secret·문법 오류. 정적 분석 신호를 리뷰 결과와 구분해 보여주는 데 쓴다(§7.2, W4)
+  - `static_signals`: 파일별 위험 호출·secret·문법 오류. 정적 분석 신호를 리뷰 결과와 구분해 보여주는 데 쓴다(§7.2, W4). 신호가 있는 파일만 `{file, suspicious_calls[{name, line, category, severity}], secrets[{kind, line, severity}], syntax_error}`로 담고, secret 미리보기는 넣지 않는다(THE-160)
   - `skipped_files`: 읽지 못한 파일의 상대 경로
-- `review.status=failed`이면 `source=local_llm`인 finding의 `reason`을 **서버에서** `failure_code`별 고정 문구(§7.3)로 바꿔 내려준다. LLM 실패 사유 원문(endpoint URL, `Cause:` 원문, 응답 미리보기)은 브라우저로 보내지 않는다. W3부터 적용한다.
+- `review.status=failed`이면 `source=local_llm`인 finding의 `reason`을 **서버에서** `failure_code`별 고정 문구(§7.3)로 바꿔 내려준다. LLM 실패 사유 원문(endpoint URL, `Cause:` 원문, 응답 미리보기)은 브라우저로 보내지 않는다. W3부터 적용한다. 다섯 가지 문구는 `web/results.py`의 `LLM_FAILURE_MESSAGES`에 둔다. `summary`, `title`, `recommendation`은 실패 시에도 고정 문구라 바꾸지 않는다.
 - 저장된 보고서 파일은 바꾸지 않는다. 다운로드한 보고서에 원문이 남는 점은 §9의 알려진 한계다.
 
 ## 5. 웹 실행 구조 (W3)
@@ -211,7 +221,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 - 공식 실행 명령은 `uv run python -m project_nurilab.web`(`web/__main__.py`) 하나다. 이 진입점이 `NURILAB_WEB_HOST`, `NURILAB_WEB_PORT`를 읽어 uvicorn을 띄운다. `uvicorn ...:app` 직접 실행은 앱 코드가 bind를 정할 수 없어 쓰지 않는다.
 - `fastapi`, `uvicorn`, `python-multipart`는 기본 `dependencies`에 추가한다. 별도 그룹으로 빼면 `[tool.uv] default-groups`에 따로 넣지 않는 한 `uv sync --locked` 기본 설치에서 빠져 pytest와 mypy가 import 오류로 실패한다. 분리하면 그 설정과 함께 CONTRIBUTING·AGENTS의 검증 명령도 바꿔야 하는데, 이 저장소는 uv로만 설치·실행하므로 실익이 작아 CLI만 쓰는 경우에도 함께 설치되는 것을 감수한다. 나중에 CLI 전용 설치나 오프라인 배포를 위해 분리한다면 dependency group보다 `optional-dependencies`(extras)가 맞으며, 패키지·의존성 정리 작업에서 검토한다.
   - `uvicorn`, `python-multipart`는 이미 `mcp` 2.2.0을 통해 lock에 있다(starlette 1.7.0, uvicorn 0.54.0, python-multipart 0.0.32). 웹이 직접 쓰므로 명시만 한다.
-  - 2026-10-21 scratch 복사본 확인 결과, `fastapi`를 추가하면 `fastapi` 0.156.4와 `annotated-doc`만 늘고 starlette는 그대로였다. 착수 시 다시 확인하고 W3 PR에 `uv.lock` diff를 기록한다.
+  - 2026-10-21 scratch 복사본 확인 결과, `fastapi`를 추가하면 `fastapi` 0.156.4와 `annotated-doc`만 늘고 starlette는 그대로였다. 2026-10-30 THE-160 착수 시 다시 확인한 결과 `fastapi` 0.162.0과 `annotated-doc` 0.0.5만 늘었고 starlette 1.7.0은 그대로였다. W3 PR에 `uv.lock` diff를 기록한다.
   - `httpx`는 추가하지 않는다. Starlette 1.7 TestClient는 `mcp`가 끌어온 `httpx2`를 쓴다.
   - starlette·uvicorn 변경이 MCP 클라이언트 경로를 깨지 않았는지 기본 pytest의 `tests/test_external_jadx_mcp.py`로 확인한다. 실제 서버가 필요한 `tests/test_jadx_mcp_integration.py`(opt-in, `NURILAB_RUN_JADX_MCP=1`)는 요구하지 않는다.
 
@@ -223,6 +233,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 - `/api/llm-status`는 동기 호출이라 `def` 핸들러다. `POST /api/analyses`는 `await request.form()` 때문에 `async def`이고, 그 안의 연결 확인은 `run_in_threadpool`로 감싼다.
 - 웹에서는 Ruff를 실행하지 않는다(`use_ruff=False`, CLI `--no-ruff`와 같다). Ruff는 dev 그룹에만 있어 서버에 없으면 모든 보고서에 실행 실패 finding이 붙고, 업로드가 저장소 안에 있으면 저장소의 Ruff 설정을 따라 실행되기 때문이다.
 - 분석 중 예외는 job을 `failed`(`analysis_error`)로 끝낸다. 예외 원문, 서버 경로, stack trace는 서버 로그에만 남긴다. 로그에는 job id, 상태, 소요 시간만 남기고 소스 내용은 남기지 않는다.
+- `running` 상태 기록이 실패해도 같은 `analysis_error`로 끝내고, 업로드 원본은 성공·실패와 관계없이 항상 삭제한다. 최종 상태 기록은 한 번 다시 시도하고, 그래도 실패하면 재시작 복구(`interrupted`)에 맡긴다. 기록이 실패한 job이 `queued`·`running`에 남으면 업로드 원본이 남고 브라우저가 계속 polling하기 때문이다(THE-160 리뷰).
 
 ### 5.3 데이터와 SQLite
 
@@ -230,7 +241,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 - 앱 시작 시 `NURILAB_WEB_DATA_DIR`을 `expanduser().resolve()`한 절대 경로로 한 번 바꾸고, 업로드 저장·pipeline 입력·경로 치환 기준(§3.2)에 모두 이 값을 쓴다. 펼치지 않은 `~`를 쓰면 업로드는 현재 디렉터리 아래 `~` 폴더에 저장되고 pipeline은 홈 경로를 찾아 모든 job이 `failed`가 된다.
 - 바꾼 경로에 `\`가 있으면 앱을 시작하지 않고 오류로 종료한다. Linux에서 `\`는 폴더 이름에 쓸 수 있는 글자지만, 경로 치환 2단계(§3.2)는 LLM이 쓴 `\`를 구분자로 읽으므로 데이터 경로에 `\`가 있으면 `..` 단계 수가 어긋나 상위 폴더 이름이 남을 수 있다.
 - 분석이 끝나면(성공·실패 모두) 업로드 원본을 바로 삭제하고 보고서만 남긴다.
-- SQLite는 파일 하나, 테이블 하나다.
+- SQLite는 파일 하나(`NURILAB_WEB_DATA_DIR/jobs.sqlite3`), 테이블 하나다.
   - 컬럼: id, 상태, 실패 코드, 생성·완료 시각, 업로드 이름, 파일 수, 리뷰 종류, 리뷰 모델, 리뷰 상태, 리뷰 실패 코드, 리뷰 위험도, 정적 위험도, 보고서 경로
   - job 상태 응답(§4.4)은 보고서 JSON을 다시 읽지 않고 이 컬럼만으로 채운다. 화면용 결과(§4.5)만 저장된 보고서 JSON에서 만든다.
   - 리뷰 상태·실패 코드 컬럼은 W3부터 채운다. job 상태 응답의 `review.status`와 W3의 원문 숨김(§4.5) 판단이 이 값을 쓰기 때문이다.
@@ -243,14 +254,19 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 - 제외 폴더는 `DEFAULT_EXCLUDED_DIRS`(`.git`, `.venv`, `__pycache__`, `.pytest_cache`, `.ruff_cache`, `build`, `dist`, `reports`)를 그대로 쓴다. CLI 동작도 바뀌므로 `node_modules`는 추가하지 않는다.
 - 제외 폴더는 CLI(`input/collector.py`의 `_is_under_excluded_dir()`)처럼 분석 루트 아래 상대 경로로 판정한다. 폴더 업로드는 최상위 폴더 이름을 빼고 그 아래 경로만 검사하며, 브라우저와 서버가 같은 기준을 쓴다. 그래야 `build/`처럼 제외 이름과 같은 폴더를 올려도 CLI처럼 분석된다.
 - `.py`가 아닌 파일과 제외 폴더 아래 파일은 조용히 버린다. 거부는 아래 경로 조작과 구조 오류에만 쓴다.
+- 경로 조작과 구조 검사는 걸러내기 전에 받은 항목 전체에 한다. 버려질 파일(`myproj/x/../a.txt`)에 든 경로 조작도 거부한다(THE-160).
 - 분석 루트와 업로드 이름:
   - 단일 파일: 경로 구분자가 없는 파일 1개다. 분석 대상과 업로드 이름은 그 파일이다.
   - 폴더: 모든 파일이 최상위 폴더 하나 아래에 있다. 분석 루트와 업로드 이름은 그 폴더다.
 - `400 invalid_path`로 거부하는 경우:
-  - `..`, 절대 경로, 드라이브 문자(`C:/` 등), 빈 이름이나 빈 경로 조각
+  - `..`, `.`, 절대 경로, 드라이브 문자(`C:/` 등), 빈 이름이나 빈 경로 조각
   - 백슬래시(`\`), NUL 문자, `<`·`>`(업로드 밖 경로 표식 `<outside>`(§3.2)와 겹치지 않도록. Windows는 파일 이름에 쓸 수 없는 문자다)
-  - 같은 상대 경로가 두 번 이상 온 경우
+  - 같은 상대 경로가 두 번 이상 온 경우. 대소문자만 다른 경로(`Evil.py`와 `evil.py`)와 유니코드 정규화 방식(NFC/NFD)만 다른 경로(`café.py` 두 형태)도 같은 경로로 본다. 비교는 유니코드 표준의 대소문자 무시 비교(NFD 정규화 뒤 casefold)를 쓴다. 대소문자를 구분하지 않는 디스크(WSL의 `/mnt/c`, macOS 기본 설정 등)에서는 나중 파일이 앞 파일을 덮어써, 앞 파일의 신호가 오류 없이 결과에서 사라지기 때문이다. 디스크 종류와 관계없이 같은 결과가 나오도록 항상 거부한다(THE-160 리뷰)
   - 최상위 폴더가 둘 이상, 파일과 폴더가 섞임, 경로 없는 파일이 2개 이상
+  - 한 파일의 경로가 다른 파일의 폴더 경로와 같은 경우(`myproj/a.py`와 `myproj/a.py/b.py`). 둘 다 저장할 수 없기 때문이다. 같은 이유로 대소문자를 무시하고 비교한다(`myproj/X.py`와 `myproj/x.py/b.py`)
+  - 보고서 파일명 `<분석 루트 이름>.analysis.html`이 255바이트(ext4·xfs·btrfs의 이름 길이 상한)를 넘는 경우. 분석 루트 이름은 단일 파일이면 확장자를 뺀 이름, 폴더면 폴더 이름이다. 거부하지 않으면 업로드는 통과하고 보고서 저장에서 job이 실패한다(THE-160)
+  - 경로 깊이가 64단계(파일 이름 포함)를 넘는 경우. Python 3.12의 `shutil.rmtree()`는 단계마다 재귀하고 `ignore_errors=True`여도 `RecursionError`를 던지므로, 너무 깊은 업로드는 삭제되지 못해 job이 `running`에 남고 재시작 복구에서 앱이 시작되지 않는다(THE-160)
+  - 저장할 때 파일 이름이나 전체 경로가 파일시스템 상한을 넘는 경우(`ENAMETOOLONG`). 디스크 부족 같은 다른 저장 오류는 `500 internal_error`다(THE-160)
 - `C:\evil\x.py`, `\\host\share\x.py`처럼 `X:\`나 `\\`로 시작하는 이름은 python-multipart가 핸들러에 넘기기 전에 파일 이름(`x.py`)만 남긴다(IE6 대응 코드). 이 경우는 따로 거부하지 않고 잘린 이름에 같은 규칙을 적용한다. 폴더 업로드에 섞이면 "파일과 폴더가 섞임"으로 `400`이 된다.
 - 업로드 파일은 실행하거나 import하지 않는다. 분석은 기존 AST 정적 분석뿐이다.
 
@@ -258,7 +274,9 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 
 ### 7.1 기본 동작 (W3)
 
-- "LLM 리뷰 사용" 토글은 기본 꺼짐(Mock)이다. 켜면 `/api/llm-status`로 연결 상태와 모델 이름을 표시하고, 연결할 수 없으면 실행 버튼을 막고 안내를 띄운다.
+- 업로드는 "파일 선택"·"폴더 선택" 버튼과, 그 아래 끌어놓기 영역 중 하나로 고른다. 한 번에 파일 1개 또는 폴더 1개만 받으며 새로 고르면 이전 선택을 지운다. 끌어놓기는 `webkitGetAsEntry()`로 파일과 폴더를 구분하고, 업로드 경로는 `entry.fullPath`의 맨 앞 `/`를 떼어 폴더 버튼의 `webkitRelativePath`와 같은 형식(`myproj/a.py`)으로 만든다. 최상위 폴더 아래의 제외 폴더는 어차피 버리므로 읽지 않는다. 서버 API와 업로드 규칙(§4.2, §6)은 선택 방법과 관계없이 같다(THE-160).
+- 선택한 이름과 분석 대상 수는 끌어놓기 영역 아래에 표시하고, 업로드가 되지 않는 경우의 안내(선택 제한, 끌어놓기 오류, 서버가 거부한 업로드)도 같은 자리에 띄운다. `llm_unavailable`과 분석 진행·실패 안내는 실행 버튼 아래에 둔다.
+- "LLM 리뷰 사용" 토글은 기본 꺼짐(Mock)이다. 켜면 `/api/llm-status`로 연결 상태와 모델 이름을 표시하고, 연결할 수 없으면 실행 버튼을 막고 안내를 띄운다. 토글을 빠르게 바꿔도 마지막 확인 결과만 반영하고, 웹 서버에 연결하지 못하면 오류 안내를 띄운다. 페이지를 열 때 브라우저가 켜진 토글을 복원했으면 바로 확인한다(THE-160 리뷰).
 - 상태는 polling으로 조회한다.
 - 위험도는 job 상태 응답(§4.4), 요약과 finding은 화면용 결과(§4.5)에서 받아 표시하며 문자열은 `textContent`로만 렌더링한다.
 - LLM 실패 사유 원문은 서버가 고정 문구로 바꿔 내려주므로(§4.5) 화면에 나오지 않는다. `0.0.0.0` 시연에서 endpoint URL과 예외 원문이 보이지 않도록 W3부터 적용한다.
@@ -346,6 +364,7 @@ README와 USAGE에 적을 것:
 - LLM prompt에는 서버 절대 경로(`root_path`, 단일 파일의 `file`, 읽기 실패 사유)가 들어간다. LLM이 이 경로를 데이터 폴더나 그보다 위에서 잘라 요약·finding 문구에 쓰면 그 경로(서버 폴더 구조와 사용자명)는 경로 치환(§3.2)에서 빠져 화면과 보고서에 남는다. 근본 해결은 prompt에 상대 경로를 보내는 것이지만 CLI의 LLM 입력도 바뀌므로 후속 이슈로 다룬다.
 - 업로드 원본은 지우지만 보고서와 SQLite 기록은 자동으로 지우지 않는다. 필요하면 `NURILAB_WEB_DATA_DIR`을 수동으로 정리한다.
 - 분석은 프로세스 격리와 전체 timeout 없이 실행된다.
+- 요청의 `Origin`과 `Host`를 확인하지 않는다. multipart POST는 브라우저가 사전 확인 없이 보내는 요청이라, 사용자가 다른 사이트를 열기만 해도 그 페이지가 이 서버에 분석을 걸 수 있다(브라우저에서 재현). `Host`를 확인하지 않으므로 DNS rebinding으로 응답을 읽을 수도 있다. 다른 사람의 결과는 UUID job id를 알아야 해서 읽기 어렵고, 주된 위험은 대기열 점유, 보고서로 디스크 채우기, LLM 호출 같은 자원 남용이다. 실사용 전에 `Origin` 검사와 `Host` 허용 목록을 넣는다(THE-160 리뷰).
 
 **설계상 수용** (의도한 동작이거나, 분석 결과에 영향이 없고 발생 가능성이 낮아 유지함)
 
@@ -355,4 +374,5 @@ README와 USAGE에 적을 것:
 - 리뷰 요청은 endpoint가 보낸 redirect를 따라간다. vLLM은 redirect를 보내지 않고 endpoint는 관리자가 정하므로, 고치려고 기존 CLI 동작을 바꾸지 않는다. 연결 확인(§3.4)은 따라가지 않는다.
 - LLM 요청 timeout(연결 확인 5초, 리뷰 `NURILAB_LLM_TIMEOUT`)은 연결과 각 읽기 대기에 걸리는 값이라 전체 시간 상한이 아니다. 조금씩 계속 보내는 서버라면 더 오래 걸린다.
 - 폴더 업로드에서 LLM finding의 `file`이 `../a.py`처럼 업로드한 폴더 밖이지만 업로드 디렉터리 안을 가리키면 `<outside>` 표식 없이 `a.py`로 남는다. 업로드한 파일은 항상 `myproj/…`로 표시되므로 구별할 수 있고, 표식을 붙이려면 1단계 기준을 바꿔야 해서 유지한다. 같은 이유로 폴더 업로드에서 LLM이 업로드 경로 자체를 `\`로 쓰면 `myproj/myproj\a.py`처럼 폴더 이름이 한 번 더 붙어 보인다. 서버 정보는 남지 않는다.
+- 폴더 업로드 안에 `C:`처럼 드라이브 문자 모양의 폴더가 있으면, 그 아래 파일을 가리킨 리뷰 finding(Mock·LLM)의 `file`도 `<outside>/파일 이름`으로 표시되어 같은 입력의 CLI 결과와 다르다(§3.2 2단계). 정적 신호와 `file_results`의 경로는 그대로다. Windows에서는 쓸 수 없는 폴더 이름이라 드물고, 서버 정보는 남지 않는다.
 - 응답 본문을 받는 도중 연결이 끊기면 `failure_code`가 `connection_failed`가 아니라 `invalid_response`가 된다. 실패로 기록되고 정적 분석 결과도 그대로 남으며, 안내 문구만 다르다.

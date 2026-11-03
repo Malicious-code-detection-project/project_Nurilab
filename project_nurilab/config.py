@@ -29,6 +29,18 @@ JADX_MCP_MAX_SERVER_INFO_BYTES = 256
 DEFAULT_JADX_MCP_URL = "http://127.0.0.1:8651/mcp"
 JADX_MCP_CONNECT_TIMEOUT_SECONDS = 10.0  # connect + initialize + list_tools
 JADX_MCP_CALL_TIMEOUT_SECONDS = 15.0
+# Web MVP (THE-160); each value can be overridden by a NURILAB_WEB_* variable.
+DEFAULT_WEB_HOST = "127.0.0.1"
+DEFAULT_WEB_PORT = 8080
+# Outside the repository so uploaded in-house sources are never committed.
+DEFAULT_WEB_DATA_DIR = "~/.local/share/nurilab-web"
+DEFAULT_WEB_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MiB request body
+DEFAULT_WEB_MAX_PYTHON_FILES = 500
+# Starlette's default max_files; the form file limit may not exceed it.
+WEB_MAX_FORM_FILES_CEILING = 1000
+# Above the .py limit so files the browser did not filter out still parse and
+# are dropped by the server.
+DEFAULT_WEB_MAX_FORM_FILES = WEB_MAX_FORM_FILES_CEILING
 DEFAULT_EXCLUDED_DIRS = frozenset(
     {
         ".git",
