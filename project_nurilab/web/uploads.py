@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -47,8 +48,9 @@ def plan_upload(
     split_paths = [_split_upload_path(name) for name in names]
     # Compared without case: on a disk that ignores case, "Evil.py" and
     # "evil.py" are one file and the later upload would silently replace the
-    # other, so its signals would vanish from the result.
-    folded_paths = [tuple(part.casefold() for part in parts) for parts in split_paths]
+    # other, so its signals would vanish from the result. Unicode canonical
+    # caseless matching also joins NFC and NFD forms, as macOS compares them.
+    folded_paths = [tuple(_caseless(part) for part in parts) for parts in split_paths]
     if len(set(folded_paths)) != len(folded_paths):
         raise ApiError(400, "invalid_path")
     upload_name, is_folder = _upload_root(split_paths)
@@ -101,6 +103,10 @@ def _upload_root(split_paths: list[tuple[str, ...]]) -> tuple[str, bool]:
     if len(top_folders) > 1:
         raise ApiError(400, "invalid_path")
     return top_folders.pop(), True
+
+
+def _caseless(part: str) -> str:
+    return unicodedata.normalize("NFD", unicodedata.normalize("NFD", part).casefold())
 
 
 def _reject_file_directory_clash(split_paths: list[tuple[str, ...]]) -> None:

@@ -312,6 +312,7 @@ def test_plan_upload_keeps_python_files_outside_excluded_dirs() -> None:
         ["myproj/a.py", "myproj/a.py/b.py"],
         ["myproj/x/../a.txt", "myproj/b.py"],
         ["myproj/Evil.py", "myproj/evil.py"],
+        ["myproj/caf\u00e9.py", "myproj/cafe\u0301.py"],
         ["myproj/Pkg/a.py", "myproj/pkg/a.py"],
         ["myproj/X.py", "myproj/x.py/b.py"],
     ],
