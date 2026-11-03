@@ -27,13 +27,17 @@ SEVERITY_ORDER = {
 def file_risk_level(
     analysis: PythonAnalysis, ruff_findings: list[RuffFinding] | None = None
 ) -> str:
-    """Return the risk the aggregator gives ``analysis`` as one file of a project."""
+    """Return the risk the aggregator gives ``analysis`` as one file of a project.
+
+    Without ``ruff_findings`` the file's own ``analysis.ruff_findings`` count,
+    which is where a single-file run keeps them.
+    """
 
     severities = _file_severities(
         [call.severity for call in analysis.suspicious_calls],
         [secret.severity for secret in analysis.secrets],
         analysis.syntax_error is not None,
-        ruff_findings or [],
+        ruff_findings if ruff_findings is not None else analysis.ruff_findings,
     )
     return derive_file_risk(severities, analysis.skipped)
 

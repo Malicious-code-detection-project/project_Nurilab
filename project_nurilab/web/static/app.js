@@ -32,6 +32,8 @@ const state = {
   // True while the upload request is in flight; selection is locked meanwhile.
   uploading: false,
   llmConnected: false,
+  // Bumped on every LLM check so a slow earlier answer cannot overwrite a later one.
+  llmCheckVersion: 0,
   busy: false,
 };
 
@@ -269,6 +271,7 @@ async function dropSelection(event) {
 }
 
 async function checkLlm() {
+  const version = ++state.llmCheckVersion;
   const status = byId("llm-status");
   state.llmConnected = false;
   updateRunButton();
@@ -279,7 +282,20 @@ async function checkLlm() {
   status.hidden = false;
   status.textContent = "LLM 연결을 확인하는 중입니다.";
   status.classList.remove("error");
-  const result = await requestJson("/api/llm-status");
+  let result = null;
+  try {
+    result = await requestJson("/api/llm-status");
+  } catch {
+    // fetch rejects when this web server cannot be reached; handled below.
+  }
+  if (version !== state.llmCheckVersion) {
+    return;
+  }
+  if (result === null) {
+    status.textContent = "LLM 연결 상태를 확인하지 못했습니다. 웹 서버 연결을 확인하세요.";
+    status.classList.add("error");
+    return;
+  }
   if (!result.ok || !result.body) {
     status.textContent = errorText(result);
     status.classList.add("error");
@@ -478,6 +494,10 @@ async function init() {
   }
   state.rules = result.body;
   updateRunButton();
+  // Some browsers restore the checked toggle on reload without a change event.
+  if (byId("llm-toggle").checked) {
+    checkLlm();
+  }
 }
 
 document.addEventListener("DOMContentLoaded", init);

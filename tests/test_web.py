@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from project_nurilab.aggregation.result_aggregator import file_risk_level
 from project_nurilab.config import DEFAULT_LLM_MODEL
 from project_nurilab.pipeline import Phase1Pipeline
+from project_nurilab.schemas import PythonAnalysis, RuffFinding
 from project_nurilab.web.app import create_app
 from project_nurilab.web.errors import ApiError
 from project_nurilab.web.results import LLM_FAILURE_MESSAGES
@@ -310,6 +311,9 @@ def test_plan_upload_keeps_python_files_outside_excluded_dirs() -> None:
         ["a.py", "b.py"],
         ["myproj/a.py", "myproj/a.py/b.py"],
         ["myproj/x/../a.txt", "myproj/b.py"],
+        ["myproj/Evil.py", "myproj/evil.py"],
+        ["myproj/Pkg/a.py", "myproj/pkg/a.py"],
+        ["myproj/X.py", "myproj/x.py/b.py"],
     ],
 )
 def test_plan_upload_rejects_path_tricks_and_layout_errors(names: list[str]) -> None:
@@ -390,6 +394,23 @@ def test_single_file_upload_completes_with_static_risk(settings: WebSettings) ->
             "syntax_error": None,
         }
     ]
+
+
+def test_file_risk_level_counts_the_file_own_ruff_findings() -> None:
+    # A single-file run keeps Ruff findings on the analysis itself; a failed
+    # Ruff run is recorded as medium.
+    failed_ruff = RuffFinding(
+        file="a.py",
+        line=1,
+        column=1,
+        rule_id="RUFF_COMMAND_FAILED",
+        message="Ruff command failed",
+        severity="medium",
+    )
+    analysis = PythonAnalysis(path="a.py", line_count=1, ruff_findings=[failed_ruff])
+
+    assert file_risk_level(analysis) == "medium"
+    assert file_risk_level(analysis, []) == "low"
 
 
 def test_single_file_static_risk_matches_folder_file_risk(
@@ -489,6 +510,19 @@ def test_duplicate_upload_paths_are_rejected(settings: WebSettings) -> None:
         response = client.post("/api/analyses", files=multipart)
 
     assert_error(response, 400, "invalid_path")
+
+
+def test_paths_differing_only_in_case_are_rejected_without_a_job(
+    settings: WebSettings,
+) -> None:
+    # On a disk that ignores case, the clean file would replace the risky one.
+    with web_client(settings) as client:
+        response = upload(
+            client, {"proj/Evil.py": DANGEROUS_SOURCE, "proj/evil.py": CLEAN_SOURCE}
+        )
+
+    assert_error(response, 400, "invalid_path")
+    assert job_dirs(settings) == []
 
 
 def test_windows_absolute_names_are_cut_to_file_names(settings: WebSettings) -> None:
@@ -935,6 +969,51 @@ def test_failed_analysis_has_no_report_and_removes_upload(
     assert not (settings.data_dir / job["id"] / "upload").exists()
 
 
+def _fail_store_update_once(
+    monkeypatch: pytest.MonkeyPatch, matches: Any
+) -> dict[str, bool]:
+    original = JobStore.update
+    state = {"failed": False}
+
+    def flaky(self: JobStore, job_id: str, **values: Any) -> None:
+        if matches(values) and not state["failed"]:
+            state["failed"] = True
+            raise sqlite3.OperationalError("database or disk is full")
+        original(self, job_id, **values)
+
+    monkeypatch.setattr(JobStore, "update", flaky)
+    return state
+
+
+def test_failed_running_write_fails_the_job_and_removes_upload(
+    settings: WebSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = _fail_store_update_once(
+        monkeypatch, lambda values: values.get("status") == "running"
+    )
+    with web_client(settings) as client:
+        job = analyze(client, {"a.py": CLEAN_SOURCE})
+
+    assert state["failed"]
+    assert job["status"] == "failed"
+    assert job["error"]["code"] == "analysis_error"
+    assert not (settings.data_dir / job["id"] / "upload").exists()
+
+
+def test_failed_final_write_is_retried(
+    settings: WebSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = _fail_store_update_once(monkeypatch, lambda values: "finished_at" in values)
+    with web_client(settings) as client:
+        job = analyze(client, {"a.py": CLEAN_SOURCE})
+        report = client.get(f"/api/analyses/{job['id']}/report.json")
+
+    assert state["failed"]
+    assert job["status"] == "completed"
+    assert report.status_code == 200
+    assert not (settings.data_dir / job["id"] / "upload").exists()
+
+
 def test_restart_fails_unfinished_jobs_and_removes_uploads(
     settings: WebSettings,
 ) -> None:
@@ -1079,6 +1158,31 @@ def test_index_and_assets_are_served_from_this_server(settings: WebSettings) -> 
         assert "http://" not in text
         assert "https://" not in text
         assert "innerHTML" not in text
+
+
+def _js_function(script: str, name: str) -> str:
+    start = script.index(f"function {name}(")
+    return script[start : script.index("\n}\n", start)]
+
+
+def test_llm_check_ignores_stale_answers_and_network_errors() -> None:
+    # pytest cannot run the page, so the guards stay pinned as text.
+    check = _js_function(
+        (STATIC_DIR / "app.js").read_text(encoding="utf-8"), "checkLlm"
+    )
+
+    assert "const version = ++state.llmCheckVersion;" in check
+    assert check.index('requestJson("/api/llm-status")') < check.index(
+        "if (version !== state.llmCheckVersion)"
+    )
+    assert "} catch {" in check
+    assert "LLM 연결 상태를 확인하지 못했습니다." in check
+
+
+def test_init_checks_llm_when_the_toggle_is_already_on() -> None:
+    init = _js_function((STATIC_DIR / "app.js").read_text(encoding="utf-8"), "init")
+
+    assert 'if (byId("llm-toggle").checked) {\n    checkLlm();' in init
 
 
 def _write(path: Path, content: bytes) -> Path:

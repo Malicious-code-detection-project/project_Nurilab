@@ -46,10 +46,14 @@ def plan_upload(
     """
 
     split_paths = [_split_upload_path(name) for name in names]
-    if len(set(names)) != len(names):
+    # Compared without case: on a disk that ignores case, "Evil.py" and
+    # "evil.py" are one file and the later upload would silently replace the
+    # other, so its signals would vanish from the result.
+    folded_paths = [tuple(part.casefold() for part in parts) for parts in split_paths]
+    if len(set(folded_paths)) != len(folded_paths):
         raise ApiError(400, "invalid_path")
     upload_name, is_folder = _upload_root(split_paths)
-    _reject_file_directory_clash(split_paths)
+    _reject_file_directory_clash(folded_paths)
     # Reports are saved as "<stem>.analysis.html"; a stem too long for that
     # file name would pass the upload and then fail the job.
     stem = upload_name if is_folder else PurePosixPath(upload_name).stem

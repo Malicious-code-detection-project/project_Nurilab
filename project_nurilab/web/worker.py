@@ -82,23 +82,40 @@ class AnalysisWorker:
 
     def _run(self, task: AnalysisTask) -> None:
         started = time.monotonic()
-        self.store.update(task.job_id, status="running")
-        logger.info("job %s running", task.job_id)
         try:
+            # Inside the try: a failed write would otherwise leave the job
+            # queued with its upload kept and the browser polling forever.
+            self.store.update(task.job_id, status="running")
+            logger.info("job %s running", task.job_id)
             values = self._analyze(task)
         except Exception:  # noqa: BLE001 - any analysis error fails only this job.
             # Exception text and paths stay in the server log, never the API.
             logger.exception("job %s analysis error", task.job_id)
             values = {"status": "failed", "error_code": "analysis_error"}
-        # The upload is removed before the final status, success or failure.
-        shutil.rmtree(upload_dir(self.data_dir, task.job_id), ignore_errors=True)
-        self.store.update(task.job_id, finished_at=now_iso(), **values)
+        finally:
+            # The upload is removed before the final status, success or failure.
+            shutil.rmtree(upload_dir(self.data_dir, task.job_id), ignore_errors=True)
+        self._record_final(task.job_id, values)
         logger.info(
             "job %s %s in %.2fs",
             task.job_id,
             values["status"],
             time.monotonic() - started,
         )
+
+    def _record_final(self, job_id: str, values: dict[str, Any]) -> None:
+        """Write the final status, retrying once.
+
+        A lost write would keep a finished job running with its report out of
+        reach. If the store stays unwritable, the error goes to ``_loop`` and
+        the next start recovers the job as ``interrupted``.
+        """
+
+        try:
+            self.store.update(job_id, finished_at=now_iso(), **values)
+        except Exception:  # noqa: BLE001 - one retry, then let _loop log it.
+            logger.warning("job %s final status not recorded; retrying", job_id)
+            self.store.update(job_id, finished_at=now_iso(), **values)
 
     def _analyze(self, task: AnalysisTask) -> dict[str, Any]:
         pipeline = Phase1Pipeline(review_client=task.review_client, use_ruff=False)
