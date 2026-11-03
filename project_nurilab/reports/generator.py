@@ -61,18 +61,18 @@ class ReportGenerator:
 
         for output_format in normalized_formats:
             if output_format == "html":
-                html_path = target_dir / f"{stem}.analysis.html"
+                html_path = target_dir / report_file_name(stem, "html")
                 html_path.write_text(self.to_html(report), encoding="utf-8")
                 output_paths["html"] = html_path
             elif output_format == "json":
-                json_path = target_dir / f"{stem}.analysis.json"
+                json_path = target_dir / report_file_name(stem, "json")
                 json_path.write_text(
                     json.dumps(report.to_dict(), ensure_ascii=False, indent=2),
                     encoding="utf-8",
                 )
                 output_paths["json"] = json_path
             elif output_format == "md":
-                markdown_path = target_dir / f"{stem}.analysis.md"
+                markdown_path = target_dir / report_file_name(stem, "md")
                 markdown_path.write_text(self.to_markdown(report), encoding="utf-8")
                 output_paths["md"] = markdown_path
 
@@ -725,6 +725,12 @@ def _render_html_project_findings(report: ProjectReport) -> str:
                 "</article>"
             )
     return "\n".join(rendered)
+
+
+def report_file_name(stem: str, output_format: str) -> str:
+    """Name ``write()`` gives a report; the web finds and limits reports by it."""
+
+    return f"{stem}.analysis.{output_format}"
 
 
 def _report_stem(report: ReportPayload) -> str:

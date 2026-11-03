@@ -13,10 +13,8 @@ from project_nurilab.config import (
     DEFAULT_WEB_MAX_PYTHON_FILES,
     DEFAULT_WEB_MAX_UPLOAD_BYTES,
     DEFAULT_WEB_PORT,
+    WEB_MAX_FORM_FILES_CEILING,
 )
-
-# Starlette's own max_files default; a higher value would allow larger forms.
-_FORM_FILES_CEILING = 1000
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,10 +41,14 @@ class WebSettings:
             raise ValueError("NURILAB_WEB_MAX_UPLOAD_BYTES must be positive.")
         if self.max_python_files <= 0:
             raise ValueError("NURILAB_WEB_MAX_PYTHON_FILES must be positive.")
-        if not self.max_python_files < self.max_form_files <= _FORM_FILES_CEILING:
+        if (
+            not self.max_python_files
+            < self.max_form_files
+            <= WEB_MAX_FORM_FILES_CEILING
+        ):
             raise ValueError(
                 "NURILAB_WEB_MAX_FORM_FILES must be above "
-                f"NURILAB_WEB_MAX_PYTHON_FILES and at most {_FORM_FILES_CEILING}."
+                f"NURILAB_WEB_MAX_PYTHON_FILES and at most {WEB_MAX_FORM_FILES_CEILING}."
             )
 
     @classmethod

@@ -26,6 +26,7 @@ from project_nurilab.llm.review import (
     MockReviewClient,
     ReviewClient,
 )
+from project_nurilab.reports.generator import report_file_name
 from project_nurilab.web.errors import (
     ERROR_MESSAGES,
     JOB_ERROR_MESSAGES,
@@ -171,7 +172,9 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
             await run_in_threadpool(
                 _save_uploads, upload_dir(settings.data_dir, job_id), plan, files
             )
-            store.create(
+            # SQLite can wait on a lock; off the event loop, polling keeps answering.
+            await run_in_threadpool(
+                store.create,
                 JobRecord(
                     id=job_id,
                     status="queued",
@@ -180,7 +183,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
                     file_count=len(plan.python_files),
                     review_client=review_mode,
                     review_model=review_model,
-                )
+                ),
             )
         except Exception:
             shutil.rmtree(job_dir(settings.data_dir, job_id), ignore_errors=True)
@@ -259,11 +262,8 @@ def _report_path(data_dir: Path, job: JobRecord, kind: str) -> Path:
     if job.status != "completed" or job.report_path is None:
         raise ApiError(409, "report_unavailable")
     json_path = data_dir / job.report_path
-    if kind == "html":
-        stem = json_path.name.removesuffix(".analysis.json")
-        path = json_path.with_name(f"{stem}.analysis.html")
-    else:
-        path = json_path
+    stem = json_path.name.removesuffix(report_file_name("", "json"))
+    path = json_path.with_name(report_file_name(stem, kind))
     if not path.is_file():
         raise ApiError(404, "not_found")
     return path

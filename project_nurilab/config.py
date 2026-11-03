@@ -36,9 +36,11 @@ DEFAULT_WEB_PORT = 8080
 DEFAULT_WEB_DATA_DIR = "~/.local/share/nurilab-web"
 DEFAULT_WEB_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MiB request body
 DEFAULT_WEB_MAX_PYTHON_FILES = 500
-# Starlette max_files: at most its default 1000, above the .py limit so files
-# the browser did not filter out still parse and are dropped by the server.
-DEFAULT_WEB_MAX_FORM_FILES = 1000
+# Starlette's default max_files; the form file limit may not exceed it.
+WEB_MAX_FORM_FILES_CEILING = 1000
+# Above the .py limit so files the browser did not filter out still parse and
+# are dropped by the server.
+DEFAULT_WEB_MAX_FORM_FILES = WEB_MAX_FORM_FILES_CEILING
 DEFAULT_EXCLUDED_DIRS = frozenset(
     {
         ".git",

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 from project_nurilab.config import DEFAULT_EXCLUDED_DIRS, SUPPORTED_EXTENSION
+from project_nurilab.reports.generator import report_file_name
 from project_nurilab.web.errors import ApiError
 
 # "<" and ">" are kept out so no upload can look like the "<outside>" marker.
@@ -18,8 +19,6 @@ _DRIVE_LETTER = re.compile(r"^[A-Za-z]:")
 _MAX_PATH_DEPTH = 64
 # NAME_MAX of common Linux file systems (ext4, xfs, btrfs).
 _NAME_MAX_BYTES = 255
-# Longest suffix ReportGenerator adds; ".analysis.json" has the same length.
-_REPORT_SUFFIX = ".analysis.html"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +56,8 @@ def plan_upload(
     # Reports are saved as "<stem>.analysis.html"; a stem too long for that
     # file name would pass the upload and then fail the job.
     stem = upload_name if is_folder else PurePosixPath(upload_name).stem
-    if len(f"{stem}{_REPORT_SUFFIX}".encode()) > _NAME_MAX_BYTES:
+    # The HTML name is the longest; the JSON name has the same length.
+    if len(report_file_name(stem, "html").encode()) > _NAME_MAX_BYTES:
         raise ApiError(400, "invalid_path")
 
     python_files = [
