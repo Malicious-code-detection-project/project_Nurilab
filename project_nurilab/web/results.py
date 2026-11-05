@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from project_nurilab.config import SYNTAX_ERROR_SEVERITY
+
 # Shown instead of the raw Local LLM failure reason, which holds the endpoint
 # URL, "Cause:" exception text, and a response preview.
 LLM_FAILURE_MESSAGES = {
@@ -45,18 +47,21 @@ def build_screen_result(
 
     ``review_status`` and ``failure_code`` come from the job record. When the
     review failed, Local LLM finding reasons are replaced on the server so raw
-    failure text never reaches the browser.
+    failure text never reaches the browser. The same fixed text is returned as
+    ``review_failure_message`` for the warning at the top of the result.
     """
 
     review = report.get("review") or {}
-    hide_llm_reason = review_status == "failed"
+    failure_message = None
+    if review_status == "failed":
+        failure_message = LLM_FAILURE_MESSAGES.get(
+            failure_code or "", _LLM_FAILURE_FALLBACK
+        )
     findings = []
     for raw in review.get("findings") or []:
         finding = {field: raw.get(field) for field in _FINDING_FIELDS}
-        if hide_llm_reason and finding["source"] == "local_llm":
-            finding["reason"] = LLM_FAILURE_MESSAGES.get(
-                failure_code or "", _LLM_FAILURE_FALLBACK
-            )
+        if failure_message is not None and finding["source"] == "local_llm":
+            finding["reason"] = failure_message
         findings.append(finding)
 
     file_results = _file_results(report.get("analysis") or {})
@@ -64,6 +69,11 @@ def build_screen_result(
         "analyzer_version": report.get("analyzer_version"),
         "generated_at": report.get("generated_at"),
         "summary": review.get("summary"),
+        "review_failure_message": failure_message,
+        # A failed review has no LLM result the cut could limit.
+        "llm_input_truncation": (
+            None if failure_message is not None else _llm_input_truncation(review)
+        ),
         "findings": findings,
         "static_signals": [
             signals
@@ -73,6 +83,16 @@ def build_screen_result(
         "skipped_files": [
             result.get("path") for result in file_results if result.get("skipped")
         ],
+    }
+
+
+def _llm_input_truncation(review: dict[str, Any]) -> dict[str, Any] | None:
+    metadata = review.get("input_metadata") or {}
+    if not metadata.get("truncated"):
+        return None
+    return {
+        key: metadata.get(key)
+        for key in ("included_count", "omitted_count", "budget_bytes")
     }
 
 
@@ -100,4 +120,5 @@ def _static_signals(result: dict[str, Any]) -> dict[str, Any] | None:
         "suspicious_calls": calls,
         "secrets": secrets,
         "syntax_error": syntax_error,
+        "syntax_error_severity": SYNTAX_ERROR_SEVERITY if syntax_error else None,
     }

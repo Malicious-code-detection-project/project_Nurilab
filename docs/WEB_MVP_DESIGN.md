@@ -130,7 +130,7 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 2. analyze 분리와 경로 치환 함수 이동 직후, 기존 기준선으로 통과를 확인한다. 리팩터링이 분석 결과를 바꾸지 않았다는 근거다.
 3. 출처 필드를 추가한 뒤 [외부 프로젝트 검증](external_project_validation.md) 절차로 기준선 6개를 갱신한다. 같은 PR이라도 별도 커밋으로 나누고, PR에 생성 결과의 차이, 고정 커밋, 도구 버전과 실행 근거를 남긴다. 차이는 추가 필드뿐이어야 한다.
 
-W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 것(예: `review` 키 집합에 `reviewer` 추가)만 허용한다. W4에서는 HTML 보고서의 Mock 배지(§7.2)에 따른 기대값 변경을 추가로 허용한다. 외부 회귀 기준선 6개는 JSON만 비교하므로 배지와 무관하다.
+W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 것(예: `review` 키 집합에 `reviewer` 추가)만 허용한다. W4에서는 HTML 보고서의 Mock 배지(§7.2)에 따른 기대값 변경을 추가로 허용한다. 외부 회귀 기준선 6개는 JSON만 비교하므로 배지와 무관하다. W4는 읽지 못한 파일이 있는 폴더의 위험도(§4.4)도 바꾸지만, 기준선 6개는 `skipped_files`가 모두 0이라 해당하지 않는다.
 
 ## 4. 웹 API 계약
 
@@ -196,8 +196,8 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 - 응답 필드: `id`, `status`, `created_at`, `finished_at`, `upload_name`, `file_count`, `review`(`client`, `model`, `status`, `failure_code`), `risk_level`, `static_risk_level`, `error`(`failed`일 때 `{code, message}`, 아니면 `null`)
   - `file_count`는 걸러낸 뒤 분석 대상으로 저장한 `.py` 수다. `review`의 `client`·`model`은 요청 시점에, `status`·`failure_code`는 완료 뒤 채운다.
 - 위험도는 CLI와 같은 값을 쓰며 `completed`일 때만 채운다.
-  - `risk_level`: 보고서의 `review.risk_level`. CLI 터미널의 `Risk Level`(`cli.py:140`)과 같고, LLM 리뷰가 실패하면 `unknown`이다. Mock도 단일 파일을 읽지 못하면(skipped) `unknown`이므로(`MockReviewClient`의 skipped 분기), LLM 실패 여부는 `risk_level`이 아니라 `review.status`(보고서의 `review.reviewer.status`)로만 판단한다.
-  - `static_risk_level`: 정적 분석 위험도다. 폴더 업로드면 `analysis.summary.risk_level`(폴더 HTML 보고서 상단 카드와 같은 값)이다. 단일 파일이면 집계기가 폴더 안의 파일마다 쓰는 규칙(`aggregation/result_aggregator.py`의 `_summarize_file()`·`derive_file_risk()`)으로 계산한다. 위험 호출, secret, 문법 오류(`medium`), Ruff 결과의 severity 중 가장 높은 값이고, 신호가 없으면 `low`, 읽지 못한 파일이면 `unknown`이다.
+  - `risk_level`: 보고서의 `review.risk_level`. CLI 터미널의 `Risk Level`(`cli.py:140`)과 같고, LLM 리뷰가 실패하면 `unknown`이다. Mock도 단일 파일을 읽지 못하거나(`MockReviewClient`의 skipped 분기) 폴더에 신호 없이 읽지 못한 파일이 있으면 `unknown`이므로, LLM 실패 여부는 `risk_level`이 아니라 `review.status`(보고서의 `review.reviewer.status`)로만 판단한다.
+  - `static_risk_level`: 정적 분석 위험도다. 폴더 업로드면 `analysis.summary.risk_level`(폴더 HTML 보고서 상단 카드와 같은 값)이다. 폴더에 신호가 없고 읽지 못한 파일이 1개 이상이면 단일 파일과 같은 기준으로 `unknown`이고, 신호가 있으면 그중 가장 높은 값이다(THE-161). CLI 보고서의 `analysis.summary.risk_level`과 Mock의 `review.risk_level`도 같이 바뀐다. 이 값은 LLM 입력의 `summary.risk_level`로도 쓰이지만, `unknown`이면 LLM 입력에서 뺀다. 리뷰 응답은 `low`·`medium`·`high`만 허용하므로, 입력의 `unknown`을 모델이 그대로 따라 쓰면 성공할 리뷰가 `json_parse_failed`가 되기 때문이다. 읽지 못한 파일 수는 `summary.skipped_files`로 그대로 전달된다. 단일 파일이면 집계기가 폴더 안의 파일마다 쓰는 규칙(`aggregation/result_aggregator.py`의 `_summarize_file()`·`derive_file_risk()`)으로 계산한다. 위험 호출, secret, 문법 오류(`medium`), Ruff 결과의 severity 중 가장 높은 값이고, 신호가 없으면 `low`, 읽지 못한 파일이면 `unknown`이다.
   - 단일 파일 계산은 웹에서 규칙을 다시 짜지 않고, 집계기의 규칙을 공용 함수로 꺼내 집계기와 웹이 함께 쓴다(W3). 계산한 값은 웹 응답과 SQLite에만 넣고 보고서 JSON·HTML에는 넣지 않으므로 CLI 출력은 바뀌지 않는다.
 - job 실패 코드는 `analysis_error`(분석 중 예외)와 `interrupted`(서버 재시작으로 중단)다.
 
@@ -207,8 +207,10 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 - 응답 필드:
   - `analyzer_version`, `generated_at`
   - `summary`: `review.summary`
+  - `review_failure_message`: `review.status=failed`일 때 `failure_code`별 고정 문구, 아니면 `null`. 화면 상단 경고(§7.3)에 쓴다(THE-161)
+  - `llm_input_truncation`: LLM 입력이 상한을 넘어 잘렸고 리뷰가 성공했으면 `review.input_metadata`의 `{included_count, omitted_count, budget_bytes}`, 아니면 `null`. 실패한 리뷰는 잘림이 제한할 LLM 결과가 없으므로 `null`이다(THE-161)
   - `findings`: `review.findings`의 각 항목(`title`, `severity`, `file`, `line`, `column`, `source`, `rule_id`, `reason`, `recommendation`)
-  - `static_signals`: 파일별 위험 호출·secret·문법 오류. 정적 분석 신호를 리뷰 결과와 구분해 보여주는 데 쓴다(§7.2, W4). 신호가 있는 파일만 `{file, suspicious_calls[{name, line, category, severity}], secrets[{kind, line, severity}], syntax_error}`로 담고, secret 미리보기는 넣지 않는다(THE-160)
+  - `static_signals`: 파일별 위험 호출·secret·문법 오류. 정적 분석 신호를 리뷰 결과와 구분해 보여주는 데 쓴다(§7.2, W4). 신호가 있는 파일만 `{file, suspicious_calls[{name, line, category, severity}], secrets[{kind, line, severity}], syntax_error, syntax_error_severity}`로 담고, secret 미리보기는 넣지 않는다(THE-160). `syntax_error_severity`는 문법 오류 심각도(`config.py`의 `SYNTAX_ERROR_SEVERITY`, 집계·Mock·LLM 입력·HTML이 함께 씀)이고 문법 오류가 없으면 `null`이다. 화면이 값을 따로 정하지 않게 서버가 내려준다(THE-161)
   - `skipped_files`: 읽지 못한 파일의 상대 경로
 - `review.status=failed`이면 `source=local_llm`인 finding의 `reason`을 **서버에서** `failure_code`별 고정 문구(§7.3)로 바꿔 내려준다. LLM 실패 사유 원문(endpoint URL, `Cause:` 원문, 응답 미리보기)은 브라우저로 보내지 않는다. W3부터 적용한다. 다섯 가지 문구는 `web/results.py`의 `LLM_FAILURE_MESSAGES`에 둔다. `summary`, `title`, `recommendation`은 실패 시에도 고정 문구라 바꾸지 않는다.
 - 저장된 보고서 파일은 바꾸지 않는다. 다운로드한 보고서에 원문이 남는 점은 §9의 알려진 한계다.
@@ -280,31 +282,34 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 - 상태는 polling으로 조회한다.
 - 위험도는 job 상태 응답(§4.4), 요약과 finding은 화면용 결과(§4.5)에서 받아 표시하며 문자열은 `textContent`로만 렌더링한다.
 - LLM 실패 사유 원문은 서버가 고정 문구로 바꿔 내려주므로(§4.5) 화면에 나오지 않는다. `0.0.0.0` 시연에서 endpoint URL과 예외 원문이 보이지 않도록 W3부터 적용한다.
-- 대표 위험도는 CLI 터미널과 같은 `risk_level`(§4.4)이다. 정적 위험도(`static_risk_level`)도 함께 표시한다.
+- 판단 기준은 deterministic analyzer이고 LLM이 최종 판단을 한 것으로 보이면 안 되므로, `정적 분석 위험도`(`static_risk_level`)를 먼저 표시하고 그 아래에 `리뷰 위험도`(`risk_level`, §4.4)와 리뷰 종류·상태를 둔다(THE-161). API 필드 이름은 그대로다.
 - JSON/HTML 보고서는 다운로드로 제공한다.
 
 ### 7.2 출처 표시 (W4)
 
 - 분석기 버전, 생성 시각, 리뷰 종류와 모델, 업로드 이름, 파일 수, skipped 파일을 표시한다.
-- 정적 분석 신호와 리뷰 결과를 구분해서 보여준다.
-- 고정 해석 안내: Mock은 AI 리뷰가 아닌 규칙 기반 요약이다. 위험도 `low`는 안전하다는 뜻이 아니다. Python 정적 분석만 수행했다.
-- Mock 결과에는 화면과 HTML 보고서 모두에 "Mock 모드(LLM 미사용)" 배지를 붙인다. 배지는 CLI와 공용인 `ReportGenerator`에 들어가므로 CLI가 만드는 Mock HTML 보고서도 바뀐다. 이는 의도한 HTML 출력 변경이며, THE-161 PR에 출력 변경으로 적는다. JSON 보고서는 바뀌지 않는다.
+- LLM 입력이 잘렸으면(`llm_input_truncation`, §4.5) 리뷰 요약 위에 보낸 신호 수를 안내한다. 정적 분석 결과는 잘리지 않는다.
+- 정적 분석 신호와 리뷰 결과를 구분해서 보여준다. LLM이 실패하면 리뷰 finding은 실패 항목 하나뿐이므로, 정적 분석 결과는 이 정적 분석 신호 영역에서 확인한다.
+- 고정 해석 안내: Mock은 AI 리뷰가 아닌 규칙 기반 요약이다. 위험도 `low`는 안전하다는 뜻이 아니다. Python 정적 분석만 수행했다. 세 문장은 리뷰 종류와 관계없이 완료된 결과에 항상 표시하며 `web/static/index.html`에 둔다. 위험도가 job 상태 응답으로 먼저 나오므로 표시도 job 상태로 판단해 `/result` 요청이 실패해도 남는다.
+- Mock 결과에는 화면과 HTML 보고서 모두에 "Mock 모드(LLM 미사용)" 배지를 붙인다. 배지는 CLI와 공용인 `ReportGenerator`에 들어가므로 CLI가 만드는 Mock HTML 보고서도 바뀐다. 이는 의도한 HTML 출력 변경이며, THE-161 PR에 출력 변경으로 적는다. JSON과 Markdown 보고서, Mock이 아닌 리뷰의 HTML 보고서는 바뀌지 않는다.
 
 ### 7.3 LLM 실패 표시 (W4)
 
-- `review.reviewer.status=failed`이면 화면 상단에 "LLM 리뷰 실패, 정적 분석 결과만 유효" 경고와 `failure_code`별 고정 문구를 띄운다.
+- `review.reviewer.status=failed`이면 결과 영역 맨 위에 "LLM 리뷰 실패, 정적 분석 결과만 유효" 경고와 `failure_code`별 고정 문구를 띄운다. 경고 표시는 job 상태 응답의 `review.status`로 판단하므로 `/result` 요청이 실패해도 뜨고, 고정 문구는 `/result`의 `review_failure_message`(§4.5)에서 받는다. 원문을 볼 수 있는 다운로드 보고서도 함께 안내한다.
 - finding의 `reason` 원문은 화면에 보여주지 않는다. 서버가 화면용 결과에서 고정 문구로 바꾸며 W3부터 적용한다(§4.5). 원문에는 endpoint URL(개인 PC 테스트 때는 서버 내부 IP), `Cause: {exc}`, 응답 미리보기(HTTP 오류 최대 300자, LLM 응답 파싱 실패 최대 200자)가 들어 있다.
 
 ### 7.4 XSS 방지 확인 (W4)
 
-이 환경에는 Node와 브라우저 자동화가 없고 TestClient는 JS를 실행하지 못하므로 세 가지로 나눠 확인한다.
+이 환경에는 Node가 없고 TestClient는 JS를 실행하지 못하므로 세 가지로 나눠 확인한다.
 
-1. pytest: `<script>`를 담은 파일명·문자열 fixture로 만든 `report.html`에 `&lt;script&gt;`처럼 escape되어 있는지 확인한다.
+업로드는 `<`·`>`가 든 파일 이름을 거부하고(§6) Mock은 secret 미리보기를 가리므로, 온전한 태그가 웹 보고서와 화면에 도달하는 경로는 LLM 응답뿐이다. fixture는 이 경로를 쓴다(THE-161).
+
+1. pytest: `<script>`를 담은 경로와 리뷰 문자열로 `to_html()`을 직접 호출한 결과, 그리고 가짜 LLM이 `summary`·`title`·`reason`·`recommendation`·`file`에 `<script>`를 돌려준 `report.html`에 `&lt;script&gt;`처럼 escape되어 있는지 확인한다. 업로드할 수 있는 특수문자(`&`, `'`)는 파일 이름으로 확인한다.
 2. pytest: 정적 JS·HTML 파일을 문자열로 검사한다. 실수로 입력 문자열이 HTML이나 코드로 해석되는 길이 생기는 것을 잡는 장치이며, 실제 실행 여부는 3번으로 확인한다.
-   - JS: HTML을 해석하는 API(`innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`)와 문자열 실행(`eval`, `new Function`)이 없다.
+   - JS: HTML을 해석하는 API(`innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`)와 문자열 실행(`eval`, `new Function`)이 없다. `.href =` 검사를 피해 가지 않도록 `setAttribute`로 `href`·`src`·`on…`을 넣는 코드도 없다.
    - `href`는 보고서 다운로드 링크를 만드는 함수 한 곳에서만, UUID 정규식으로 확인한 job id와 고정 경로로 만든다. 테스트는 `.href =`가 그 한 곳에만 있는지 센다.
    - HTML: `on…=` 속성과 본문이 있는 `<script>`가 없다. JS는 같은 서버의 파일을 `src`로만 불러온다.
-3. 수동: 같은 fixture를 브라우저에서 올려 스크립트가 실행되지 않는 것을 확인하고 기록한다.
+3. 수동: 같은 내용을 돌려주는 가짜 OpenAI 호환 서버를 `NURILAB_LLM_BASE_URL`로 연결해 브라우저에서 분석하고, 스크립트가 실행되지 않는 것을 확인해 기록한다. 가짜 서버는 저장소에 넣지 않는다.
 
 보고서는 `Content-Disposition: attachment`로 내려서 같은 origin에서 바로 렌더링되지 않게 한다.
 
@@ -332,8 +337,12 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 
 ### 8.3 W4
 
-- Mock/LLM 각각 출처 표시
-- 가짜 endpoint로 분석 도중 timeout과 잘못된 JSON에서 경고 표시
+- Mock/LLM 각각 출처 표시. job·`/result` 응답과 HTML 보고서의 배지로 확인한다
+- 가짜 endpoint로 분석 도중 `failure_code` 다섯 가지에서 `review.status=failed`, 고정 문구, 정적 신호 유지, 원문 미노출을 확인한다. pytest는 JS를 실행하지 못하므로 경고가 화면에 뜨는지는 브라우저에서 확인해 기록한다
+- 읽지 못한 파일로 Mock이 `unknown`을 내도 LLM 실패 경고 조건이 되지 않음
+- 짝 없는 서로게이트는 `?`로 바뀌고 job과 보고서가 남음. 분석 결과(UTF-8이 아닌 파일 이름 등)는 만든 직후 리뷰 전에 한 번(`schemas.utf8_safe_value`), 모델 이름은 불러올 때 정리하므로 LLM 입력과 job 기록도 실패하지 않음. 보고서 쓰기는 `errors="replace"`로 남은 텍스트(LLM 응답 등)를 막음. LLM 응답 값에 있으면 리뷰는 그대로 성공하고, 예상 밖 키는 `json_parse_failed`, HTTP 오류 응답 본문은 `http_error`로 사유에 `?`가 남음. CLI는 Mock과 `--review-client local` 모두 UTF-8이 아닌 파일 이름에서 종료 코드 0으로 보고서를 남김. 기준 URL은 `?`가 요청 대상을 바꾸므로 정리하지 않음
+- 폴더 위험도: 전부 또는 일부를 읽지 못하고 신호가 없으면 `unknown`, 신호가 있으면 그 값, 모두 읽었고 신호가 없으면 `low`
+- LLM 입력 잘림: 리뷰가 성공했을 때만 `llm_input_truncation`이 채워지고, 잘리지 않은 경우와 실패한 리뷰, Mock은 `null`
 - §7.4의 XSS 확인과 attachment 헤더
 
 ### 8.4 W5
@@ -365,10 +374,12 @@ README와 USAGE에 적을 것:
 - 업로드 원본은 지우지만 보고서와 SQLite 기록은 자동으로 지우지 않는다. 필요하면 `NURILAB_WEB_DATA_DIR`을 수동으로 정리한다.
 - 분석은 프로세스 격리와 전체 timeout 없이 실행된다.
 - 요청의 `Origin`과 `Host`를 확인하지 않는다. multipart POST는 브라우저가 사전 확인 없이 보내는 요청이라, 사용자가 다른 사이트를 열기만 해도 그 페이지가 이 서버에 분석을 걸 수 있다(브라우저에서 재현). `Host`를 확인하지 않으므로 DNS rebinding으로 응답을 읽을 수도 있다. 다른 사람의 결과는 UUID job id를 알아야 해서 읽기 어렵고, 주된 위험은 대기열 점유, 보고서로 디스크 채우기, LLM 호출 같은 자원 남용이다. 실사용 전에 `Origin` 검사와 `Host` 허용 목록을 넣는다(THE-160 리뷰).
+- 웹 화면은 `정적 분석 위험도`와 `리뷰 위험도`를 구분하지만, 보고서 헤더 배지와 CLI 터미널의 `Risk Level`, 폴더 HTML `Metadata`의 `Risk Level`, Markdown의 `Risk Level`은 리뷰 값을 구분 없이 표시한다. LLM 모드에서는 LLM 값이 최종 판단처럼 보일 수 있고, 터미널과 단일 파일 보고서에는 정적 위험도 값도 없다. 실사용 전에 보고서의 정적 분석·리뷰 구분과 함께 처리한다(취소된 THE-113의 범위).
 
 **설계상 수용** (의도한 동작이거나, 분석 결과에 영향이 없고 발생 가능성이 낮아 유지함)
 
 - 다운로드한 보고서에는 LLM 실패 finding의 원문(§7.3)이 남는다. 원인 확인용으로 남기고 화면에서만 숨긴다.
+- LLM 리뷰 응답은 `low`, `medium`, `high`만 허용하므로, 폴더에 읽지 못한 파일이 있어도 `리뷰 위험도`는 `low`일 수 있다. 이때 `정적 분석 위험도`가 `unknown`으로 표시된다(§4.4).
 - 웹에서는 Ruff를 실행하지 않는다(§5.2).
 - `.py`가 0개인 업로드는 CLI와 달리 거부된다.
 - 리뷰 요청은 endpoint가 보낸 redirect를 따라간다. vLLM은 redirect를 보내지 않고 endpoint는 관리자가 정하므로, 고치려고 기존 CLI 동작을 바꾸지 않는다. 연결 확인(§3.4)은 따라가지 않는다.

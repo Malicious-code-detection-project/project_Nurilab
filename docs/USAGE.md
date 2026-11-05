@@ -67,12 +67,15 @@ JSON은 canonical machine-readable artifact입니다. HTML과 선택적 Markdown
 report payload의 view이므로 별도 분석을 다시 실행하지 않습니다. 기본 이름은
 `<target>.analysis.html`, `<target>.analysis.json`이며 Markdown을 선택하면
 `<target>.analysis.md`도 생성합니다. `reports/`는 로컬 산출물로 커밋하지 않습니다.
+UTF-8로 쓸 수 없는 문자(UTF-8이 아닌 파일 이름, LLM 응답의 짝 없는 서로게이트 등)는
+어디서 왔든 보고서에 `?`로 기록합니다.
 
 ## Mock review
 
 `MockReviewClient`가 기본 backend입니다. 네트워크와 LLM 서버가 필요하지 않으며,
 정적 신호를 재현 가능한 review finding으로 바꿉니다. 일반 개발과 회귀 검증은 이
-경로를 기준으로 합니다.
+경로를 기준으로 합니다. Mock으로 만든 HTML 보고서의 제목 옆에는 `Mock 모드(LLM 미사용)`
+배지가 붙습니다. JSON과 Markdown 보고서에는 붙지 않습니다.
 
 ```bash
 uv run python main.py analyze tests --review-client mock
@@ -133,8 +136,8 @@ JSON/schema 파싱 실패 시에는 응답 content의 최대 200자 preview가 �
 
 JSON 보고서의 `review.reviewer`는 리뷰를 만든 client와 결과를 기록합니다.
 LLM 실패 여부는 `review.reviewer.status`가 `failed`인지로 판단합니다.
-Mock도 읽지 못한 단일 파일(skipped)은 `risk_level`이 `unknown`이므로
-`risk_level`만으로는 LLM 실패와 구별되지 않습니다.
+Mock도 읽지 못한 단일 파일(skipped)과 신호 없이 읽지 못한 파일이 있는 폴더는
+`risk_level`이 `unknown`이므로 `risk_level`만으로는 LLM 실패와 구별되지 않습니다.
 
 ```json
 "reviewer": {"client": "local", "model": "openai/gpt-oss-20b", "status": "failed", "failure_code": "timeout"}

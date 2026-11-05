@@ -11,6 +11,10 @@ from mcp import types
 
 from project_nurilab.aggregation.result_aggregator import file_risk_level
 from project_nurilab.external.jadx_mcp_client import JadxMcpClient, McpSession
+from project_nurilab.llm.review import (
+    LocalLLMReviewClient,
+    _build_project_payload_summary,
+)
 from project_nurilab.pipeline import Phase1Pipeline
 from project_nurilab.reports.generator import ReportGenerator
 from project_nurilab.schemas import (
@@ -1214,3 +1218,88 @@ def test_pipeline_keeps_reports_when_mcp_result_classification_fails(
     assert baseline.review.findings
     assert payload["analysis"] == baseline.to_dict()["analysis"]
     assert payload["review"] == baseline.to_dict()["review"]
+
+
+@pytest.mark.parametrize(
+    ("files", "expected_risk"),
+    [
+        ({"bad.py": b"\xff\xfe\x00"}, "unknown"),
+        ({"bad.py": b"\xff\xfe\x00", "ok.py": b"VALUE = 1\n"}, "unknown"),
+        (
+            {"bad.py": b"\xff\xfe\x00", "risky.py": b"import os\nos.system(x)\n"},
+            "high",
+        ),
+        ({"ok.py": b"VALUE = 1\n"}, "low"),
+    ],
+    ids=["only-unread", "unread-and-clean", "unread-and-signal", "all-read"],
+)
+def test_project_risk_counts_unread_files_when_no_signal_exists(
+    tmp_path: Path, files: dict[str, bytes], expected_risk: str
+) -> None:
+    project = tmp_path / "proj"
+    project.mkdir()
+    for name, content in files.items():
+        (project / name).write_bytes(content)
+
+    report = Phase1Pipeline(use_ruff=False).analyze(project)
+
+    assert isinstance(report, ProjectReport)
+    assert report.analysis.summary is not None
+    assert report.analysis.summary.risk_level == expected_risk
+    assert report.review.risk_level == expected_risk
+    assert f"Overall project risk is {expected_risk}." in report.review.summary
+
+
+def test_lone_surrogate_from_llm_keeps_review_reports_and_static_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Response:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, Any]:
+            content = '{"summary": "x \\ud83d y", "risk_level": "low", "findings": []}'
+            return {"choices": [{"message": {"content": content}}]}
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+    source = tmp_path / "a.py"
+    source.write_text("import os\nos.system(x)\n", encoding="utf-8")
+
+    _, output_paths = Phase1Pipeline(
+        review_client=LocalLLMReviewClient(
+            base_url="http://localhost:8000/v1", model="test-model"
+        ),
+        use_ruff=False,
+    ).run(source, tmp_path / "reports")
+
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload["review"]["reviewer"]["status"] == "ok"
+    assert payload["review"]["summary"] == "x ? y"
+    assert [call["name"] for call in payload["analysis"]["suspicious_calls"]] == [
+        "os.system"
+    ]
+    assert "x ? y" in output_paths["html"].read_text(encoding="utf-8")
+
+
+def test_unknown_project_risk_is_left_out_of_the_llm_payload(tmp_path: Path) -> None:
+    # The review schema allows only low/medium/high, so unknown is not offered.
+    unread = tmp_path / "unread"
+    unread.mkdir()
+    (unread / "bad.py").write_bytes(b"\xff\xfe\x00")
+    risky = tmp_path / "risky"
+    risky.mkdir()
+    (risky / "a.py").write_text("import os\nos.system(x)\n", encoding="utf-8")
+    pipeline = Phase1Pipeline(use_ruff=False)
+
+    unread_report = pipeline.analyze(unread)
+    risky_report = pipeline.analyze(risky)
+
+    assert isinstance(unread_report, ProjectReport)
+    assert isinstance(risky_report, ProjectReport)
+    assert unread_report.analysis.summary is not None
+    assert unread_report.analysis.summary.risk_level == "unknown"
+    unread_summary = _build_project_payload_summary(unread_report.analysis)["summary"]
+    risky_summary = _build_project_payload_summary(risky_report.analysis)["summary"]
+    assert "risk_level" not in unread_summary
+    assert unread_summary["skipped_files"] == 1
+    assert risky_summary["risk_level"] == "high"

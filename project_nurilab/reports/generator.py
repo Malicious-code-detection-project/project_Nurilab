@@ -7,11 +7,13 @@ from pathlib import Path
 from collections.abc import Sequence
 from typing import Any, Protocol
 
+from project_nurilab.config import SYNTAX_ERROR_SEVERITY
 from project_nurilab.schemas import (
     AnalysisReport,
     ExternalToolCall,
     ProjectFileSummary,
     ProjectReport,
+    ReviewResult,
 )
 
 
@@ -24,6 +26,7 @@ SEVERITY_RANK = {
     "info": 1,
     "unknown": 0,
 }
+MOCK_BADGE_TEXT = "Mock 모드(LLM 미사용)"
 
 
 class NamedLineSymbol(Protocol):
@@ -50,6 +53,11 @@ class ReportGenerator:
         JSON is the canonical machine-readable result. HTML is the default
         human-readable report. Markdown remains available for users who prefer
         lightweight text reports or documentation-friendly output.
+
+        Every output is written with ``errors="replace"``, the same "?" as
+        ``utf8_safe``. The pipeline already cleans the analysis and settings;
+        this is the last guard for text such as LLM output, so a report is
+        always written whatever the text came from.
         """
 
         target_dir = Path(output_dir).expanduser().resolve()
@@ -62,18 +70,23 @@ class ReportGenerator:
         for output_format in normalized_formats:
             if output_format == "html":
                 html_path = target_dir / report_file_name(stem, "html")
-                html_path.write_text(self.to_html(report), encoding="utf-8")
+                html_path.write_text(
+                    self.to_html(report), encoding="utf-8", errors="replace"
+                )
                 output_paths["html"] = html_path
             elif output_format == "json":
                 json_path = target_dir / report_file_name(stem, "json")
                 json_path.write_text(
                     json.dumps(report.to_dict(), ensure_ascii=False, indent=2),
                     encoding="utf-8",
+                    errors="replace",
                 )
                 output_paths["json"] = json_path
             elif output_format == "md":
                 markdown_path = target_dir / report_file_name(stem, "md")
-                markdown_path.write_text(self.to_markdown(report), encoding="utf-8")
+                markdown_path.write_text(
+                    self.to_markdown(report), encoding="utf-8", errors="replace"
+                )
                 output_paths["md"] = markdown_path
 
         return output_paths
@@ -177,6 +190,7 @@ class ReportGenerator:
         analysis = report.analysis
         review = report.review
         severity_class = _html_class_for_severity(review.risk_level)
+        mock_badge, mock_badge_css = _mock_badge(review)
 
         return f"""<!doctype html>
 <html lang="en">
@@ -287,14 +301,14 @@ class ReportGenerator:
     .finding.severity-medium {{ border-left-color: var(--medium); }}
     .finding.severity-high {{ border-left-color: var(--high); }}
     .finding.severity-critical {{ border-left-color: var(--critical); }}
-    .finding.severity-info {{ border-left-color: var(--info); }}{_external_tool_call_css(report.external_tool_calls)}
+    .finding.severity-info {{ border-left-color: var(--info); }}{_external_tool_call_css(report.external_tool_calls)}{mock_badge_css}
   </style>
 </head>
 <body>
   <main>
     <header>
       <h1>Python Code Review Report</h1>
-      <span class="badge {severity_class}">{_escape_html(review.risk_level)}</span>
+      <span class="badge {severity_class}">{_escape_html(review.risk_level)}</span>{mock_badge}
     </header>
 
     <section class="summary">
@@ -423,6 +437,7 @@ class ReportGenerator:
         analysis = report.analysis
         summary = analysis.summary
         severity_class = _html_class_for_severity(report.review.risk_level)
+        mock_badge, mock_badge_css = _mock_badge(report.review)
         overview_cards = _render_html_project_overview(report)
         severity_counts = (
             _render_html_severity_counts(summary.severity_counts) if summary else ""
@@ -445,13 +460,13 @@ class ReportGenerator:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Python Project Review Report</title>
-  <style>{_shared_css()}{_external_tool_call_css(report.external_tool_calls)}</style>
+  <style>{_shared_css()}{_external_tool_call_css(report.external_tool_calls)}{mock_badge_css}</style>
 </head>
 <body>
   <main>
     <header>
       <h1>Python Project Review Report</h1>
-      <span class="badge {severity_class}">{_escape_html(report.review.risk_level)}</span>
+      <span class="badge {severity_class}">{_escape_html(report.review.risk_level)}</span>{mock_badge}
     </header>
     <section class="summary project-overview">
       <div>
@@ -613,6 +628,21 @@ def _escape_html(value: str) -> str:
 
 def _html_class_for_severity(severity: str) -> str:
     return f"severity-{severity.lower()}"
+
+
+def _mock_badge(review: ReviewResult) -> tuple[str, str]:
+    """Return the header badge and its CSS, both empty unless the review is Mock.
+
+    Only Mock reviews get them, so other reports keep their exact HTML.
+    """
+
+    if review.reviewer is None or review.reviewer.client != "mock":
+        return "", ""
+    badge = f'\n      <span class="badge review-mock">{MOCK_BADGE_TEXT}</span>'
+    css = """
+    .review-mock { background: var(--muted); }
+    """
+    return badge, css
 
 
 def _render_html_meta(label: str, value: str) -> str:
@@ -798,7 +828,7 @@ def _render_html_severity_counts(severity_counts: dict[str, int]) -> str:
 def _render_html_file_result(result) -> str:
     severity = "info" if result.skipped else "low"
     if result.syntax_error:
-        severity = "medium"
+        severity = SYNTAX_ERROR_SEVERITY
     if result.secrets or result.suspicious_calls:
         severity = "high"
     severity_class = _html_class_for_severity(severity)

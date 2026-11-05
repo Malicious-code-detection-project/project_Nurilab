@@ -7,7 +7,7 @@ serialization simple for Markdown and JSON report generation.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
@@ -355,9 +355,9 @@ class ExternalToolCall:
         for item in fields(self):
             value = getattr(self, item.name)
             if isinstance(value, str):
-                setattr(self, item.name, _utf8_safe(value))
+                setattr(self, item.name, utf8_safe(value))
         self.arguments = {
-            _utf8_safe(key): _utf8_safe(value) for key, value in self.arguments.items()
+            utf8_safe(key): utf8_safe(value) for key, value in self.arguments.items()
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -392,7 +392,33 @@ def _redact_url(url: str) -> str:
     return urlunsplit((parts.scheme, host, parts.path, "", ""))
 
 
-def _utf8_safe(text: str) -> str:
+def utf8_safe(text: str) -> str:
     """Replace lone surrogates with "?" so the text can be written as UTF-8."""
 
     return text.encode("utf-8", errors="replace").decode("utf-8")
+
+
+def utf8_safe_value(value: Any) -> Any:
+    """Return a copy of ``value`` with ``utf8_safe`` applied to every string in it.
+
+    Lists, dict keys and values, and dataclass fields are rebuilt; the original
+    is left unchanged.
+    """
+
+    if isinstance(value, str):
+        return utf8_safe(value)
+    if isinstance(value, list):
+        return [utf8_safe_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            utf8_safe_value(key): utf8_safe_value(item) for key, item in value.items()
+        }
+    if is_dataclass(value) and not isinstance(value, type):
+        # init=False fields are fixed by the class, so replace() rebuilds them.
+        changes = {
+            item.name: utf8_safe_value(getattr(value, item.name))
+            for item in fields(value)
+            if item.init
+        }
+        return replace(value, **changes)
+    return value

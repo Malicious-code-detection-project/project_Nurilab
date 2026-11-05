@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from project_nurilab.config import SYNTAX_ERROR_SEVERITY
 from project_nurilab.input.collector import CollectedInput
 from project_nurilab.schemas import (
     ProjectAnalysis,
@@ -61,7 +62,7 @@ def _file_severities(
     return [
         *suspicious_severities,
         *secret_severities,
-        *(["medium"] if has_syntax_error else []),
+        *([SYNTAX_ERROR_SEVERITY] if has_syntax_error else []),
         *(finding.severity for finding in ruff_findings),
     ]
 
@@ -79,8 +80,10 @@ class ResultAggregator:
 
         tool_findings = ruff_findings or []
         severity_counts = self._count_severities(file_results, tool_findings)
-        risk_level = self._derive_project_risk(severity_counts)
         skipped_files = self._count_skipped(collected_input, file_results)
+        # The file rule applies to the whole project: no signal from unread
+        # files is unknown, not low.
+        risk_level = derive_file_risk(list(severity_counts), skipped_files > 0)
         file_summaries = self._build_file_summaries(
             collected_input=collected_input,
             file_results=file_results,
@@ -115,18 +118,10 @@ class ResultAggregator:
             for secret in result.secrets:
                 counts[secret.severity] = counts.get(secret.severity, 0) + 1
             if result.syntax_error:
-                counts["medium"] = counts.get("medium", 0) + 1
+                counts[SYNTAX_ERROR_SEVERITY] = counts.get(SYNTAX_ERROR_SEVERITY, 0) + 1
         for finding in ruff_findings:
             counts[finding.severity] = counts.get(finding.severity, 0) + 1
         return counts
-
-    def _derive_project_risk(self, severity_counts: dict[str, int]) -> str:
-        if not severity_counts:
-            return "low"
-        return max(
-            severity_counts,
-            key=lambda severity: SEVERITY_ORDER.get(severity, 0),
-        )
 
     def _count_skipped(
         self,
