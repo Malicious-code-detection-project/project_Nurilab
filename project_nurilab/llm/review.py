@@ -26,6 +26,7 @@ from project_nurilab.config import (
     DEFAULT_LLM_TEMPERATURE,
     DEFAULT_LLM_TIMEOUT_SECONDS,
     MIN_LLM_INPUT_BUDGET_BYTES,
+    SYNTAX_ERROR_SEVERITY,
 )
 from project_nurilab.schemas import (
     ProjectAnalysis,
@@ -37,6 +38,7 @@ from project_nurilab.schemas import (
     RuffFinding,
     SecretFinding,
     SuspiciousCall,
+    utf8_safe,
 )
 
 SEVERITY_RANK = {
@@ -169,11 +171,11 @@ class MockReviewClient:
         if analysis.syntax_error:
             return ReviewResult(
                 summary="The file could not be parsed as valid Python code.",
-                risk_level="medium",
+                risk_level=SYNTAX_ERROR_SEVERITY,
                 findings=[
                     ReviewFinding(
                         title="Python syntax error",
-                        severity="medium",
+                        severity=SYNTAX_ERROR_SEVERITY,
                         file=analysis.path,
                         line=None,
                         reason=analysis.syntax_error,
@@ -206,7 +208,12 @@ class LocalLLMReviewClient:
         self.base_url = (
             base_url or os.getenv("NURILAB_LLM_BASE_URL") or DEFAULT_LLM_BASE_URL
         ).rstrip("/")
-        self.model = model or os.getenv("NURILAB_LLM_MODEL") or DEFAULT_LLM_MODEL
+        # An environment value with a byte that is not UTF-8 arrives as a lone
+        # surrogate; cleaning it here keeps it out of prompts, job records, and
+        # reports. The base URL is not cleaned: a "?" would change the endpoint.
+        self.model = utf8_safe(
+            model or os.getenv("NURILAB_LLM_MODEL") or DEFAULT_LLM_MODEL
+        )
         self.timeout = _resolve_timeout(timeout)
         self.temperature = temperature
         self.budget_bytes = _resolve_budget_bytes(budget_bytes)
@@ -477,9 +484,7 @@ def _local_llm_request_failure(
                 severity="medium",
                 line=None,
                 source="local_llm",
-                # Endpoint text such as an unexpected key or a response
-                # preview may hold a lone surrogate the report cannot write.
-                reason=reason.encode("utf-8", "backslashreplace").decode("utf-8"),
+                reason=reason,
                 recommendation=recommendation
                 or (
                     "Check that vLLM is running, the network is accessible, "
@@ -498,7 +503,7 @@ def _file_findings(analysis: PythonAnalysis) -> list[ReviewFinding]:
         findings.append(
             ReviewFinding(
                 title="Python syntax error",
-                severity="medium",
+                severity=SYNTAX_ERROR_SEVERITY,
                 file=analysis.path,
                 line=None,
                 source="ast",
@@ -850,7 +855,9 @@ def _build_project_payload_summary(
         if file_result.syntax_error:
             file_summary["syntax_error"] = file_result.syntax_error
             signal_keys.append(
-                _signal_sort_key("medium", "ast", rel_path, 0, "syntax_error")
+                _signal_sort_key(
+                    SYNTAX_ERROR_SEVERITY, "ast", rel_path, 0, "syntax_error"
+                )
             )
         if sorted_calls:
             file_summary["suspicious_calls"] = [
@@ -929,8 +936,11 @@ def _build_project_payload_summary(
             "analyzed_files": analysis.summary.analyzed_files,
             "skipped_files": analysis.summary.skipped_files,
             "severity_counts": analysis.summary.severity_counts,
-            "risk_level": analysis.summary.risk_level,
         }
+        # The review schema allows only low/medium/high, so an unknown summary
+        # risk is left out instead of being offered as an answer to copy.
+        if analysis.summary.risk_level != "unknown":
+            summary_dict["risk_level"] = analysis.summary.risk_level
 
     full_payload: dict[str, Any] = {
         "root_path": analysis.root_path,
@@ -966,7 +976,9 @@ def _build_project_payload_summary(
                 (k, rel_path, line_count, "skipped", file_summary.get("skip_reason"))
             )
         if file_summary.get("syntax_error"):
-            k = _signal_sort_key("medium", "ast", rel_path, 0, "syntax_error")
+            k = _signal_sort_key(
+                SYNTAX_ERROR_SEVERITY, "ast", rel_path, 0, "syntax_error"
+            )
             all_signals.append(
                 (k, rel_path, line_count, "syntax_error", file_summary["syntax_error"])
             )
@@ -1298,15 +1310,11 @@ def _parse_llm_review(content: str) -> ReviewResult:
         for item in review_payload["findings"]
     ]
 
-    review = ReviewResult(
+    return ReviewResult(
         summary=review_payload["summary"],
         risk_level=review_payload["risk_level"],
         findings=findings,
     )
-    # A lone surrogate such as "\ud83d" is valid JSON, but the report writer
-    # would fail on it and lose the static result with the job.
-    json.dumps(review.to_dict(), ensure_ascii=False).encode("utf-8")
-    return review
 
 
 def _validate_llm_review_payload(payload: Any, content: str) -> dict[str, Any]:

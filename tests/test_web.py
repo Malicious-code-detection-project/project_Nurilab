@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from project_nurilab import __version__
 from project_nurilab.aggregation.result_aggregator import file_risk_level
-from project_nurilab.config import DEFAULT_LLM_MODEL
+from project_nurilab.config import DEFAULT_LLM_MODEL, SYNTAX_ERROR_SEVERITY
 from project_nurilab.pipeline import Phase1Pipeline
 from project_nurilab.reports.generator import MOCK_BADGE_TEXT
 from project_nurilab.schemas import PythonAnalysis, RuffFinding
@@ -405,6 +405,7 @@ def test_single_file_upload_completes_with_static_risk(settings: WebSettings) ->
             ],
             "secrets": [],
             "syntax_error": None,
+            "syntax_error_severity": None,
         }
     ]
 
@@ -940,7 +941,7 @@ def test_llm_failure_during_review_keeps_static_result_and_warns(
 @pytest.mark.parametrize(
     "field", ["summary", "title", "file", "reason", "recommendation"]
 )
-def test_lone_surrogate_from_llm_fails_the_review_not_the_job(
+def test_lone_surrogate_from_llm_keeps_the_review_and_the_job(
     settings: WebSettings,
     monkeypatch: pytest.MonkeyPatch,
     field: str,
@@ -967,16 +968,14 @@ def test_lone_surrogate_from_llm_fails_the_review_not_the_job(
         report = client.get(f"/api/analyses/{job['id']}/report.json")
         html = client.get(f"/api/analyses/{job['id']}/report.html")
 
+    # The report writer replaces the lone surrogate, so the review is kept.
     assert job["status"] == "completed"
-    assert job["review"]["status"] == "failed"
-    assert job["review"]["failure_code"] == "json_parse_failed"
+    assert job["review"]["status"] == "ok"
     assert job["static_risk_level"] == "high"
     assert result.status_code == 200
-    body = result.json()
-    assert body["review_failure_message"] == LLM_FAILURE_MESSAGES["json_parse_failed"]
-    assert len(body["static_signals"]) == 1
-    assert report.status_code == 200
-    assert html.status_code == 200
+    assert result.json()["review_failure_message"] is None
+    assert "x ? y" in report.text
+    assert "x ? y" in html.text
 
 
 def _chat(content: str) -> _Response:
@@ -990,7 +989,7 @@ def _http_error_with_text(text: str) -> _Response:
 
 
 @pytest.mark.parametrize(
-    ("review", "failure_code"),
+    ("review", "failure_code", "saved_text"),
     [
         (
             _respond(
@@ -1000,6 +999,7 @@ def _http_error_with_text(text: str) -> _Response:
                 )
             ),
             "json_parse_failed",
+            "k?",
         ),
         (
             _respond(
@@ -1010,8 +1010,9 @@ def _http_error_with_text(text: str) -> _Response:
                 )
             ),
             "json_parse_failed",
+            "k?",
         ),
-        (_respond(_http_error_with_text("err \ud83d x")), "http_error"),
+        (_respond(_http_error_with_text("err \ud83d x")), "http_error", "err ? x"),
     ],
     ids=["top-level-key", "finding-key", "http-error-preview"],
 )
@@ -1020,6 +1021,7 @@ def test_lone_surrogate_in_failure_reason_keeps_the_job(
     monkeypatch: pytest.MonkeyPatch,
     review: Any,
     failure_code: str,
+    saved_text: str,
 ) -> None:
     fake_llm(monkeypatch, review=review)
     with web_client(settings) as client:
@@ -1033,7 +1035,7 @@ def test_lone_surrogate_in_failure_reason_keeps_the_job(
     assert (
         result.json()["review_failure_message"] == (LLM_FAILURE_MESSAGES[failure_code])
     )
-    assert "\\\\ud83d" in report.text
+    assert saved_text in report.json()["review"]["findings"][0]["reason"]
 
 
 def test_emoji_pair_from_llm_is_kept(
@@ -1191,6 +1193,38 @@ def test_llm_input_truncation_is_null_without_a_cut_or_a_result(
     assert failed_report["review"]["input_metadata"]["truncated"] is True
     assert failed_result["llm_input_truncation"] is None
     assert mock_result["llm_input_truncation"] is None
+
+
+def test_llm_status_survives_a_model_setting_that_is_not_utf8(
+    settings: WebSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # os.environ holds an undecodable byte as a lone surrogate. The server
+    # listing the same name as a JSON escape once passed the check and then
+    # failed the job record with a 500; the name is now cleaned when loaded.
+    monkeypatch.setenv("NURILAB_LLM_MODEL", "m\udcff")
+    fake_llm(monkeypatch, models=_models("m\udcff"))
+    with web_client(settings) as client:
+        status = client.get("/api/llm-status")
+        upload_response = upload(client, {"a.py": CLEAN_SOURCE}, review_mode="local")
+
+    assert status.status_code == 200
+    assert status.json() == {"status": "model_missing", "model": "m?"}
+    assert_error(upload_response, 503, "llm_unavailable")
+
+
+def test_syntax_error_signal_carries_the_aggregator_severity(
+    settings: WebSettings,
+) -> None:
+    with web_client(settings) as client:
+        job = analyze(
+            client, {"proj/broken.py": b"def broken(:\n", "proj/ok.py": CLEAN_SOURCE}
+        )
+        result = client.get(f"/api/analyses/{job['id']}/result").json()
+
+    assert [
+        (signal["file"], signal["syntax_error_severity"])
+        for signal in result["static_signals"]
+    ] == [("proj/broken.py", SYNTAX_ERROR_SEVERITY)]
 
 
 # Markup in results
@@ -1593,12 +1627,13 @@ def test_index_has_fixed_notes_warning_and_badge() -> None:
     [
         'byId("mock-badge").hidden = job.review.client !== "mock";',
         "renderLlmInputNotice(result.body.llm_input_truncation);",
+        "signalRow(signal.syntax_error_severity, `문법 오류: ${signal.syntax_error}`)",
         (
             'byId("review-warning-detail").textContent = '
             'result.body.review_failure_message || "";'
         ),
     ],
-    ids=["mock-badge", "input-notice", "warning-detail"],
+    ids=["mock-badge", "input-notice", "warning-detail", "syntax-severity"],
 )
 def test_app_js_connects_results_to_the_page(line: str) -> None:
     # pytest cannot run the page, so these lines stay pinned as text.

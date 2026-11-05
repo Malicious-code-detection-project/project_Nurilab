@@ -93,11 +93,11 @@ CLI와 통일한다. CLI가 `--review-client mock` 기본이고 `local`을 명�
 | `http_error` | `except requests.exceptions.HTTPError` | HTTP 오류 응답 |
 | `connection_failed` | `except (requests.exceptions.ConnectionError, …)` | 연결 실패, 잘못된 URL·schema |
 | `invalid_response` | 요청 단계의 `except Exception` | 응답 본문 디코드 실패, `choices[0].message.content` 구조 오류, 그 밖의 예외 |
-| `json_parse_failed` | 파싱 단계의 `except Exception` | LLM이 만든 리뷰 JSON의 파싱 실패와 schema 검증 실패(필드 누락, 타입·값 오류). `message.content`가 `null`인 경우와, 파싱은 되지만 UTF-8 보고서에 쓸 수 없는 짝 없는 서로게이트(`\ud83d`)가 든 리뷰도 여기다(THE-161) |
+| `json_parse_failed` | 파싱 단계의 `except Exception` | LLM이 만든 리뷰 JSON의 파싱 실패와 schema 검증 실패(필드 누락, 타입·값 오류). `message.content`가 `null`인 경우도 여기다 |
 
 - 요청 단계의 `except Exception`의 finding 제목은 "Local LLM connection failed"지만 실제 연결 오류는 그 앞의 연결 오류 분기에서 먼저 잡히므로 `invalid_response`로 분리한다. finding 제목과 문구는 바꾸지 않는다.
 - `message.content`가 `null`이면(예: gpt-oss가 추론에 토큰을 다 써 `finish_reason=length`로 끝난 경우) `json_parse_failed`로 둔다. 응답 구조는 맞지만 리뷰 내용이 없는 경우라, "모델 출력을 확인하라"는 `json_parse_failed`의 권고가 맞고 `invalid_response`의 "connection failed" 제목은 맞지 않기 때문이다.
-- 다섯 곳 모두 호출하는 `_local_llm_request_failure()`에 `failure_code`를 필수 인자로 추가해 빠짐없이 설정한다. 같은 함수는 실패 사유(`reason`)의 UTF-8로 쓸 수 없는 문자를 `\ud83d`처럼 escape한다. 사유에는 예상 밖 키 이름, HTTP 오류 응답 미리보기 같은 endpoint 문자열이 그대로 들어가므로, 짝 없는 서로게이트가 있으면 보고서 쓰기에서 job이 실패하기 때문이다(THE-161). finding 문구를 파싱해 실패를 판단하지 않는다.
+- 다섯 곳 모두 호출하는 `_local_llm_request_failure()`에 `failure_code`를 필수 인자로 추가해 빠짐없이 설정한다. finding 문구를 파싱해 실패를 판단하지 않는다.
 - 성공 경로도 각 client가 채운다.
   - Mock: `ReviewResult`를 만드는 네 곳(`MockReviewClient`의 폴더 결과, 단일 파일의 skipped·문법 오류·일반 결과) 모두 `{"client": "mock", "model": null, "status": "ok", "failure_code": null}`이다. 네 곳을 따로 고치지 않고 `MockReviewClient.review()`가 결과를 받은 뒤 한 번 채우므로, 반환 경로가 늘어도 빠지지 않는다. 읽지 못한 파일(skipped)의 리뷰도 Mock이 정상으로 만든 결과이므로 `ok`다.
   - LLM 성공: `LocalLLMReviewClient.review()`가 `_parse_llm_review()` 결과를 받은 뒤 `client=local`, 설정한 모델, `status=ok`로 채운다.
@@ -197,7 +197,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
   - `file_count`는 걸러낸 뒤 분석 대상으로 저장한 `.py` 수다. `review`의 `client`·`model`은 요청 시점에, `status`·`failure_code`는 완료 뒤 채운다.
 - 위험도는 CLI와 같은 값을 쓰며 `completed`일 때만 채운다.
   - `risk_level`: 보고서의 `review.risk_level`. CLI 터미널의 `Risk Level`(`cli.py:140`)과 같고, LLM 리뷰가 실패하면 `unknown`이다. Mock도 단일 파일을 읽지 못하거나(`MockReviewClient`의 skipped 분기) 폴더에 신호 없이 읽지 못한 파일이 있으면 `unknown`이므로, LLM 실패 여부는 `risk_level`이 아니라 `review.status`(보고서의 `review.reviewer.status`)로만 판단한다.
-  - `static_risk_level`: 정적 분석 위험도다. 폴더 업로드면 `analysis.summary.risk_level`(폴더 HTML 보고서 상단 카드와 같은 값)이다. 폴더에 신호가 없고 읽지 못한 파일이 1개 이상이면 단일 파일과 같은 기준으로 `unknown`이고, 신호가 있으면 그중 가장 높은 값이다(THE-161). CLI 보고서의 `analysis.summary.risk_level`과 Mock의 `review.risk_level`도 같이 바뀐다. 이 값은 LLM 입력의 `summary.risk_level`로도 쓰인다. 단일 파일이면 집계기가 폴더 안의 파일마다 쓰는 규칙(`aggregation/result_aggregator.py`의 `_summarize_file()`·`derive_file_risk()`)으로 계산한다. 위험 호출, secret, 문법 오류(`medium`), Ruff 결과의 severity 중 가장 높은 값이고, 신호가 없으면 `low`, 읽지 못한 파일이면 `unknown`이다.
+  - `static_risk_level`: 정적 분석 위험도다. 폴더 업로드면 `analysis.summary.risk_level`(폴더 HTML 보고서 상단 카드와 같은 값)이다. 폴더에 신호가 없고 읽지 못한 파일이 1개 이상이면 단일 파일과 같은 기준으로 `unknown`이고, 신호가 있으면 그중 가장 높은 값이다(THE-161). CLI 보고서의 `analysis.summary.risk_level`과 Mock의 `review.risk_level`도 같이 바뀐다. 이 값은 LLM 입력의 `summary.risk_level`로도 쓰이지만, `unknown`이면 LLM 입력에서 뺀다. 리뷰 응답은 `low`·`medium`·`high`만 허용하므로, 입력의 `unknown`을 모델이 그대로 따라 쓰면 성공할 리뷰가 `json_parse_failed`가 되기 때문이다. 읽지 못한 파일 수는 `summary.skipped_files`로 그대로 전달된다. 단일 파일이면 집계기가 폴더 안의 파일마다 쓰는 규칙(`aggregation/result_aggregator.py`의 `_summarize_file()`·`derive_file_risk()`)으로 계산한다. 위험 호출, secret, 문법 오류(`medium`), Ruff 결과의 severity 중 가장 높은 값이고, 신호가 없으면 `low`, 읽지 못한 파일이면 `unknown`이다.
   - 단일 파일 계산은 웹에서 규칙을 다시 짜지 않고, 집계기의 규칙을 공용 함수로 꺼내 집계기와 웹이 함께 쓴다(W3). 계산한 값은 웹 응답과 SQLite에만 넣고 보고서 JSON·HTML에는 넣지 않으므로 CLI 출력은 바뀌지 않는다.
 - job 실패 코드는 `analysis_error`(분석 중 예외)와 `interrupted`(서버 재시작으로 중단)다.
 
@@ -210,7 +210,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
   - `review_failure_message`: `review.status=failed`일 때 `failure_code`별 고정 문구, 아니면 `null`. 화면 상단 경고(§7.3)에 쓴다(THE-161)
   - `llm_input_truncation`: LLM 입력이 상한을 넘어 잘렸고 리뷰가 성공했으면 `review.input_metadata`의 `{included_count, omitted_count, budget_bytes}`, 아니면 `null`. 실패한 리뷰는 잘림이 제한할 LLM 결과가 없으므로 `null`이다(THE-161)
   - `findings`: `review.findings`의 각 항목(`title`, `severity`, `file`, `line`, `column`, `source`, `rule_id`, `reason`, `recommendation`)
-  - `static_signals`: 파일별 위험 호출·secret·문법 오류. 정적 분석 신호를 리뷰 결과와 구분해 보여주는 데 쓴다(§7.2, W4). 신호가 있는 파일만 `{file, suspicious_calls[{name, line, category, severity}], secrets[{kind, line, severity}], syntax_error}`로 담고, secret 미리보기는 넣지 않는다(THE-160)
+  - `static_signals`: 파일별 위험 호출·secret·문법 오류. 정적 분석 신호를 리뷰 결과와 구분해 보여주는 데 쓴다(§7.2, W4). 신호가 있는 파일만 `{file, suspicious_calls[{name, line, category, severity}], secrets[{kind, line, severity}], syntax_error, syntax_error_severity}`로 담고, secret 미리보기는 넣지 않는다(THE-160). `syntax_error_severity`는 문법 오류 심각도(`config.py`의 `SYNTAX_ERROR_SEVERITY`, 집계·Mock·LLM 입력·HTML이 함께 씀)이고 문법 오류가 없으면 `null`이다. 화면이 값을 따로 정하지 않게 서버가 내려준다(THE-161)
   - `skipped_files`: 읽지 못한 파일의 상대 경로
 - `review.status=failed`이면 `source=local_llm`인 finding의 `reason`을 **서버에서** `failure_code`별 고정 문구(§7.3)로 바꿔 내려준다. LLM 실패 사유 원문(endpoint URL, `Cause:` 원문, 응답 미리보기)은 브라우저로 보내지 않는다. W3부터 적용한다. 다섯 가지 문구는 `web/results.py`의 `LLM_FAILURE_MESSAGES`에 둔다. `summary`, `title`, `recommendation`은 실패 시에도 고정 문구라 바꾸지 않는다.
 - 저장된 보고서 파일은 바꾸지 않는다. 다운로드한 보고서에 원문이 남는 점은 §9의 알려진 한계다.
@@ -340,7 +340,7 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 - Mock/LLM 각각 출처 표시. job·`/result` 응답과 HTML 보고서의 배지로 확인한다
 - 가짜 endpoint로 분석 도중 `failure_code` 다섯 가지에서 `review.status=failed`, 고정 문구, 정적 신호 유지, 원문 미노출을 확인한다. pytest는 JS를 실행하지 못하므로 경고가 화면에 뜨는지는 브라우저에서 확인해 기록한다
 - 읽지 못한 파일로 Mock이 `unknown`을 내도 LLM 실패 경고 조건이 되지 않음
-- LLM 응답의 짝 없는 서로게이트는 job 실패가 아니라 리뷰 실패이고 정적 결과와 보고서가 남음. 값과 예상 밖 키는 `json_parse_failed`, HTTP 오류 응답 본문은 `http_error`이며, CLI도 종료 코드 0으로 보고서를 남김
+- 짝 없는 서로게이트는 `?`로 바뀌고 job과 보고서가 남음. 분석 결과(UTF-8이 아닌 파일 이름 등)는 만든 직후 리뷰 전에 한 번(`schemas.utf8_safe_value`), 모델 이름은 불러올 때 정리하므로 LLM 입력과 job 기록도 실패하지 않음. 보고서 쓰기는 `errors="replace"`로 남은 텍스트(LLM 응답 등)를 막음. LLM 응답 값에 있으면 리뷰는 그대로 성공하고, 예상 밖 키는 `json_parse_failed`, HTTP 오류 응답 본문은 `http_error`로 사유에 `?`가 남음. CLI는 Mock과 `--review-client local` 모두 UTF-8이 아닌 파일 이름에서 종료 코드 0으로 보고서를 남김. 기준 URL은 `?`가 요청 대상을 바꾸므로 정리하지 않음
 - 폴더 위험도: 전부 또는 일부를 읽지 못하고 신호가 없으면 `unknown`, 신호가 있으면 그 값, 모두 읽었고 신호가 없으면 `low`
 - LLM 입력 잘림: 리뷰가 성공했을 때만 `llm_input_truncation`이 채워지고, 잘리지 않은 경우와 실패한 리뷰, Mock은 `null`
 - §7.4의 XSS 확인과 attachment 헤더

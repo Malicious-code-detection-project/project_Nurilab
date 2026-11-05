@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from project_nurilab.config import SYNTAX_ERROR_SEVERITY
+
 # Shown instead of the raw Local LLM failure reason, which holds the endpoint
 # URL, "Cause:" exception text, and a response preview.
 LLM_FAILURE_MESSAGES = {
@@ -118,4 +120,5 @@ def _static_signals(result: dict[str, Any]) -> dict[str, Any] | None:
         "suspicious_calls": calls,
         "secrets": secrets,
         "syntax_error": syntax_error,
+        "syntax_error_severity": SYNTAX_ERROR_SEVERITY if syntax_error else None,
     }

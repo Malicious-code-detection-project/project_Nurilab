@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -524,3 +525,60 @@ def test_cli_writes_json_when_mcp_values_contain_lone_surrogates(
     assert exit_code == 0
     assert capsys.readouterr().out.rstrip().splitlines()[-1].startswith("JADX MCP")
     assert payload["external_tool_calls"][0][field] == expected
+
+
+@pytest.mark.parametrize("review_client", ["mock", "local"])
+def test_cli_writes_reports_for_a_file_name_that_is_not_utf8(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, review_client: str
+) -> None:
+    prompts: list[str] = []
+
+    class Response:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, Any]:
+            content = json.dumps({"summary": "s", "risk_level": "low", "findings": []})
+            return {"choices": [{"message": {"content": content}}]}
+
+    def fake_post(url: str, **kwargs: Any) -> Response:
+        # The LLM prompt is built from the analysis, so it must encode as well.
+        prompts.append(json.dumps(kwargs["json"], ensure_ascii=False))
+        prompts[-1].encode("utf-8")
+        return Response()
+
+    monkeypatch.setattr("requests.post", fake_post)
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    try:
+        bad_name = os.path.join(os.fsencode(project_dir), b"bad\xff.py")
+        with open(bad_name, "w", encoding="utf-8") as handle:
+            handle.write("import os\nos.system(x)\n")
+    except OSError:
+        pytest.skip("file system rejects names that are not UTF-8")
+    output_dir = tmp_path / "reports"
+
+    exit_code = main(
+        [
+            "analyze",
+            str(project_dir),
+            "--out",
+            str(output_dir),
+            "--no-ruff",
+            "--review-client",
+            review_client,
+        ]
+    )
+
+    payload = json.loads(
+        (output_dir / "proj.analysis.json").read_text(encoding="utf-8")
+    )
+    assert exit_code == 0
+    assert [
+        Path(result["path"]).name for result in payload["analysis"]["file_results"]
+    ] == ["bad?.py"]
+    assert (output_dir / "proj.analysis.html").stat().st_size > 0
+    if review_client == "local":
+        assert payload["review"]["reviewer"]["status"] == "ok"
+        assert len(prompts) == 1
+        assert "bad?.py" in prompts[0]

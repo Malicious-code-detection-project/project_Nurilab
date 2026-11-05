@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from project_nurilab.config import SYNTAX_ERROR_SEVERITY
 from project_nurilab.input.collector import CollectedInput
 from project_nurilab.schemas import (
     ProjectAnalysis,
@@ -61,7 +62,7 @@ def _file_severities(
     return [
         *suspicious_severities,
         *secret_severities,
-        *(["medium"] if has_syntax_error else []),
+        *([SYNTAX_ERROR_SEVERITY] if has_syntax_error else []),
         *(finding.severity for finding in ruff_findings),
     ]
 
@@ -117,7 +118,7 @@ class ResultAggregator:
             for secret in result.secrets:
                 counts[secret.severity] = counts.get(secret.severity, 0) + 1
             if result.syntax_error:
-                counts["medium"] = counts.get("medium", 0) + 1
+                counts[SYNTAX_ERROR_SEVERITY] = counts.get(SYNTAX_ERROR_SEVERITY, 0) + 1
         for finding in ruff_findings:
             counts[finding.severity] = counts.get(finding.severity, 0) + 1
         return counts

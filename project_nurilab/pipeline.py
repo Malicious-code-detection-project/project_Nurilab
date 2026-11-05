@@ -20,6 +20,7 @@ from project_nurilab.schemas import (
     ExternalToolCall,
     ProjectReport,
     PythonAnalysis,
+    utf8_safe_value,
 )
 
 
@@ -81,6 +82,10 @@ class Phase1Pipeline:
         ``jadx_mcp_class`` and ``jadx_mcp_target`` behave as in ``run()``.
         """
 
+        # File names that are not UTF-8 reach the analysis as lone surrogates.
+        # The analysis is cleaned once after it is built, before the review, so
+        # the LLM prompt, the web job record, and every report can encode it.
+        # The files themselves are already read with their real names by then.
         target = Path(input_path).expanduser().resolve()
         collected_input = self.collector.collect(target)
         file_results = [
@@ -92,6 +97,7 @@ class Phase1Pipeline:
             analysis = file_results[0] if file_results else self._skipped_file(target)
             if self.use_ruff:
                 analysis.ruff_findings = self.ruff_collector.collect(target)
+            analysis = utf8_safe_value(analysis)
             review = self.review_client.review(analysis)
             return AnalysisReport(
                 generated_at=datetime.now(UTC).isoformat(),
@@ -109,6 +115,7 @@ class Phase1Pipeline:
             file_results=file_results,
             ruff_findings=ruff_findings,
         )
+        project_analysis = utf8_safe_value(project_analysis)
         review = self.review_client.review(project_analysis)
 
         return ProjectReport(

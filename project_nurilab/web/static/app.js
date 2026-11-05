@@ -433,7 +433,7 @@ async function pollJob(jobId) {
 
 function reviewLabel(review) {
   if (review.client === "mock") {
-    return "Mock (LLM 미사용)";
+    return "Mock";
   }
   return `LLM (${review.model || "모델 미상"})`;
 }
@@ -509,7 +509,7 @@ function renderStaticSignals(signals) {
       rows.append(signalRow(secret.severity, `비밀값 후보 ${secret.kind} (Line ${secret.line})`));
     }
     if (signal.syntax_error) {
-      rows.append(signalRow("medium", `문법 오류: ${signal.syntax_error}`));
+      rows.append(signalRow(signal.syntax_error_severity, `문법 오류: ${signal.syntax_error}`));
     }
     const item = element("li");
     item.append(element("strong", null, signal.file), rows);

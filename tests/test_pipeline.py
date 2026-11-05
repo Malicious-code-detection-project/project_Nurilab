@@ -11,7 +11,10 @@ from mcp import types
 
 from project_nurilab.aggregation.result_aggregator import file_risk_level
 from project_nurilab.external.jadx_mcp_client import JadxMcpClient, McpSession
-from project_nurilab.llm.review import LocalLLMReviewClient
+from project_nurilab.llm.review import (
+    LocalLLMReviewClient,
+    _build_project_payload_summary,
+)
 from project_nurilab.pipeline import Phase1Pipeline
 from project_nurilab.reports.generator import ReportGenerator
 from project_nurilab.schemas import (
@@ -1247,7 +1250,7 @@ def test_project_risk_counts_unread_files_when_no_signal_exists(
     assert f"Overall project risk is {expected_risk}." in report.review.summary
 
 
-def test_lone_surrogate_from_llm_keeps_reports_and_static_result(
+def test_lone_surrogate_from_llm_keeps_review_reports_and_static_result(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class Response:
@@ -1270,8 +1273,33 @@ def test_lone_surrogate_from_llm_keeps_reports_and_static_result(
     ).run(source, tmp_path / "reports")
 
     payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
-    assert payload["review"]["reviewer"]["failure_code"] == "json_parse_failed"
+    assert payload["review"]["reviewer"]["status"] == "ok"
+    assert payload["review"]["summary"] == "x ? y"
     assert [call["name"] for call in payload["analysis"]["suspicious_calls"]] == [
         "os.system"
     ]
-    assert output_paths["html"].exists()
+    assert "x ? y" in output_paths["html"].read_text(encoding="utf-8")
+
+
+def test_unknown_project_risk_is_left_out_of_the_llm_payload(tmp_path: Path) -> None:
+    # The review schema allows only low/medium/high, so unknown is not offered.
+    unread = tmp_path / "unread"
+    unread.mkdir()
+    (unread / "bad.py").write_bytes(b"\xff\xfe\x00")
+    risky = tmp_path / "risky"
+    risky.mkdir()
+    (risky / "a.py").write_text("import os\nos.system(x)\n", encoding="utf-8")
+    pipeline = Phase1Pipeline(use_ruff=False)
+
+    unread_report = pipeline.analyze(unread)
+    risky_report = pipeline.analyze(risky)
+
+    assert isinstance(unread_report, ProjectReport)
+    assert isinstance(risky_report, ProjectReport)
+    assert unread_report.analysis.summary is not None
+    assert unread_report.analysis.summary.risk_level == "unknown"
+    unread_summary = _build_project_payload_summary(unread_report.analysis)["summary"]
+    risky_summary = _build_project_payload_summary(risky_report.analysis)["summary"]
+    assert "risk_level" not in unread_summary
+    assert unread_summary["skipped_files"] == 1
+    assert risky_summary["risk_level"] == "high"

@@ -41,6 +41,7 @@ from project_nurilab.schemas import (
     RuffFinding,
     SecretFinding,
     SuspiciousCall,
+    utf8_safe_value,
 )
 
 
@@ -1945,3 +1946,65 @@ def test_relativize_report_keeps_reviewer(tmp_path: Path) -> None:
 
     assert relativized.review.reviewer == report.review.reviewer
     assert relativized.review.reviewer is not report.review.reviewer
+
+
+def test_utf8_safe_value_cleans_a_copy_and_keeps_the_original() -> None:
+    analysis = PythonAnalysis(
+        path="/tmp/bad\udcff.py",
+        line_count=1,
+        secrets=[
+            SecretFinding(
+                kind="password",
+                line=1,
+                preview="x\ud83d",
+                severity="high",
+                reason="r",
+            )
+        ],
+    )
+
+    cleaned = utf8_safe_value(analysis)
+
+    assert cleaned.path == "/tmp/bad?.py"
+    assert cleaned.secrets[0].preview == "x?"
+    assert analysis.path == "/tmp/bad\udcff.py"
+    assert utf8_safe_value({"k\ud83d": ["v\udcff", 1]}) == {"k?": ["v?", 1]}
+
+
+@pytest.mark.parametrize(
+    "build_report",
+    [_build_single_file_report, lambda: _build_project_json_contract_report("/tmp/p")],
+    ids=["file", "project"],
+)
+def test_report_writer_replaces_lone_surrogates_in_every_output(
+    build_report, tmp_path: Path
+) -> None:
+    report = build_report()
+    if isinstance(report, AnalysisReport):
+        report.analysis.path = "/tmp/bad\udcff.py"
+    report.review = ReviewResult(
+        summary="x \ud83d y",
+        risk_level="low",
+        findings=[
+            ReviewFinding(
+                title="t",
+                severity="low",
+                line=1,
+                reason="r \ud83d",
+                recommendation="c",
+            )
+        ],
+        input_metadata={"k\ud83d": "v"},
+    )
+
+    paths = ReportGenerator().write(report, tmp_path, formats=["json", "html", "md"])
+
+    texts = {kind: path.read_text(encoding="utf-8") for kind, path in paths.items()}
+    payload = json.loads(texts["json"])
+    assert payload["review"]["summary"] == "x ? y"
+    assert payload["review"]["findings"][0]["reason"] == "r ?"
+    assert payload["review"]["input_metadata"] == {"k?": "v"}
+    # Written as "?", not as a JSON escape that would bring the surrogate back.
+    assert "\\ud83d" not in texts["json"]
+    assert "x ? y" in texts["html"]
+    assert "x ? y" in texts["md"]

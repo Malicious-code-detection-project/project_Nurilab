@@ -199,6 +199,12 @@ view로 직렬화합니다.
 - HTML: 기본 human-readable view
 - Markdown: 선택 view
 
+UTF-8로 쓸 수 없는 문자(짝 없는 서로게이트)는 `?`로 바꿉니다. pipeline은 분석 결과를
+만든 직후 리뷰 전에 한 번(`utf8_safe_value`), Local LLM client는 모델 이름을 불러올 때
+정리합니다. 그래서 UTF-8이 아닌 파일 이름도 LLM 입력, 웹 job 기록, 보고서에 그대로
+들어갈 수 있습니다. `ReportGenerator.write()`는 `errors="replace"`로 써서 LLM 응답처럼
+그 뒤에 들어온 텍스트도 막습니다.
+
 각 view는 다시 분석하지 않으며 같은 payload를 표현합니다. report의 정적 signal과
 review finding을 함께 확인해야 하며, review text만으로 입력의 악성 여부를 확정하지
 않습니다.

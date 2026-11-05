@@ -2220,14 +2220,6 @@ _SURROGATE_HTTP_ERROR = _ChatResponseStub(
             "Local LLM JSON parsing failed",
         ),
         (
-            # Valid JSON, but a lone surrogate cannot be written to a report.
-            _chat_content(
-                '{"summary": "x \\ud83d y", "risk_level": "low", "findings": []}'
-            ),
-            "json_parse_failed",
-            "Local LLM JSON parsing failed",
-        ),
-        (
             _chat_content(_TOP_LEVEL_SURROGATE_KEY),
             "json_parse_failed",
             "Local LLM JSON parsing failed",
@@ -2271,18 +2263,13 @@ def test_local_llm_review_failures_record_failure_code(
     }
 
 
-@pytest.mark.parametrize(
-    "outcome",
-    [
-        _chat_content(_TOP_LEVEL_SURROGATE_KEY),
-        _chat_content(_FINDING_SURROGATE_KEY),
-        _SURROGATE_HTTP_ERROR,
-    ],
-    ids=["top-level-key", "finding-key", "http-error-preview"],
-)
-def test_local_llm_failure_reason_escapes_lone_surrogates(
-    monkeypatch: pytest.MonkeyPatch, outcome: _ChatResponseStub
+def test_local_llm_review_with_a_lone_surrogate_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The report writer replaces the surrogate, so the review is not thrown away.
+    outcome = _chat_content(
+        '{"summary": "x \\ud83d y", "risk_level": "low", "findings": []}'
+    )
     monkeypatch.setattr("requests.post", lambda *args, **kwargs: outcome)
 
     review = LocalLLMReviewClient(
@@ -2290,10 +2277,22 @@ def test_local_llm_failure_reason_escapes_lone_surrogates(
     ).review(PythonAnalysis(path="sample.py", line_count=10))
 
     assert review.reviewer is not None
-    assert review.reviewer.status == "failed"
-    # The report writer encodes this; a raw surrogate would raise here.
-    json.dumps(review.to_dict(), ensure_ascii=False).encode("utf-8")
-    assert "\\ud83d" in review.findings[0].reason
+    assert review.reviewer.status == "ok"
+    assert review.summary == "x \ud83d y"
+
+
+def test_local_llm_client_cleans_the_model_but_not_the_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # os.environ holds an undecodable byte as a lone surrogate.
+    monkeypatch.setenv("NURILAB_LLM_MODEL", "m\udcff")
+    monkeypatch.setenv("NURILAB_LLM_BASE_URL", "http://host\udcff:8000/v1")
+
+    client = LocalLLMReviewClient()
+
+    assert client.model == "m?"
+    # A "?" in the URL would turn the rest into a query and call another port.
+    assert client.base_url == "http://host\udcff:8000/v1"
 
 
 def test_local_llm_review_success_records_configured_model(
