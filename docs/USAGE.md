@@ -284,7 +284,7 @@ LLM이 분석 도중 실패하면 job은 완료로 끝나고 "LLM 리뷰 실패,
 입력은 저장소의 무해한 fixture 폴더 `tests/fixtures/review_quality_project`입니다.
 
 1. **Mock 분석 (인터넷 없이):** 토글을 끈 채 폴더를 올려 분석합니다. 결과에
-   `정적 분석 위험도` `high`, `리뷰` `Mock (LLM 미사용)`, `리뷰 상태` `성공`과
+   `정적 분석 위험도` `high`, `리뷰` `Mock`, `리뷰 상태` `성공`과
    "Mock 모드(LLM 미사용)" 배지가 나와야 합니다.
 2. **LLM 미연결 차단:** vLLM을 띄우지 않은 상태에서(또는 닫힌 포트를
    `NURILAB_LLM_BASE_URL`로 지정하고) 토글을 켭니다. "LLM 서버에 연결할 수 없거나
