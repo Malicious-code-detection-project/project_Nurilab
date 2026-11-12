@@ -7,7 +7,8 @@ Project NuriLab은 로컬 환경에서 Python 소스의 정적 보안 신호를 
 
 이 프로젝트가 지향하는 장기 방향은 폐쇄적 환경에서도 사용할 수 있는
 의심 파일·소스 분석 보조 시스템입니다. 다만 현재 제품 계약은 **Python 정적 분석과
-선택적 Local LLM review**입니다. 코드의 악성 여부를 확정하거나 입력을 실행하지
+선택적 Local LLM review**입니다. CLI와 함께 같은 분석기를 브라우저에서 쓰는 시연용
+웹 MVP를 제공합니다. 코드의 악성 여부를 확정하거나 입력을 실행하지
 않습니다. 실험적 opt-in 기능으로 이미 실행 중인 외부
 [jadx-ai-mcp](https://github.com/zinja-coder/jadx-ai-mcp) 서버의 읽기 전용 tool을
 호출해 그 기록을 보고서에 남길 수 있지만, 이 결과는 판정에 쓰지 않습니다.
@@ -32,6 +33,7 @@ Project NuriLab은 로컬 환경에서 Python 소스의 정적 보안 신호를 
 ```mermaid
 flowchart TD
     C[CLI: Python 파일 또는 디렉터리] --> I[입력 수집·UTF-8 로딩]
+    W[웹 MVP: .py 파일 또는 폴더 업로드] -.->|업로드 검증 뒤 같은 경로| I
     I --> A[AST·위험 호출·secret 분석<br/>선택적 Ruff 신호 수집]
     A --> B{입력 종류}
     B -->|단일 파일| R{리뷰 선택}
@@ -50,7 +52,8 @@ flowchart TD
 단일 파일은 분석 결과를 곧바로 review로 전달합니다. 디렉터리 입력은 파일별 분석을
 `ResultAggregator`가 프로젝트 요약으로 집계한 뒤 review합니다. `--jadx-mcp-class`를
 준 경우에만 review 뒤에 외부 MCP tool을 한 번 호출하고, 그 상태와 출처를 보고서의
-별도 영역에 기록합니다. 모듈별 책임과 데이터 계약, 실패 경계는
+별도 영역에 기록합니다. 웹은 업로드를 검증해 저장한 뒤 같은 pipeline으로 분석하며,
+Ruff와 jadx-ai-mcp는 실행하지 않습니다. 모듈별 책임과 데이터 계약, 실패 경계는
 [아키텍처 문서](docs/ARCHITECTURE.md)에 설명합니다.
 
 ```text
@@ -60,7 +63,8 @@ project_nurilab/
 ├── aggregation/    # 프로젝트 summary와 risk 집계
 ├── llm/            # Mock / Local review client
 ├── external/       # 외부 MCP tool 계약 판정과 client (실험적)
-├── reports/        # HTML, JSON, Markdown 렌더링
+├── reports/        # HTML, JSON, Markdown 렌더링과 보고서 경로 상대화
+├── web/            # 웹 MVP: FastAPI 앱, 업로드 검증, job 대기열, 정적 화면
 ├── schemas.py      # 단계 사이 데이터 계약
 ├── pipeline.py     # 분석 흐름 조정
 ├── cli.py          # CLI option과 backend 선택
@@ -74,6 +78,7 @@ project_nurilab/
 | 리뷰 | Mock 또는 외부 Local LLM으로 신호를 해석 |
 | 외부 MCP (실험적) | 허용한 읽기 전용 tool 호출과 상태·출처 기록 |
 | 보고서 | 같은 결과를 HTML/JSON/선택적 Markdown으로 표현 |
+| 웹 MVP | 업로드를 검증해 같은 pipeline으로 분석하고 결과와 보고서를 브라우저에 제공 |
 
 저장소의 `tests/`는 회귀 검증, `docs/`는 운영·설계 문서,
 `references/`는 출처와 상태를 표시한 참고 자료를 담습니다.
@@ -103,6 +108,18 @@ reports/
 
 CLI 전체 option, 출력 형식, 환경변수와 Local LLM 설정은
 [사용 안내](docs/USAGE.md)를 참조하세요.
+
+### 웹으로 실행
+
+```bash
+uv run python -m project_nurilab.web
+```
+
+브라우저에서 `http://127.0.0.1:8080`을 열고 `.py` 파일 1개 또는 폴더 1개를 올립니다.
+리뷰는 CLI처럼 Mock이 기본이고, "LLM 리뷰 사용" 토글을 켜면 이미 실행 중인 Local LLM을
+씁니다. LLM에 연결할 수 없으면 분석을 시작하기 전에 막습니다. 인증이 없는 시연용이며,
+환경변수, 서버 시연, 개인 PC 테스트, CLI와 다른 점, 알려진 한계는
+[사용 안내의 웹 분석](docs/USAGE.md#웹-분석-mvp)을 참조하세요.
 
 ## 보고서 예시
 
@@ -152,6 +169,8 @@ Local LLM에는 원본 source text가 아니라 정규화된 정적 분석 paylo
   대상 APK는 NuriLab 정적 분석 범위가 아니고, JADX-GUI에 열린 APK와
   `--jadx-mcp-target`이 일치하는지 검증하지 않습니다. 받은 결과는 비신뢰 보조
   기록이며 finding, risk level, review 입력에 쓰지 않습니다.
+- 웹 MVP에는 인증, 프로세스 격리, 전체 시간 상한이 없습니다. 시연과 개인 테스트에만
+  쓰고 사내망에 상시 공개하지 않습니다. 검증 기준 브라우저는 Chrome입니다.
 - remediation 코드 생성, 동적 분석, 실제 악성 샘플 실행, 이 저장소에서의
   파인튜닝은 현재 범위가 아닙니다.
 
@@ -166,7 +185,8 @@ Local LLM에는 원본 source text가 아니라 정규화된 정적 분석 paylo
 구현했습니다. 사용법은 [사용 가이드](docs/USAGE.md), 계약과 실측 기록은
 [THE-151 연결 계약](docs/THE-151_jadx_mcp_contract.md)을 참조하세요.
 
-다음 개발은 웹 분석 MVP(`THE-157`)입니다. 아직 구현 전이며, 범위와 설계는
+웹 분석 MVP(`THE-157`)는 `THE-158`~`THE-162`에서 업로드, 리뷰 모드, 결과 표시,
+LLM 실패 처리와 웹·CLI 결과 일치 검증까지 구현했습니다. 범위와 설계는
 [개발 로드맵](docs/PLAN.md)과 [웹 MVP 설계](docs/WEB_MVP_DESIGN.md)를 따릅니다.
 
 RAG와 Sandbox 구축·연동은 제외합니다. 파인튜닝 방향과 실행은

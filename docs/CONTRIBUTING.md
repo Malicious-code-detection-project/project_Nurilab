@@ -238,6 +238,11 @@ uv run mypy .
 | Pipeline orchestration | `tests/test_pipeline.py` |
 | Report 및 JSON 계약 | `tests/test_review_and_report.py` |
 | Local LLM 및 Ruff 연동 | `tests/test_tools_and_llm.py` |
+| 웹 API·업로드·화면 | `tests/test_web.py` |
+| 웹·CLI 결과 일치 | `tests/test_web_cli_parity.py` |
+
+실제 vLLM이 필요한 CLI·웹 LLM 경로 확인은 기본 test가 아니며
+[Local LLM 통합 테스트](LOCAL_LLM_INTEGRATION_TEST.md) 절차로 따로 실행합니다.
 
 추가 검사:
 

@@ -348,8 +348,11 @@ W2에서 기본 테스트의 기대값 변경도 출처 필드 추가에 따른 
 ### 8.4 W5
 
 - 고정 fixture 2~3개(단일 파일, 중첩 폴더, 비 Python 혼합)로 웹과 CLI 결과 JSON의 분석 내용 일치를 비교한다. 기준은 Mock과 CLI `--no-ruff`이고, 경로는 §3.2 함수로 맞춘다. CLI 결과도 분석 대상의 상위 폴더를 기준으로 접두어를 지워(치환 문자열 `""`) 웹과 같은 상대 경로로 만든 뒤 비교한다.
-- 리눅스 GPU 서버 vLLM으로 웹 LLM 경로를 반드시 한 번 실행해 실측 결과를 기록한다. 테스트는 opt-in marker로 분리한다.
-- 사내 표준 브라우저에서 폴더 업로드를 수동으로 확인한다.
+  - THE-162에서 `tests/test_web_cli_parity.py`로 구현했다. 웹은 `GET /api/analyses/{id}/report.json`, CLI는 `main()`의 JSON 출력을 쓰고, 최상위 `generated_at`만 빼고 전체를 비교한다. 혼합 fixture에는 `.md`·`.txt`, 제외 폴더(`build/`, `__pycache__/`), 문법 오류와 UTF-8이 아닌 `.py`를 넣어 걸러내기와 읽지 못한 폴더 판정(§4.4)까지 거친다.
+  - fixture에는 웹이 거부하거나(§6) 결과를 바꾸는(§3.2 2단계) 이름, 브라우저로 올릴 수 없는 symlink·권한 없는 파일, 분석 대상의 절대 경로를 담은 문자열을 넣지 않는다. CLI 쪽 접두어 제거가 사용자 코드 문자열까지 바꾸기 때문이다.
+- 실제 vLLM으로 웹 LLM 경로를 확인하는 테스트는 opt-in marker로 분리한다.
+  - THE-162에서 `tests/test_local_llm_integration.py`의 `test_real_vllm_web_folder_review`로 추가했다. 기존 `local_llm_integration` marker와 `NURILAB_RUN_LOCAL_LLM=1`을 그대로 쓴다. 리뷰가 `local`·`ok`이고 정적 분석 결과가 Mock 실행과 같은지 확인하며, 모델·소요 시간·위험도·finding 수를 `record_property`로 남긴다. LLM 결과는 매번 달라 CLI와 비교하지 않는다. 보고서에 서버 경로가 남는지는 §9의 알려진 한계라 기록만 하고 판정하지 않는다.
+- Chrome에서 폴더 업로드를 수동으로 확인한다. 사내 표준 브라우저는 따로 정하지 않았으므로 구현 중 확인에 쓴 Chrome을 검증 기준으로 삼는다(THE-162). "폴더 선택" 버튼과 끌어놓기를 모두 확인하고, Chrome 버전과 OS를 함께 기록한다. 다른 브라우저는 확인하지 않는다.
 
 ## 9. 실행 문서와 알려진 한계 (W5)
 

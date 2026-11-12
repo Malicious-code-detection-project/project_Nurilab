@@ -4,7 +4,7 @@
 모듈 책임과 실패 경계를 설명합니다. 지원 범위와 빠른 실행은
 [`../README.md`](../README.md), CLI 및 Local LLM 설정은 [`USAGE.md`](USAGE.md)를
 참조하세요. 여기서 말하는 미래 연동은 구현 상태가 아니며 현재 동작을 설명하는
-문단과 구분합니다. 계획 중인 웹 계층은 마지막 절에 따로 적습니다.
+문단과 구분합니다. 시연용 웹 계층은 마지막 절에 따로 적습니다.
 
 ## 시스템 경계
 
@@ -264,18 +264,33 @@ CLI --jadx-mcp-class
 OpenAI-compatible review 경계를 사용할 수 있는지 검토하는 항목이며 MCP 연동의
 선행 조건은 아닙니다.
 
-## 웹 계층 (계획, THE-157)
+## 웹 계층 (THE-157)
 
-웹 분석 MVP는 아직 구현되지 않았습니다. 설계와 계약은
-[웹 MVP 설계](WEB_MVP_DESIGN.md)가 정본이며, 이 절은 기존 구조 안에서 웹 계층이
-놓일 위치와 범위만 적습니다. 구현 뒤의 코드 구조 설명은 THE-162에서 갱신합니다.
+시연용 웹 분석 MVP입니다. 설계와 API 계약은 [웹 MVP 설계](WEB_MVP_DESIGN.md)가
+정본이고, 실행 방법은 [사용 안내](USAGE.md#웹-분석-mvp)에 있습니다. 이 절은 기존
+구조 안에서 웹 계층의 위치와 모듈 책임을 적습니다.
 
 ```text
 브라우저 (정적 HTML + vanilla JS)
--> project_nurilab/web/: FastAPI 앱, 업로드 검증, job 대기열, SQLite 기록
--> Phase1Pipeline.analyze(): 파일을 쓰지 않고 report 객체 반환 (THE-159에서 분리)
--> 경로 상대화 함수 (reports/) -> ReportGenerator.write()
+-> project_nurilab/web/app.py: 업로드 검증, LLM 연결 확인, job 생성
+-> web/worker.py: 전용 스레드 하나에서 job을 차례로 실행
+   -> Phase1Pipeline.analyze(): 파일을 쓰지 않고 report 객체 반환 (THE-159)
+   -> reports/paths.py: 업로드 경로 상대화 -> ReportGenerator.write()
+   -> 업로드 원본 삭제, SQLite에 최종 상태 기록
+-> 브라우저는 job 상태를 polling하고 화면용 결과(web/results.py)를 표시
 ```
+
+| 모듈 | 책임 |
+| --- | --- |
+| `web/__main__.py` | 공식 진입점. `NURILAB_WEB_HOST`·`NURILAB_WEB_PORT`로 uvicorn 실행 |
+| `web/settings.py` | `NURILAB_WEB_*` 환경변수 읽기와 값 검증 |
+| `web/app.py` | FastAPI 앱, API endpoint, 시작 시 미완료 job 복구 |
+| `web/uploads.py` | 업로드 경로 검증과 `.py`·제외 폴더 걸러내기 |
+| `web/worker.py` | 단일 분석 스레드, 경로 상대화, 보고서 저장, 정적 분석 위험도 |
+| `web/store.py` | SQLite job 기록 |
+| `web/results.py` | 화면용 결과와 LLM 실패 고정 문구 |
+| `web/errors.py` | `{code, message}` 오류 응답 |
+| `web/static/` | 업로드·결과 화면 (외부 CDN 없음, `textContent`로만 렌더링) |
 
 - 웹은 CLI와 같은 위치의 진입점입니다. `cli.py`처럼 얇게 두고 입력 수집, 분석,
   review, 보고서 생성은 기존 모듈을 그대로 재사용합니다.
@@ -284,5 +299,7 @@ OpenAI-compatible review 경계를 사용할 수 있는지 검토하는 항목�
   endpoint를 호출합니다. 웹은 LLM 서버를 시작하지 않습니다.
 - 분석은 전용 스레드 하나에서 한 번에 하나씩 실행합니다. 입력 코드를 실행하거나
   import하지 않습니다.
-- 웹은 Ruff와 jadx-ai-mcp를 실행하지 않습니다.
+- 웹은 Ruff와 jadx-ai-mcp를 실행하지 않습니다. 같은 입력의 웹 JSON 보고서는 CLI
+  `--no-ruff` Mock 보고서와 `generated_at`·경로 접두어만 다릅니다
+  (`tests/test_web_cli_parity.py`).
 - 인증, 프로세스 격리, 배포 패키징은 이번 범위에 포함하지 않습니다.
