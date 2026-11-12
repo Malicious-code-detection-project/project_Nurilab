@@ -13,7 +13,7 @@ PR 리뷰와 최종 병합 판단은 Repository Owner가 담당한다.
 | 알고 싶은 것 | 정본 위치 |
 | --- | --- |
 | 프로젝트 소개, 현재 기능, 빠른 시작 | `README.md` |
-| 상세 CLI·Local LLM 설정 | `docs/USAGE.md` |
+| 상세 CLI·웹·Local LLM 설정 | `docs/USAGE.md` |
 | 전체 문서 지도, 문서별 상태, 언어 정책 | `docs/README.md` |
 | 팀 기여 절차, 브랜치, 커밋, 테스트 규칙 | `docs/CONTRIBUTING.md` |
 | 에이전트/개발자 공통 운영 규칙 | `AGENTS.md` |
@@ -54,7 +54,8 @@ git status
 처리(`THE-161`) → 웹·CLI 일치 검증과 실행 문서(`THE-162`) 순서로 진행한다.
 설계와 계약은 [웹 MVP 설계](docs/WEB_MVP_DESIGN.md), 범위와 완료 기준은
 [실행 계획](docs/PLAN.md)을 따르며 승인된 계약 밖으로 확장하지 않는다.
-구현 전에는 웹을 제공 중인 기능으로 문서화하지 않는다.
+웹은 인증이 없는 시연용 MVP로 문서화하며, 실행 방법과 알려진 한계는
+[사용 안내](docs/USAGE.md)를 따른다.
 
 `THE-150`의 `jadx-ai-mcp` 연결은 CLI의 실험적 opt-in 기능으로 유지하며 웹에서는
 다루지 않는다.
@@ -194,7 +195,8 @@ Linear Issue 생성 또는 선택
 | `project_nurilab/aggregation/` | 프로젝트 단위 결과 집계 |
 | `project_nurilab/llm/` | Mock / Local LLM review client |
 | `project_nurilab/external/` | 외부 MCP 도구 계약 판정과 client (jadx-ai-mcp) |
-| `project_nurilab/reports/` | HTML / JSON / optional Markdown 보고서 생성 |
+| `project_nurilab/reports/` | HTML / JSON / optional Markdown 보고서 생성, 보고서 경로 상대화 (`paths.py`) |
+| `project_nurilab/web/` | 웹 MVP: FastAPI 앱, 업로드 검증, 단일 분석 스레드, SQLite job 기록, 화면용 결과, 정적 HTML/JS |
 | `project_nurilab/schemas.py` | 분석, 리뷰, 보고서 데이터 계약 |
 | `tests/` | 회귀 테스트와 fixture |
 
@@ -221,6 +223,7 @@ uv run mypy .
 - report 변경: `tests/test_review_and_report.py`
 - Local LLM parsing 변경: `tests/test_tools_and_llm.py`
 - 외부 MCP 변경: `tests/test_external_jadx_mcp.py` (실제 서버는 `tests/test_jadx_mcp_integration.py`)
+- 웹 변경: `tests/test_web.py`, 웹·CLI 결과 일치는 `tests/test_web_cli_parity.py` (실제 vLLM은 `tests/test_local_llm_integration.py`)
 
 Local LLM 관련 기능은 실제 vLLM 서버 없이도 mock 테스트가 가능해야 한다.
 

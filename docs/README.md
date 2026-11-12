@@ -9,7 +9,7 @@
 | --- | --- |
 | 실제 동작과 데이터 계약의 근거 | 소스 코드와 테스트 |
 | 프로젝트 소개·지원 범위·현재 구성·빠른 시작 | [README](../README.md) |
-| 상세 CLI 옵션·Local LLM 설정·오류 동작 | [사용 가이드](USAGE.md) |
+| 상세 CLI 옵션·웹 실행과 시연·Local LLM 설정·오류 동작 | [사용 가이드](USAGE.md) |
 | 상세 실행 흐름·모듈 책임·데이터 및 실패 경계 | [아키텍처](ARCHITECTURE.md) |
 | 현재 개발 범위와 의존성 | [실행 계획](PLAN.md) |
 | 웹 MVP 설계·API 계약·검증 계획 | [웹 MVP 설계](WEB_MVP_DESIGN.md) |
@@ -23,7 +23,7 @@
 | 문서 | 역할 |
 | --- | --- |
 | [외부 프로젝트 검증](external_project_validation.md) | 실행 절차와 당시 코드·대상 버전에 대한 검증 기록 |
-| [Local LLM 통합 테스트](LOCAL_LLM_INTEGRATION_TEST.md) | 실제 서버 선택형 테스트와 당시 환경·결과 |
+| [Local LLM 통합 테스트](LOCAL_LLM_INTEGRATION_TEST.md) | 실제 서버 선택형 테스트(CLI·웹 LLM 경로)와 당시 환경·결과 |
 | [THE-151 jadx-ai-mcp 연결 계약](THE-151_jadx_mcp_contract.md) | MCP 연결 계약, 서버 버전 고정 방법, THE-154·THE-155 당시 환경의 실측 기록 |
 | [PR 작성 참고](PR_DESCRIPTION.md) | PR 본문 설명 |
 | [PR 양식](../.github/PULL_REQUEST_TEMPLATE.md) | GitHub 기본 PR form |

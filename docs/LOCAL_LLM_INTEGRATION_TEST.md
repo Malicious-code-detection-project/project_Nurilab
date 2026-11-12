@@ -65,8 +65,13 @@ uv run pytest \
   -m local_llm_integration \
   tests/test_local_llm_integration.py \
   --junitxml=/tmp/nurilab-local-llm-integration.xml \
+  -o junit_family=legacy \
   -vv
 ```
+
+테스트는 모델, 소요 시간 같은 값을 `record_property`로 JUnit XML의 property로 남깁니다.
+`-o junit_family=legacy`가 없으면 pytest 기본 형식(xunit2)과 맞지 않는다는 경고가
+나옵니다.
 
 테스트는 다음 두 입력을 실제 Local LLM에 전달합니다.
 
@@ -81,6 +86,19 @@ uv run pytest \
 - 위험 입력은 `high` review이며 high-severity finding이 있음
 - deterministic analysis와 HTML/JSON report 생성
 - Local LLM failure finding이 없음
+
+웹 LLM 경로(`test_real_vllm_web_folder_review`, THE-162)는 `tests/fixtures/review_quality_project`
+폴더를 웹 API로 `review_mode=local` 업로드해 다음을 확인합니다.
+
+- `/api/llm-status`가 `connected`
+- job이 `completed`이고 리뷰가 `local`·`ok`, 화면용 결과에 LLM 실패 문구가 없음
+- 보고서의 정적 분석 결과가 같은 폴더의 Mock 실행과 같음
+
+모델, 업로드부터 완료까지의 소요 시간, 파일 수, 정적·리뷰 위험도, finding 수, LLM 입력
+잘림 여부, 보고서에 서버 경로가 남았는지를 JUnit XML property로 남깁니다. 서버 경로는
+LLM이 경로를 바꿔 쓰는 경우의 알려진 한계([웹 MVP 설계](WEB_MVP_DESIGN.md) 9절)라
+판정하지 않고 기록만 합니다. 웹을 띄우지 않고 테스트 안에서 앱을 직접 실행하므로
+`NURILAB_WEB_*` 설정은 필요하지 않습니다.
 
 ## 기본 회귀 테스트
 
@@ -136,6 +154,7 @@ JUnit XML, server log는 로컬 검증 산출물이며 저장소에 커밋하지
 | pytest command | 실행 후 기록 |
 | 정상 fixture 결과 | 실행 후 기록 |
 | 위험 fixture 결과 | 실행 후 기록 |
+| Chrome 폴더 업로드 (Chrome 버전, OS, 폴더 선택·끌어놓기) | 2026-11-04, Chrome 156.0.8078.47 (공식 빌드, 64비트), Windows 11 24H2 (Build 26100.9711). "폴더 선택" 버튼과 끌어놓기 모두 정상 동작 확인 |
 | 최종 판정 | 실행 후 기록 |
 
 실패한 경우에도 HTTP status, Local LLM failure title, vLLM server log의 핵심 원인,

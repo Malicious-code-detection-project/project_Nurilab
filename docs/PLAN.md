@@ -25,10 +25,12 @@ Python 정적 분석 범위가 아니며, 보고서는 이를 정적 분석 성�
 표시하지 않습니다. 이 연동을 확장하거나 판정에 반영하는 일은 새 사용자 결정과
 Linear 작업이 필요합니다.
 
-## 다음 개발: 웹 분석 MVP
+## 웹 분석 MVP (THE-157)
 
 상위 목표는 [THE-157](https://linear.app/the-debugging-water-deer/issue/THE-157)입니다.
-브라우저에서 기존 분석기를 쓰는 웹 백엔드와 프론트엔드를 만듭니다. 최종 방향은 사내
+브라우저에서 기존 분석기를 쓰는 웹 백엔드와 프론트엔드를 만듭니다. 아래 다섯 단계의
+구현, 웹·CLI 결과 일치 검증, Chrome 폴더 업로드 확인을 마쳤습니다. 실행 방법은
+[사용 안내](USAGE.md#웹-분석-mvp)를, 이슈 상태는 Linear를 따릅니다. 최종 방향은 사내
 폐쇄망에서 사내 구성원이 쓰는 분석 도구지만, 이번 범위는 시연 가능한 최소 MVP로
 제한합니다. 설계와 계약은 [웹 MVP 설계](WEB_MVP_DESIGN.md)가 정본입니다.
 
@@ -46,9 +48,8 @@ Linear 작업이 필요합니다.
 | 4 | [THE-161](https://linear.app/the-debugging-water-deer/issue/THE-161) | 결과 출처 표시 보강과 LLM 리뷰 실패 처리 |
 | 5 | [THE-162](https://linear.app/the-debugging-water-deer/issue/THE-162) | 웹·CLI 결과 일치 검증과 실행 문서 |
 
-완료 기준은 인터넷 없이 Mock 분석, GPU 서버 vLLM을 쓰는 LLM 분석, LLM 미연결 차단
-안내의 세 경로를 시연하고, 같은 입력에서 웹과 CLI 결과 JSON의 분석 내용이 일치하는
-것입니다. 판단 기준은 기존과 같이 deterministic analyzer이며 LLM은 보조입니다.
+완료 기준은 인터넷 없이 Mock 분석과 LLM 미연결 차단 안내를 시연하고, 같은 입력에서
+웹과 CLI 결과 JSON의 분석 내용이 일치하는 것입니다. 판단 기준은 기존과 같이 deterministic analyzer이며 LLM은 보조입니다.
 
 웹 MVP에서 다루지 않는 것은 인증·SSO, 이력 화면, 프로세스 격리, 오프라인 설치
 패키지, 보안 헤더 고도화, 사내망 상시 공개, 웹의 MCP 연동, zip·Git URL 입력입니다.

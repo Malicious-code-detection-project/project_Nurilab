@@ -1,8 +1,9 @@
 # Project NuriLab 사용 안내
 
-이 문서는 현재 `main.py` 실행 경로의 CLI, report 출력과 Local LLM 연결 설정을
-설명합니다. 지원 범위와 시스템 개요는 [`../README.md`](../README.md), 실행 흐름과
-실패 경계는 [`ARCHITECTURE.md`](ARCHITECTURE.md)를 참조하세요.
+이 문서는 현재 `main.py` 실행 경로의 CLI, report 출력, Local LLM 연결 설정과
+시연용 [웹 분석](#웹-분석-mvp) 실행 방법을 설명합니다. 지원 범위와 시스템 개요는
+[`../README.md`](../README.md), 실행 흐름과 실패 경계는
+[`ARCHITECTURE.md`](ARCHITECTURE.md)를 참조하세요.
 
 ## 설치와 실행
 
@@ -169,6 +170,149 @@ Mock도 읽지 못한 단일 파일(skipped)과 신호 없이 읽지 못한 파�
 요청 후의 API 실패와 구분해야 합니다. 실제 서버 검증 방법과 환경 기록은
 [Local LLM 통합 테스트](LOCAL_LLM_INTEGRATION_TEST.md)를 참조하세요.
 `NURILAB_RUN_LOCAL_LLM=1`을 설정하지 않은 기본 pytest는 해당 테스트를 생략합니다.
+
+## 웹 분석 (MVP)
+
+브라우저에서 CLI와 같은 분석기를 쓰는 시연용 최소 웹입니다(THE-157). 입력은 CLI와
+같은 `.py` 1개 또는 폴더 1개이고, 리뷰도 CLI처럼 Mock이 기본입니다. 인증이 없으므로
+시연과 개인 테스트에만 씁니다. 설계와 API 계약은 [웹 MVP 설계](WEB_MVP_DESIGN.md)가
+정본입니다.
+
+### 실행
+
+```bash
+uv run python -m project_nurilab.web
+```
+
+브라우저에서 `http://127.0.0.1:8080`을 열고, 끝나면 터미널에서 `Ctrl+C`로 내립니다.
+공식 실행 명령은 이것 하나입니다. `uvicorn …:app`을 직접 실행하면 아래 bind 설정을
+읽지 않으므로 쓰지 않습니다. 웹은 vLLM을 시작하지 않습니다.
+
+| 환경변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `NURILAB_WEB_HOST` | `127.0.0.1` | bind 주소. 다른 PC에서 접속하는 서버 시연 때만 `0.0.0.0` |
+| `NURILAB_WEB_PORT` | `8080` | bind 포트 |
+| `NURILAB_WEB_DATA_DIR` | `~/.local/share/nurilab-web` | job별 업로드 원본·보고서와 `jobs.sqlite3`. 사내 소스가 커밋되지 않도록 저장소 밖에 둡니다. `\`가 든 경로는 쓸 수 없습니다 |
+| `NURILAB_WEB_MAX_UPLOAD_BYTES` | `52428800` (50 MiB) | 요청 본문 전체 크기 상한 |
+| `NURILAB_WEB_MAX_PYTHON_FILES` | `500` | 걸러낸 뒤 분석할 `.py` 수 상한 |
+| `NURILAB_WEB_MAX_FORM_FILES` | `1000` | 요청 하나에 받을 파일 수 상한. `NURILAB_WEB_MAX_PYTHON_FILES`보다 크고 1000 이하 |
+
+LLM endpoint와 모델은 CLI와 같은 [연결 환경변수](#연결-환경변수)
+(`NURILAB_LLM_BASE_URL`, `NURILAB_LLM_MODEL`, `NURILAB_LLM_TIMEOUT`)를 씁니다.
+
+위 표의 `NURILAB_WEB_*` 값이 잘못되면 웹은 시작하지 않고 원인을 출력한 뒤 종료 코드
+`2`로 끝납니다. `NURILAB_LLM_*` 값은 시작할 때 검사하지 않습니다.
+`NURILAB_LLM_TIMEOUT`이나 `NURILAB_LLM_INPUT_BUDGET_BYTES`가 잘못되어도 웹은 뜨고
+Mock 분석도 되지만, LLM 연결 확인과 LLM 분석 요청은 `500 internal_error`로
+실패합니다. 원인은 웹 서버 로그에 남습니다.
+
+### 사용 방법
+
+1. "파일 선택"이나 "폴더 선택"을 누르거나, 파일 1개 또는 폴더 1개를 끌어 놓습니다.
+   새로 고르면 이전 선택은 지워집니다.
+2. 리뷰 모드를 고릅니다. "LLM 리뷰 사용" 토글이 꺼져 있으면 Mock(CLI의
+   `--review-client mock`), 켜면 Local LLM(`--review-client local`)입니다. 토글을
+   켜면 LLM 연결 상태와 모델 이름이 표시되고, 연결할 수 없으면 실행 버튼이 막힙니다.
+3. "분석 실행"을 누르면 결과가 나옵니다. `정적 분석 위험도`가 판단 기준이고 그 아래의
+   `리뷰 위험도`는 Mock 또는 LLM의 해석입니다. 출처, 해석 안내, 정적 분석 신호, 리뷰
+   요약과 finding, 읽지 못한 파일을 표시하고 JSON/HTML 보고서를 내려받을 수 있습니다.
+
+LLM이 분석 도중 실패하면 job은 완료로 끝나고 "LLM 리뷰 실패, 정적 분석 결과만 유효"
+경고와 `failure_code`별 고정 문구가 뜹니다. endpoint 주소와 예외 원문은 화면에
+나오지 않으며, 원인은 내려받은 보고서의 finding과 웹 서버 로그에서 확인합니다.
+
+### 업로드 규칙
+
+- `.py`만 분석합니다. 다른 파일과 제외 폴더(CLI와 같은 `.git`, `.venv`,
+  `__pycache__`, `.pytest_cache`, `.ruff_cache`, `build`, `dist`, `reports`) 아래
+  파일은 조용히 버립니다. 제외 폴더는 업로드한 폴더 아래에서만 판정하므로 `build`라는
+  폴더 자체를 올리면 분석됩니다.
+- 브라우저도 업로드 전에 같은 규칙으로 거릅니다(`GET /api/upload-rules`).
+- 경로 조작(`..`, 절대 경로, `\`, `<`·`>`), 대소문자나 유니코드 정규화만 다른 같은
+  경로, 최상위 폴더 2개 이상, 64단계를 넘는 깊이, 보고서 파일 이름이 너무 긴 업로드는
+  `400 invalid_path`로 거부합니다. 전체 목록은 설계 문서 6절에 있습니다.
+- 요청 크기(`NURILAB_WEB_MAX_UPLOAD_BYTES`)를 넘으면 `413 too_large`, 걸러낸 뒤
+  `.py` 수(`NURILAB_WEB_MAX_PYTHON_FILES`)를 넘으면 `413 too_many_files`, 걸러낸 뒤
+  `.py`가 0개면 `422 no_python_files`입니다. 요청 하나의 파일 수
+  (`NURILAB_WEB_MAX_FORM_FILES`)를 넘으면 걸러내기 전에 `400 invalid_upload`로
+  거부합니다.
+
+### CLI와 다른 점
+
+같은 입력에서 웹의 JSON 보고서는 CLI `--no-ruff` Mock 보고서와 `generated_at`을
+빼고 같습니다(`tests/test_web_cli_parity.py`). 경로만 업로드 기준 상대 경로
+(`myproj/a.py`)로 바뀝니다. 그 밖에 의도적으로 다른 동작은 다음과 같습니다.
+
+- 웹은 Ruff를 실행하지 않습니다(CLI `--no-ruff`와 같음).
+- LLM 토글을 켰는데 연결할 수 없으면 job을 만들지 않고 `503 llm_unavailable`로
+  막습니다. CLI는 실행한 뒤 실패를 finding으로 남깁니다.
+- `.py`가 0개인 업로드와 위 업로드 규칙에 걸린 경로는 거부합니다. CLI는 보고서를
+  만듭니다.
+- 화면은 LLM 실패 원문을 고정 문구로 바꿉니다. 내려받은 보고서에는 원문이 남습니다.
+- 웹 화면은 정적 분석 위험도와 리뷰 위험도를 나눠 보여주지만, 보고서 헤더 배지와 CLI
+  터미널의 `Risk Level`은 리뷰 값입니다.
+- jadx-ai-mcp는 웹에서 다루지 않습니다.
+
+### 실행 구성
+
+- **기본:** 리눅스 GPU 서버 한 대에서 vLLM과 웹을 함께 실행하고 웹은
+  `localhost:8000`의 vLLM을 호출합니다. vLLM은 [Local LLM 통합
+  테스트](LOCAL_LLM_INTEGRATION_TEST.md)의 사전 조건대로 `--host 127.0.0.1`로 띄웁니다.
+- **서버 시연:** 다른 PC의 브라우저로 보여줄 때만 bind를 바꿉니다.
+
+  ```bash
+  NURILAB_WEB_HOST=0.0.0.0 uv run python -m project_nurilab.web
+  ```
+
+  다른 PC에서 `http://<서버주소>:8080`을 엽니다. 인증과 `Origin`·`Host` 확인이
+  없어 같은 망의 누구나 분석을 요청할 수 있으므로, 시연이 끝나면 바로 내리고 가능하면
+  방화벽으로 접근 IP를 제한합니다.
+- **개인 PC 임시 테스트:** 웹은 개인 PC에서 기본값(`127.0.0.1`)으로 띄우고, LLM은
+  서버 주소로 호출합니다. 서버 주소와 내부 IP가 커밋되지 않도록 `config.py`를 고치지
+  않고 환경변수로 지정합니다.
+
+  ```bash
+  NURILAB_LLM_BASE_URL=http://<서버주소>:8000/v1 uv run python -m project_nurilab.web
+  ```
+
+  테스트 동안만 서버의 vLLM을 `--host 0.0.0.0`으로 띄웁니다. vLLM도 인증 없이
+  열리므로 끝나면 바로 내리고, 가능하면 접근 IP를 제한합니다.
+
+### 시연 절차
+
+새 환경에서는 `uv sync --locked` 뒤 웹을 띄우고 아래 세 경로를 차례로 확인합니다.
+입력은 저장소의 무해한 fixture 폴더 `tests/fixtures/review_quality_project`입니다.
+
+1. **Mock 분석 (인터넷 없이):** 토글을 끈 채 폴더를 올려 분석합니다. 결과에
+   `정적 분석 위험도` `high`, `리뷰` `Mock (LLM 미사용)`, `리뷰 상태` `성공`과
+   "Mock 모드(LLM 미사용)" 배지가 나와야 합니다.
+2. **LLM 미연결 차단:** vLLM을 띄우지 않은 상태에서(또는 닫힌 포트를
+   `NURILAB_LLM_BASE_URL`로 지정하고) 토글을 켭니다. "LLM 서버에 연결할 수 없거나
+   응답이 올바르지 않습니다." 안내가 뜨고 실행 버튼이 막혀야 합니다. 토글을 끄면
+   Mock으로 실행할 수 있습니다.
+3. **LLM 분석:** vLLM을 띄운 뒤 토글을 켜면 "LLM 서버에 연결되었습니다. (모델: …)"가
+   표시됩니다. 분석하면 `리뷰`가 `LLM (<모델>)`, `리뷰 상태`가 `성공`이고 LLM 실패
+   경고가 없어야 합니다.
+   LLM이 응답하는 데 수십 초가 걸릴 수 있습니다.
+
+실제 vLLM으로 웹 LLM 경로를 확인하는 선택형 테스트와 기록 항목은
+[Local LLM 통합 테스트](LOCAL_LLM_INTEGRATION_TEST.md)에 있습니다.
+
+### 데이터 정리
+
+업로드 원본은 분석이 끝나면(실패해도) 바로 지웁니다. 보고서와 job 기록은
+`NURILAB_WEB_DATA_DIR`에 남고 자동으로 지우지 않으므로, 필요하면 웹을 내린 뒤 그
+폴더를 직접 정리합니다. 웹을 다시 시작하면 끝나지 못한 job은 `failed`
+(`interrupted`)로 바뀝니다.
+
+### 확인한 환경과 알려진 한계
+
+- 검증 기준 브라우저는 Chrome입니다. 다른 브라우저는 확인하지 않았습니다.
+- 인증이 없습니다. job id(UUID)를 아는 사람은 결과를 볼 수 있습니다.
+- 분석은 한 번에 하나씩 실행하며 프로세스 격리와 전체 시간 상한이 없습니다.
+- LLM prompt에는 서버 절대 경로가 들어갑니다. LLM이 그 경로를 잘라 문장에 쓰면 경로
+  치환에서 빠져 화면과 보고서에 남을 수 있습니다.
+- 전체 목록과 이유는 설계 문서 9절을 참조하세요.
 
 ## jadx-ai-mcp 연결 (실험적)
 
