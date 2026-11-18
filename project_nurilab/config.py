@@ -4,6 +4,9 @@ from __future__ import annotations
 
 DEFAULT_REPORT_DIR = "reports"
 SUPPORTED_EXTENSION = ".py"
+# Severity of a Python syntax error everywhere it is rated: file and project
+# risk, Mock review, LLM input order, the HTML file card, and the web panel.
+SYNTAX_ERROR_SEVERITY = "medium"
 DEFAULT_LLM_BASE_URL = "http://localhost:8000/v1"
 DEFAULT_LLM_MODEL = "openai/gpt-oss-20b"
 DEFAULT_LLM_TIMEOUT_SECONDS = 120.0

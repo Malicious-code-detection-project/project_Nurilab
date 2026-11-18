@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -25,6 +26,43 @@ def _restore_root_log_handlers():
     for handler in root.handlers[:]:
         if handler not in handlers_before:
             root.removeHandler(handler)
+
+
+def test_cli_keeps_reports_when_llm_failure_text_has_lone_surrogate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Response:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, Any]:
+            # An unexpected key goes into the failure reason as written.
+            content = (
+                r'{"summary": "s", "risk_level": "low", "findings": [], "k\ud83d": 1}'
+            )
+            return {"choices": [{"message": {"content": content}}]}
+
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: Response())
+    source = tmp_path / "a.py"
+    source.write_text("import os\nos.system(x)\n", encoding="utf-8")
+    output_dir = tmp_path / "reports"
+
+    exit_code = main(
+        [
+            "analyze",
+            str(source),
+            "--out",
+            str(output_dir),
+            "--no-ruff",
+            "--review-client",
+            "local",
+        ]
+    )
+
+    payload = json.loads((output_dir / "a.analysis.json").read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["review"]["reviewer"]["failure_code"] == "json_parse_failed"
+    assert (output_dir / "a.analysis.html").stat().st_size > 0
 
 
 def test_cli_analyze_project_directory_generates_reports_with_no_ruff(
@@ -487,3 +525,60 @@ def test_cli_writes_json_when_mcp_values_contain_lone_surrogates(
     assert exit_code == 0
     assert capsys.readouterr().out.rstrip().splitlines()[-1].startswith("JADX MCP")
     assert payload["external_tool_calls"][0][field] == expected
+
+
+@pytest.mark.parametrize("review_client", ["mock", "local"])
+def test_cli_writes_reports_for_a_file_name_that_is_not_utf8(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, review_client: str
+) -> None:
+    prompts: list[str] = []
+
+    class Response:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, Any]:
+            content = json.dumps({"summary": "s", "risk_level": "low", "findings": []})
+            return {"choices": [{"message": {"content": content}}]}
+
+    def fake_post(url: str, **kwargs: Any) -> Response:
+        # The LLM prompt is built from the analysis, so it must encode as well.
+        prompts.append(json.dumps(kwargs["json"], ensure_ascii=False))
+        prompts[-1].encode("utf-8")
+        return Response()
+
+    monkeypatch.setattr("requests.post", fake_post)
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    try:
+        bad_name = os.path.join(os.fsencode(project_dir), b"bad\xff.py")
+        with open(bad_name, "w", encoding="utf-8") as handle:
+            handle.write("import os\nos.system(x)\n")
+    except OSError:
+        pytest.skip("file system rejects names that are not UTF-8")
+    output_dir = tmp_path / "reports"
+
+    exit_code = main(
+        [
+            "analyze",
+            str(project_dir),
+            "--out",
+            str(output_dir),
+            "--no-ruff",
+            "--review-client",
+            review_client,
+        ]
+    )
+
+    payload = json.loads(
+        (output_dir / "proj.analysis.json").read_text(encoding="utf-8")
+    )
+    assert exit_code == 0
+    assert [
+        Path(result["path"]).name for result in payload["analysis"]["file_results"]
+    ] == ["bad?.py"]
+    assert (output_dir / "proj.analysis.html").stat().st_size > 0
+    if review_client == "local":
+        assert payload["review"]["reviewer"]["status"] == "ok"
+        assert len(prompts) == 1
+        assert "bad?.py" in prompts[0]

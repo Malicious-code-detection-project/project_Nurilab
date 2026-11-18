@@ -14,9 +14,11 @@ import pytest
 import requests
 from fastapi.testclient import TestClient
 
+from project_nurilab import __version__
 from project_nurilab.aggregation.result_aggregator import file_risk_level
-from project_nurilab.config import DEFAULT_LLM_MODEL
+from project_nurilab.config import DEFAULT_LLM_MODEL, SYNTAX_ERROR_SEVERITY
 from project_nurilab.pipeline import Phase1Pipeline
+from project_nurilab.reports.generator import MOCK_BADGE_TEXT
 from project_nurilab.schemas import PythonAnalysis, RuffFinding
 from project_nurilab.web.app import create_app
 from project_nurilab.web.errors import ApiError
@@ -29,6 +31,11 @@ from project_nurilab.web.uploads import plan_upload
 STATIC_DIR = Path(__file__).parents[1] / "project_nurilab" / "web" / "static"
 DANGEROUS_SOURCE = b"import os\n\n\ndef run(command):\n    return os.system(command)\n"
 CLEAN_SOURCE = b"VALUE = 1\n"
+UNREADABLE_SOURCE = b"\xff\xfe\x00"
+# Enough signals to pass the default 64 KiB LLM input budget.
+OVER_BUDGET_SOURCE = b"os.system(x)\n" * 3000
+MARKUP = "<script>alert(1)</script>"
+LONE_SURROGATE = "x \ud83d y"
 JOB_FIELDS = {
     "id",
     "status",
@@ -128,6 +135,8 @@ def job_dirs(settings: WebSettings) -> list[Path]:
 
 
 class _Response:
+    text = ""
+
     def __init__(
         self,
         payload: Any = None,
@@ -363,11 +372,14 @@ def test_single_file_upload_completes_with_static_risk(settings: WebSettings) ->
         "analyzer_version",
         "generated_at",
         "summary",
+        "review_failure_message",
+        "llm_input_truncation",
         "findings",
         "static_signals",
         "skipped_files",
     }
     assert result["summary"] == payload["review"]["summary"]
+    assert result["review_failure_message"] is None
     assert result["findings"][0]["file"] == "danger.py"
     assert set(result["findings"][0]) == {
         "title",
@@ -393,6 +405,7 @@ def test_single_file_upload_completes_with_static_risk(settings: WebSettings) ->
             ],
             "secrets": [],
             "syntax_error": None,
+            "syntax_error_severity": None,
         }
     ]
 
@@ -858,10 +871,423 @@ def test_llm_failure_reason_is_hidden_from_screen_result(
     assert [finding["reason"] for finding in llm_findings] == [
         LLM_FAILURE_MESSAGES["connection_failed"]
     ]
+    assert (
+        result.json()["review_failure_message"]
+        == (LLM_FAILURE_MESSAGES["connection_failed"])
+    )
     assert "10.0.0.5" not in result.text
     assert "Cause:" not in result.text
     assert "10.0.0.5" in report.text
     assert "Cause:" in report.text
+
+
+def _raise(error: Exception) -> Any:
+    def review(url: str, **kwargs: Any) -> _Response:
+        raise error
+
+    return review
+
+
+def _respond(response: _Response) -> Any:
+    return lambda url, **kwargs: response
+
+
+@pytest.mark.parametrize(
+    ("review", "failure_code"),
+    [
+        (_raise(requests.exceptions.Timeout("slow 10.0.0.5")), "timeout"),
+        (_respond(_Response(status_code=500)), "http_error"),
+        (_raise(requests.exceptions.ConnectionError("gone")), "connection_failed"),
+        (_respond(_Response(json_error=ValueError("bad body"))), "invalid_response"),
+        (
+            _respond(_Response({"choices": [{"message": {"content": "not json"}}]})),
+            "json_parse_failed",
+        ),
+    ],
+    ids=["timeout", "http-error", "connection", "bad-body", "bad-json"],
+)
+def test_llm_failure_during_review_keeps_static_result_and_warns(
+    settings: WebSettings,
+    monkeypatch: pytest.MonkeyPatch,
+    review: Any,
+    failure_code: str,
+) -> None:
+    monkeypatch.setenv("NURILAB_LLM_BASE_URL", "http://10.0.0.5:8000/v1")
+    # The connection check passes; the review request is what fails.
+    fake_llm(monkeypatch, review=review)
+    with web_client(settings) as client:
+        job = analyze(client, {"a.py": DANGEROUS_SOURCE}, review_mode="local")
+        result = client.get(f"/api/analyses/{job['id']}/result")
+        html = client.get(f"/api/analyses/{job['id']}/report.html")
+
+    assert job["status"] == "completed"
+    assert job["review"]["status"] == "failed"
+    assert job["review"]["failure_code"] == failure_code
+    assert job["risk_level"] == "unknown"
+    assert job["static_risk_level"] == "high"
+    body = result.json()
+    assert body["review_failure_message"] == LLM_FAILURE_MESSAGES[failure_code]
+    assert [signal["file"] for signal in body["static_signals"]] == ["a.py"]
+    assert "10.0.0.5" not in result.text
+    assert "Cause:" not in result.text
+    assert MOCK_BADGE_TEXT not in html.text
+
+
+@pytest.mark.parametrize(
+    "files",
+    [{"a.py": DANGEROUS_SOURCE}, {"proj/a.py": DANGEROUS_SOURCE}],
+    ids=["file", "folder"],
+)
+@pytest.mark.parametrize(
+    "field", ["summary", "title", "file", "reason", "recommendation"]
+)
+def test_lone_surrogate_from_llm_keeps_the_review_and_the_job(
+    settings: WebSettings,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    files: dict[str, bytes],
+) -> None:
+    finding = {
+        "title": "t",
+        "severity": "high",
+        "file": "a.py",
+        "line": 1,
+        "reason": "r",
+        "recommendation": "c",
+    }
+    review: dict[str, Any] = {"summary": "s", "risk_level": "high"}
+    if field == "summary":
+        review[field] = LONE_SURROGATE
+    else:
+        finding[field] = LONE_SURROGATE
+    fake_llm(monkeypatch, review={**review, "findings": [finding]})
+
+    with web_client(settings) as client:
+        job = analyze(client, files, review_mode="local")
+        result = client.get(f"/api/analyses/{job['id']}/result")
+        report = client.get(f"/api/analyses/{job['id']}/report.json")
+        html = client.get(f"/api/analyses/{job['id']}/report.html")
+
+    # The report writer replaces the lone surrogate, so the review is kept.
+    assert job["status"] == "completed"
+    assert job["review"]["status"] == "ok"
+    assert job["static_risk_level"] == "high"
+    assert result.status_code == 200
+    assert result.json()["review_failure_message"] is None
+    assert "x ? y" in report.text
+    assert "x ? y" in html.text
+
+
+def _chat(content: str) -> _Response:
+    return _Response({"choices": [{"message": {"content": content}}]})
+
+
+def _http_error_with_text(text: str) -> _Response:
+    response = _Response(status_code=500)
+    response.text = text
+    return response
+
+
+@pytest.mark.parametrize(
+    ("review", "failure_code", "saved_text"),
+    [
+        (
+            _respond(
+                _chat(
+                    r'{"summary": "s", "risk_level": "low", "findings": [], '
+                    r'"k\ud83d": 1}'
+                )
+            ),
+            "json_parse_failed",
+            "k?",
+        ),
+        (
+            _respond(
+                _chat(
+                    r'{"summary": "s", "risk_level": "low", "findings": [{"title": '
+                    r'"t", "severity": "low", "file": "a.py", "line": 1, "reason": '
+                    r'"r", "recommendation": "c", "k\ud83d": 1}]}'
+                )
+            ),
+            "json_parse_failed",
+            "k?",
+        ),
+        (_respond(_http_error_with_text("err \ud83d x")), "http_error", "err ? x"),
+    ],
+    ids=["top-level-key", "finding-key", "http-error-preview"],
+)
+def test_lone_surrogate_in_failure_reason_keeps_the_job(
+    settings: WebSettings,
+    monkeypatch: pytest.MonkeyPatch,
+    review: Any,
+    failure_code: str,
+    saved_text: str,
+) -> None:
+    fake_llm(monkeypatch, review=review)
+    with web_client(settings) as client:
+        job = analyze(client, {"a.py": DANGEROUS_SOURCE}, review_mode="local")
+        result = client.get(f"/api/analyses/{job['id']}/result")
+        report = client.get(f"/api/analyses/{job['id']}/report.json")
+
+    assert job["status"] == "completed"
+    assert job["review"]["failure_code"] == failure_code
+    assert result.status_code == 200
+    assert (
+        result.json()["review_failure_message"] == (LLM_FAILURE_MESSAGES[failure_code])
+    )
+    assert saved_text in report.json()["review"]["findings"][0]["reason"]
+
+
+def test_emoji_pair_from_llm_is_kept(
+    settings: WebSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Python keeps the pair as two surrogates; json.dumps writes both escapes.
+    fake_llm(
+        monkeypatch,
+        review={
+            "summary": "x 😀 y",
+            "risk_level": "low",
+            "findings": [],
+        },
+    )
+    with web_client(settings) as client:
+        job = analyze(client, {"a.py": CLEAN_SOURCE}, review_mode="local")
+        result = client.get(f"/api/analyses/{job['id']}/result").json()
+
+    assert job["review"]["status"] == "ok"
+    assert result["summary"] == "x \U0001f600 y"
+
+
+# Result provenance
+
+
+def test_mock_result_shows_provenance_and_badge(settings: WebSettings) -> None:
+    with web_client(settings) as client:
+        job = analyze(
+            client, {"proj/a.py": DANGEROUS_SOURCE, "proj/pkg/b.py": CLEAN_SOURCE}
+        )
+        result = client.get(f"/api/analyses/{job['id']}/result").json()
+        report = client.get(f"/api/analyses/{job['id']}/report.json")
+        html = client.get(f"/api/analyses/{job['id']}/report.html")
+
+    assert job["review"] == {
+        "client": "mock",
+        "model": None,
+        "status": "ok",
+        "failure_code": None,
+    }
+    assert job["upload_name"] == "proj"
+    assert job["file_count"] == 2
+    assert result["analyzer_version"] == __version__
+    assert result["generated_at"] == report.json()["generated_at"]
+    assert result["review_failure_message"] is None
+    assert result["skipped_files"] == []
+    assert MOCK_BADGE_TEXT in html.text
+    assert MOCK_BADGE_TEXT not in report.text
+
+
+def test_llm_result_shows_model_without_mock_badge(
+    settings: WebSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_llm(monkeypatch)
+    with web_client(settings) as client:
+        job = analyze(client, {"a.py": DANGEROUS_SOURCE}, review_mode="local")
+        result = client.get(f"/api/analyses/{job['id']}/result").json()
+        html = client.get(f"/api/analyses/{job['id']}/report.html")
+
+    assert job["review"] == {
+        "client": "local",
+        "model": DEFAULT_LLM_MODEL,
+        "status": "ok",
+        "failure_code": None,
+    }
+    assert result["analyzer_version"] == __version__
+    assert result["review_failure_message"] is None
+    assert result["summary"] == "LLM summary"
+    assert [signal["file"] for signal in result["static_signals"]] == ["a.py"]
+    assert MOCK_BADGE_TEXT not in html.text
+
+
+def test_unreadable_file_is_listed_without_llm_warning(settings: WebSettings) -> None:
+    with web_client(settings) as client:
+        job = analyze(client, {"bad.py": b"\xff\xfe\x00"})
+        result = client.get(f"/api/analyses/{job['id']}/result").json()
+
+    # Mock also reports unknown here, so only review.status marks an LLM failure.
+    assert job["risk_level"] == "unknown"
+    assert job["review"]["status"] == "ok"
+    assert result["review_failure_message"] is None
+    assert result["skipped_files"] == ["bad.py"]
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    assert 'byId("review-warning").hidden = job.review.status !== "failed";' in script
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"proj/bad.py": UNREADABLE_SOURCE},
+        {"proj/bad.py": UNREADABLE_SOURCE, "proj/ok.py": CLEAN_SOURCE},
+    ],
+    ids=["only-unreadable", "with-clean-file"],
+)
+def test_folder_with_unread_file_and_no_signal_is_not_low(
+    settings: WebSettings, files: dict[str, bytes]
+) -> None:
+    with web_client(settings) as client:
+        job = analyze(client, files)
+
+    assert job["risk_level"] == "unknown"
+    assert job["static_risk_level"] == "unknown"
+    assert job["review"]["status"] == "ok"
+
+
+def test_llm_keeps_review_risk_when_folder_static_risk_is_unknown(
+    settings: WebSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The review schema has no unknown, so the static risk carries the limit.
+    fake_llm(monkeypatch)
+    with web_client(settings) as client:
+        job = analyze(client, {"proj/bad.py": UNREADABLE_SOURCE}, review_mode="local")
+
+    assert job["risk_level"] == "low"
+    assert job["static_risk_level"] == "unknown"
+
+
+def test_llm_input_truncation_is_shown_when_review_succeeds(
+    settings: WebSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_llm(monkeypatch)
+    with web_client(settings) as client:
+        job = analyze(client, {"big.py": OVER_BUDGET_SOURCE}, review_mode="local")
+        result = client.get(f"/api/analyses/{job['id']}/result").json()
+        report = client.get(f"/api/analyses/{job['id']}/report.json").json()
+
+    metadata = report["review"]["input_metadata"]
+    assert metadata["truncated"] is True
+    assert result["llm_input_truncation"] == {
+        "included_count": metadata["included_count"],
+        "omitted_count": metadata["omitted_count"],
+        "budget_bytes": metadata["budget_bytes"],
+    }
+    assert metadata["omitted_count"] > 0
+
+
+def test_llm_input_truncation_is_null_without_a_cut_or_a_result(
+    settings: WebSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(url: str, **kwargs: Any) -> _Response:
+        raise requests.exceptions.ConnectionError("gone")
+
+    with web_client(settings) as client:
+        fake_llm(monkeypatch)
+        small = analyze(client, {"a.py": DANGEROUS_SOURCE}, review_mode="local")
+        small_result = client.get(f"/api/analyses/{small['id']}/result").json()
+        fake_llm(monkeypatch, review=refuse)
+        failed = analyze(client, {"big.py": OVER_BUDGET_SOURCE}, review_mode="local")
+        failed_result = client.get(f"/api/analyses/{failed['id']}/result").json()
+        failed_report = client.get(f"/api/analyses/{failed['id']}/report.json").json()
+        mock = analyze(client, {"big.py": OVER_BUDGET_SOURCE})
+        mock_result = client.get(f"/api/analyses/{mock['id']}/result").json()
+
+    assert small_result["llm_input_truncation"] is None
+    assert failed_report["review"]["input_metadata"]["truncated"] is True
+    assert failed_result["llm_input_truncation"] is None
+    assert mock_result["llm_input_truncation"] is None
+
+
+def test_llm_status_survives_a_model_setting_that_is_not_utf8(
+    settings: WebSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # os.environ holds an undecodable byte as a lone surrogate. The server
+    # listing the same name as a JSON escape once passed the check and then
+    # failed the job record with a 500; the name is now cleaned when loaded.
+    monkeypatch.setenv("NURILAB_LLM_MODEL", "m\udcff")
+    fake_llm(monkeypatch, models=_models("m\udcff"))
+    with web_client(settings) as client:
+        status = client.get("/api/llm-status")
+        upload_response = upload(client, {"a.py": CLEAN_SOURCE}, review_mode="local")
+
+    assert status.status_code == 200
+    assert status.json() == {"status": "model_missing", "model": "m?"}
+    assert_error(upload_response, 503, "llm_unavailable")
+
+
+def test_syntax_error_signal_carries_the_aggregator_severity(
+    settings: WebSettings,
+) -> None:
+    with web_client(settings) as client:
+        job = analyze(
+            client, {"proj/broken.py": b"def broken(:\n", "proj/ok.py": CLEAN_SOURCE}
+        )
+        result = client.get(f"/api/analyses/{job['id']}/result").json()
+
+    assert [
+        (signal["file"], signal["syntax_error_severity"])
+        for signal in result["static_signals"]
+    ] == [("proj/broken.py", SYNTAX_ERROR_SEVERITY)]
+
+
+# Markup in results
+
+
+@pytest.mark.parametrize(
+    "files",
+    [{"a.py": DANGEROUS_SOURCE}, {"proj/a.py": DANGEROUS_SOURCE}],
+    ids=["file", "folder"],
+)
+def test_markup_from_llm_review_is_escaped_in_report(
+    settings: WebSettings, monkeypatch: pytest.MonkeyPatch, files: dict[str, bytes]
+) -> None:
+    # Uploads reject "<" and ">" and Mock masks secrets, so LLM text is how a
+    # whole tag reaches a report.
+    fake_llm(
+        monkeypatch,
+        review={
+            "summary": MARKUP,
+            "risk_level": "high",
+            "findings": [
+                {
+                    "title": MARKUP,
+                    "severity": "high",
+                    "file": f"{MARKUP}.py",
+                    "line": 1,
+                    "reason": MARKUP,
+                    "recommendation": MARKUP,
+                }
+            ],
+        },
+    )
+    with web_client(settings) as client:
+        job = analyze(client, files, review_mode="local")
+        result = client.get(f"/api/analyses/{job['id']}/result")
+        html = client.get(f"/api/analyses/{job['id']}/report.html")
+
+    assert job["status"] == "completed"
+    assert "<script" not in html.text.lower()
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html.text
+    assert html.headers["content-disposition"].startswith("attachment")
+    # JSON keeps the text as data; app.js renders it with textContent only.
+    assert result.headers["content-type"].startswith("application/json")
+    assert result.json()["summary"] == MARKUP
+
+
+def test_special_characters_in_upload_name_are_escaped_in_report(
+    settings: WebSettings,
+) -> None:
+    with web_client(settings) as client:
+        job = analyze(client, {"a&b'c.py": DANGEROUS_SOURCE})
+        html = client.get(f"/api/analyses/{job['id']}/report.html")
+
+    assert job["upload_name"] == "a&b'c.py"
+    assert "a&amp;b&#x27;c.py" in html.text
+    assert "a&b'c.py" not in html.text
+
+
+def test_file_name_with_markup_cannot_be_uploaded(settings: WebSettings) -> None:
+    with web_client(settings) as client:
+        response = upload(client, {"<script>.py": CLEAN_SOURCE})
+
+    assert_error(response, 400, "invalid_path")
 
 
 # Report paths
@@ -1184,6 +1610,100 @@ def test_init_checks_llm_when_the_toggle_is_already_on() -> None:
     init = _js_function((STATIC_DIR / "app.js").read_text(encoding="utf-8"), "init")
 
     assert 'if (byId("llm-toggle").checked) {\n    checkLlm();' in init
+
+
+def test_index_has_fixed_notes_warning_and_badge() -> None:
+    index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+    assert MOCK_BADGE_TEXT in index
+    assert "LLM 리뷰 실패, 정적 분석 결과만 유효" in index
+    assert "Mock 리뷰는 AI 리뷰가 아니라 규칙 기반 요약입니다." in index
+    assert "위험도 low는 안전하다는 뜻이 아닙니다." in index
+    assert "Python 정적 분석만 수행했습니다." in index
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'byId("mock-badge").hidden = job.review.client !== "mock";',
+        "renderLlmInputNotice(result.body.llm_input_truncation);",
+        "signalRow(signal.syntax_error_severity, `문법 오류: ${signal.syntax_error}`)",
+        (
+            'byId("review-warning-detail").textContent = '
+            'result.body.review_failure_message || "";'
+        ),
+    ],
+    ids=["mock-badge", "input-notice", "warning-detail", "syntax-severity"],
+)
+def test_app_js_connects_results_to_the_page(line: str) -> None:
+    # pytest cannot run the page, so these lines stay pinned as text.
+    assert line in (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+
+def test_overview_shows_static_risk_first_and_names_review_risk() -> None:
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    overview = script[script.index("function renderOverview") :]
+    overview = overview[: overview.index("byId(")]
+
+    # The LLM is not the final judge, so its risk must not read as the result.
+    assert '["위험도"' not in overview
+    assert overview.index('"정적 분석 위험도"') < overview.index('"리뷰 위험도"')
+    assert overview.index('"리뷰 위험도"') < overview.index("reviewLabel(job.review)")
+
+
+def test_interpretation_notes_follow_job_status_not_screen_result() -> None:
+    index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    # Risk comes from the job response, so its notes must not wait for /result.
+    assert '<div id="result-notes" hidden>' in index
+    assert 'byId("result-notes").hidden = job.status !== "completed";' in script
+
+
+def test_every_element_used_by_app_js_exists_in_index() -> None:
+    index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    used = set(re.findall(r'byId\("([a-z-]+)"\)', script))
+    for id_list in re.findall(r"for \(const id of \[(.*?)\]\)", script, re.DOTALL):
+        used.update(re.findall(r'"([a-z-]+)"', id_list))
+
+    assert {"review-warning", "provenance", "static-signals", "skipped-files"} <= used
+    assert not [name for name in used if f'id="{name}"' not in index]
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        r"\binnerHTML\b",
+        r"\bouterHTML\b",
+        r"\binsertAdjacentHTML\b",
+        r"\bdocument\.write",
+        r"\beval\s*\(",
+        r"\bnew\s+Function\b",
+        r"""setAttribute\(\s*["'](?:href|src|on)""",
+    ],
+)
+def test_app_js_has_no_html_or_code_string_api(pattern: str) -> None:
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert re.search(pattern, script) is None
+
+
+def test_app_js_sets_href_only_for_report_links() -> None:
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert re.findall(r"\.href\s*=[^=].*", script) == [
+        ".href = apiPath(jobId, `/report.${kind}`);"
+    ]
+
+
+def test_index_has_no_inline_script_or_event_handler() -> None:
+    index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+    assert re.search(r"\son[a-z]+\s*=", index, re.IGNORECASE) is None
+    scripts = re.findall(r"<script\b([^>]*)>(.*?)</script>", index, re.DOTALL)
+    assert scripts == [(' src="/static/app.js" defer', "")]
 
 
 def _write(path: Path, content: bytes) -> Path:
