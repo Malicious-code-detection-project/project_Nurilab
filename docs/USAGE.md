@@ -102,7 +102,7 @@ uv run python main.py analyze tests --review-client local
 | 환경변수 | 기본값 | 설명 |
 | --- | --- | --- |
 | `NURILAB_LLM_BASE_URL` | `http://localhost:8000/v1` | OpenAI-compatible API base URL |
-| `NURILAB_LLM_MODEL` | `openai/gpt-oss-20b` | server가 제공하는 model name |
+| `NURILAB_LLM_MODEL` | `llama3.1-405b` | server가 제공하는 model name. `openai/gpt-oss-20b` 서버를 쓸 때는 이 값을 지정 |
 | `NURILAB_LLM_TIMEOUT` | `120` | 요청 timeout(초). 숫자여야 함 |
 | `NURILAB_LLM_INPUT_BUDGET_BYTES` | `65536` | 정규화한 Local LLM payload 최대 byte 수. 최소 `1024` |
 
