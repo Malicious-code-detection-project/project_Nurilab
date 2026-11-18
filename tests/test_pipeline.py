@@ -9,8 +9,10 @@ from typing import Any
 import pytest
 from mcp import types
 
+from project_nurilab.aggregation.result_aggregator import file_risk_level
 from project_nurilab.external.jadx_mcp_client import JadxMcpClient, McpSession
 from project_nurilab.pipeline import Phase1Pipeline
+from project_nurilab.reports.generator import ReportGenerator
 from project_nurilab.schemas import (
     AnalysisReport,
     ExternalToolCall,
@@ -65,6 +67,48 @@ def test_phase1_pipeline_generates_reports(tmp_path: Path) -> None:
     assert output_paths["json"].name == "clean_sample.analysis.json"
     assert output_paths["html"].exists()
     assert output_paths["json"].exists()
+
+
+class _NoWriteReportGenerator(ReportGenerator):
+    def write(self, *args: Any, **kwargs: Any) -> dict[str, Path]:
+        raise AssertionError("analyze() must not write report files")
+
+
+def _tree_snapshot(root: Path) -> list[str]:
+    return sorted(str(path.relative_to(root)) for path in root.rglob("*"))
+
+
+@pytest.mark.parametrize("kind", ["file", "project"])
+def test_pipeline_analyze_returns_run_report_without_writing_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """analyze() builds the report run() writes, without touching the disk."""
+
+    input_path = (
+        FIXTURES / "vulnerable_sample.py"
+        if kind == "file"
+        else _copy_mixed_risk_project_fixture(tmp_path)
+    )
+    workdir = tmp_path / "cwd"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    before = _tree_snapshot(tmp_path)
+
+    report = Phase1Pipeline(
+        use_ruff=False, report_generator=_NoWriteReportGenerator()
+    ).analyze(input_path)
+
+    assert isinstance(report, AnalysisReport if kind == "file" else ProjectReport)
+    assert _tree_snapshot(tmp_path) == before
+    run_report, output_paths = Phase1Pipeline(use_ruff=False).run(
+        input_path=input_path, output_dir=tmp_path / "out"
+    )
+    payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
+    assert payload == run_report.to_dict()
+    payload.pop("generated_at")
+    analyzed = report.to_dict()
+    analyzed.pop("generated_at")
+    assert analyzed == payload
 
 
 def test_pipeline_generates_reports_for_large_python_file(tmp_path: Path) -> None:
@@ -630,6 +674,29 @@ def test_pipeline_keeps_running_when_project_file_read_raises_os_error(
     assert "Permission denied" in skipped_payloads[0]["skip_reason"]
 
 
+def test_file_risk_level_matches_project_file_summaries(tmp_path: Path) -> None:
+    target_project = _copy_mixed_risk_project_fixture(tmp_path)
+    (target_project / "invalid_utf8.py").write_bytes(b"\xff\xfe\x00")
+    (target_project / "plain.py").write_text("VALUE = 1\n", encoding="utf-8")
+    pipeline = Phase1Pipeline(use_ruff=False)
+
+    project_report = pipeline.analyze(target_project)
+
+    assert isinstance(project_report, ProjectReport)
+    assert project_report.analysis.summary is not None
+    project_risks = {
+        summary.path: summary.risk_level
+        for summary in project_report.analysis.summary.file_summaries
+    }
+    single_risks = {}
+    for path in sorted(target_project.glob("*.py")):
+        single_report = pipeline.analyze(path)
+        assert isinstance(single_report, AnalysisReport)
+        single_risks[path.name] = file_risk_level(single_report.analysis)
+    assert single_risks == project_risks
+    assert {"high", "medium", "low", "unknown"} <= set(single_risks.values())
+
+
 def test_pipeline_reviews_mixed_risk_project_fixture(tmp_path: Path) -> None:
     source_project = FIXTURES / "review_quality_project"
     target_project = tmp_path / "review_quality_project"
@@ -860,6 +927,12 @@ def test_pipeline_preserves_reports_when_local_llm_connection_fails(
     assert payload["review"]["findings"][0]["source"] == "local_llm"
     assert payload["review"]["findings"][0]["title"] == ("Local LLM connection failed")
     assert "Connection refused" in payload["review"]["findings"][0]["reason"]
+    assert payload["review"]["reviewer"] == {
+        "client": "local",
+        "model": "test-model",
+        "status": "failed",
+        "failure_code": "connection_failed",
+    }
 
 
 def test_pipeline_preserves_reports_when_local_llm_times_out(
@@ -1015,10 +1088,10 @@ def _jadx_mcp_input(kind: str, tmp_path: Path) -> Path:
     ("kind", "report_type"),
     [("file", AnalysisReport), ("project", ProjectReport)],
 )
-def test_pipeline_attaches_jadx_mcp_call_without_changing_outputs(
+def test_pipeline_records_jadx_mcp_call_without_changing_analysis_or_review(
     tmp_path: Path, kind: str, report_type: type
 ) -> None:
-    """An opt-in MCP call is attached to the report, not to review or JSON."""
+    """An opt-in MCP call goes to JSON and HTML, apart from analysis and review."""
 
     input_path = _jadx_mcp_input(kind, tmp_path)
     baseline, _ = Phase1Pipeline(use_ruff=False).run(
@@ -1042,8 +1115,15 @@ def test_pipeline_attaches_jadx_mcp_call_without_changing_outputs(
     assert baseline.review.findings
     assert report.review.to_dict() == baseline.review.to_dict()
     payload = json.loads(output_paths["json"].read_text(encoding="utf-8"))
-    assert "external_tool_calls" not in payload
-    assert payload.keys() == baseline.to_dict().keys()
+    baseline_payload = baseline.to_dict()
+    assert list(payload) == [*baseline_payload, "external_tool_calls"]
+    assert payload["analysis"] == baseline_payload["analysis"]
+    assert payload["review"] == baseline_payload["review"]
+    assert payload["external_tool_calls"] == [
+        call.to_dict() for call in report.external_tool_calls
+    ]
+    html = output_paths["html"].read_text(encoding="utf-8")
+    assert "<h2>External Tool Calls (jadx-ai-mcp)</h2>" in html
 
 
 def test_pipeline_passes_missing_jadx_mcp_target_as_none(tmp_path: Path) -> None:
@@ -1073,6 +1153,7 @@ def test_pipeline_skips_jadx_mcp_without_class_name(tmp_path: Path) -> None:
     )
 
     assert report.external_tool_calls == []
+    assert "external_tool_calls" not in report.to_dict()
     assert client.calls == []
 
 

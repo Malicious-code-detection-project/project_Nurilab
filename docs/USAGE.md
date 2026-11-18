@@ -43,7 +43,7 @@ uv run python main.py analyze tests
 | `--review-client mock\|local` | `mock` | review backend 선택 |
 | `--no-ruff` | 사용 안 함 | Ruff JSON finding 수집 비활성화 |
 | `--max-lines <n>` | 없음 | 하위 호환용 deprecated no-op. 파일 줄 수를 제한하지 않음 |
-| `--jadx-mcp-class <class>` | 사용 안 함 | 실험적(THE-154). 주면 jadx-ai-mcp `get_class_source`를 한 번 호출 |
+| `--jadx-mcp-class <class>` | 사용 안 함 | 실험적(THE-154, THE-155). 주면 jadx-ai-mcp `get_class_source`를 한 번 호출하고 결과를 JSON/HTML에 기록 |
 | `--jadx-mcp-url <url>` | `http://127.0.0.1:8651/mcp` | 실험적. jadx-mcp-server endpoint. `--jadx-mcp-class` 필요 |
 | `--jadx-mcp-target <name>` | 없음 | 실험적. 기록할 대상 식별자(예: APK 파일명). 검증하지 않음. `--jadx-mcp-class` 필요 |
 
@@ -131,11 +131,32 @@ JSON/schema 파싱 실패 시에는 응답 content의 최대 200자 preview가 �
 정적 분석을 지우거나 pipeline 전체를 중단하지 않습니다. `review.risk_level`은
 `unknown`이며, `source="local_llm"`인 failure finding을 보고서에 남깁니다.
 
-- 연결 오류: 서버 실행 상태, URL, host/port, model name을 확인합니다.
-- timeout: 모델 로딩과 GPU 상태를 확인한 뒤 timeout을 조정합니다.
-- HTTP 오류: OpenAI-compatible endpoint와 server log를 확인합니다.
-- JSON/schema 오류: 모델이 JSON object만 반환하는지와 `low`/`medium`/`high`
-  severity 계약을 확인합니다.
+JSON 보고서의 `review.reviewer`는 리뷰를 만든 client와 결과를 기록합니다.
+LLM 실패 여부는 `review.reviewer.status`가 `failed`인지로 판단합니다.
+Mock도 읽지 못한 단일 파일(skipped)은 `risk_level`이 `unknown`이므로
+`risk_level`만으로는 LLM 실패와 구별되지 않습니다.
+
+```json
+"reviewer": {"client": "local", "model": "openai/gpt-oss-20b", "status": "failed", "failure_code": "timeout"}
+```
+
+- `client`: `mock` 또는 `local`. `model`은 Mock이면 `null`입니다.
+- `status`: `ok` 또는 `failed`. `failure_code`는 성공이면 `null`입니다.
+
+`failure_code`별 확인할 곳은 다음과 같습니다.
+
+- `connection_failed` (연결 오류): 서버 실행 상태, URL, host/port, model name을
+  확인합니다.
+- `timeout`: 모델 로딩과 GPU 상태를 확인한 뒤 timeout을 조정합니다. 응답 본문을
+  받다가 멈춘 경우도 포함합니다.
+- `http_error` (HTTP 오류): OpenAI-compatible endpoint와 server log를 확인합니다.
+- `invalid_response` (응답 shape 오류): 응답이 OpenAI-compatible
+  `choices[0].message.content` 구조인지 server log와 함께 확인합니다. 응답 본문을
+  받는 도중 연결이 끊긴 경우도 여기에 해당하므로 서버 재시작이나 네트워크 상태도
+  확인합니다.
+- `json_parse_failed` (JSON/schema 오류): 모델이 JSON object만 반환하는지와
+  `low`/`medium`/`high` severity 계약을 확인합니다. `message.content`가 `null`인
+  응답(예: gpt-oss가 추론에 토큰을 다 쓴 경우)도 여기에 해당합니다.
 
 이 failure finding은 deterministic analyzer의 signal과 JSON/HTML report 생성을
 계속 유지한다는 뜻입니다. report가 생성되었다고 모든 optional backend가 성공한 것은
@@ -148,9 +169,14 @@ JSON/schema 파싱 실패 시에는 응답 content의 최대 200자 preview가 �
 
 ## jadx-ai-mcp 연결 (실험적)
 
-THE-154에서 구현한 실험적 연결입니다. 결과를 JSON/HTML 보고서에 표시하는 작업은
-THE-155에서 진행하므로, 현재는 아래 터미널 출력으로만 확인할 수 있습니다. 계약과 실측
-기록은 [THE-151 연결 계약](THE-151_jadx_mcp_contract.md)을 참조하세요.
+THE-154·THE-155에서 구현한 실험적 연결입니다. 호출 기록은 아래 터미널 출력, JSON 보고서의
+최상위 `external_tool_calls`, HTML 보고서 끝의 `External Tool Calls (jadx-ai-mcp)`
+섹션에서 확인할 수 있습니다. 선택 출력인 Markdown 보고서에도 끝에 같은 이름의 섹션으로
+상태·사유·출처 항목을 남기며, 받은 소스는 HTML·JSON 보고서에만 담습니다. 보고서의
+`server_url`에는 `--jadx-mcp-url`의 사용자 정보(`user:token@`)·query·fragment를 빼고
+기록하며, 사용자 정보를 확실히 가려낼 수 없는 URL은 `(unparsable URL omitted)`로
+대신합니다. 계약과 실측 기록은
+[THE-151 연결 계약](THE-151_jadx_mcp_contract.md)을 참조하세요.
 
 `--jadx-mcp-class`는 이미 실행 중인 `jadx-mcp-server`에만 접속합니다. NuriLab은
 서버나 JADX-GUI를 설치하거나 시작·종료하지 않습니다. 서버·JADX-GUI·플러그인의 설치와
@@ -199,12 +225,15 @@ NURILAB_RUN_JADX_MCP=1 uv run pytest tests/test_jadx_mcp_integration.py
 ```
 
 `NURILAB_JADX_MCP_CLASS`로 조회할 클래스를 바꿀 수 있습니다. 기본값은 존재하지 않는
-`com.nurilab.dummy.TestClass`이며, `get_class_source`가 실제로 호출되어 jadx가 응답했는지와
-연결·호출 시간 제한이 `timeout`으로 기록되는지 확인합니다. jadx 응답으로 인정하는 상태는
+`com.nurilab.dummy.TestClass`이며, `get_class_source`가 실제로 호출되어 jadx가 응답했는지,
+연결·호출 시간 제한이 `timeout`으로 기록되는지, 같은 호출을 3번 반복해도 상태·크기·소스
+SHA-256이 같은지, 실제 호출 결과가 JSON/HTML 보고서에 기록되고 정적 분석과 review는
+바뀌지 않는지 확인합니다. jadx 응답으로 인정하는 상태는
 `success`, `empty`, `not_found`와, 사유가 플러그인 연결 실패(`Cannot connect to JADX plugin`)인
 `unavailable`뿐입니다. 서버 연결 실패나 tool 미제공처럼 호출 전에 멈춘 경우는 실패로
 판정합니다. 진단 출력은 상태·사유 분류 이름·서버 버전·응답 크기·절삭 여부·소요 시간만
-남기며 소스, 접속 정보, 사유 원문은 출력하지 않습니다.
+남기며 소스, 접속 정보, 사유 원문은 출력하지 않습니다. 반복 호출 테스트는 비교를 위해
+소스 대신 소스의 SHA-256만 함께 출력합니다.
 
 ## Ruff
 

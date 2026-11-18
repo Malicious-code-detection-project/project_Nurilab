@@ -62,6 +62,25 @@ class Phase1Pipeline:
         Its record is attached to the report but never feeds review or risk.
         """
 
+        report = self.analyze(
+            input_path,
+            jadx_mcp_class=jadx_mcp_class,
+            jadx_mcp_target=jadx_mcp_target,
+        )
+        output_paths = self.report_generator.write(report, output_dir, formats=formats)
+        return report, output_paths
+
+    def analyze(
+        self,
+        input_path: str | Path,
+        jadx_mcp_class: str | None = None,
+        jadx_mcp_target: str | None = None,
+    ) -> AnalysisReport | ProjectReport:
+        """Analyze and review the input and return the report without writing files.
+
+        ``jadx_mcp_class`` and ``jadx_mcp_target`` behave as in ``run()``.
+        """
+
         target = Path(input_path).expanduser().resolve()
         collected_input = self.collector.collect(target)
         file_results = [
@@ -74,7 +93,7 @@ class Phase1Pipeline:
             if self.use_ruff:
                 analysis.ruff_findings = self.ruff_collector.collect(target)
             review = self.review_client.review(analysis)
-            single_file_report = AnalysisReport(
+            return AnalysisReport(
                 generated_at=datetime.now(UTC).isoformat(),
                 analyzer_version=__version__,
                 analysis=analysis,
@@ -83,12 +102,6 @@ class Phase1Pipeline:
                     jadx_mcp_class, jadx_mcp_target
                 ),
             )
-            output_paths = self.report_generator.write(
-                single_file_report,
-                output_dir,
-                formats=formats,
-            )
-            return single_file_report, output_paths
 
         ruff_findings = self.ruff_collector.collect(target) if self.use_ruff else []
         project_analysis = self.aggregator.aggregate(
@@ -98,17 +111,13 @@ class Phase1Pipeline:
         )
         review = self.review_client.review(project_analysis)
 
-        project_report = ProjectReport(
+        return ProjectReport(
             generated_at=datetime.now(UTC).isoformat(),
             analyzer_version=__version__,
             analysis=project_analysis,
             review=review,
             external_tool_calls=self._call_jadx_mcp(jadx_mcp_class, jadx_mcp_target),
         )
-        output_paths = self.report_generator.write(
-            project_report, output_dir, formats=formats
-        )
-        return project_report, output_paths
 
     def _call_jadx_mcp(
         self, class_name: str | None, target: str | None

@@ -17,6 +17,7 @@ import pytest
 from project_nurilab.analyzers.tools import RuffToolCollector
 from project_nurilab.llm.review import MockReviewClient
 from project_nurilab.pipeline import Phase1Pipeline
+from project_nurilab.reports.paths import replace_root
 from project_nurilab.schemas import ProjectReport, RuffFinding
 
 
@@ -141,29 +142,6 @@ def _validate_target_checkout(target: Path, expected_sha: str) -> None:
         )
 
 
-def _normalize_string(value: str, root_path: Path) -> str:
-    root = root_path.resolve()
-    root_variants = {
-        str(root),
-        root.as_posix(),
-        str(root).replace("\\", "/"),
-        root.as_posix().replace("/", "\\"),
-    }
-    normalized = value
-    for root_variant in sorted(root_variants, key=len, reverse=True):
-        if not root_variant:
-            continue
-        start = 0
-        while (index := normalized.find(root_variant, start)) != -1:
-            end = index + len(root_variant)
-            if end == len(normalized) or normalized[end] in {"/", "\\"}:
-                normalized = f"{normalized[:index]}<ROOT>{normalized[end:]}"
-                start = index + len("<ROOT>")
-            else:
-                start = end
-    return normalized
-
-
 def normalize_report(report: dict[str, Any], root_path: Path) -> dict[str, Any]:
     """Return a non-mutating snapshot with only top-level time/path variance removed."""
 
@@ -177,7 +155,7 @@ def normalize_report(report: dict[str, Any], root_path: Path) -> dict[str, Any]:
         if isinstance(value, list):
             return [normalize(child, depth=depth + 1) for child in value]
         if isinstance(value, str):
-            return _normalize_string(value, root_path)
+            return replace_root(value, root_path, "<ROOT>")
         return value
 
     normalized = normalize(report, depth=0)

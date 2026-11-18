@@ -12,6 +12,7 @@
 | 상세 CLI 옵션·Local LLM 설정·오류 동작 | [사용 가이드](USAGE.md) |
 | 상세 실행 흐름·모듈 책임·데이터 및 실패 경계 | [아키텍처](ARCHITECTURE.md) |
 | 현재 개발 범위와 의존성 | [실행 계획](PLAN.md) |
+| 웹 MVP 설계·API 계약·검증 계획 | [웹 MVP 설계](WEB_MVP_DESIGN.md) |
 | 협업 규칙과 품질 검사 | [AGENTS](../AGENTS.md) |
 | 이슈·브랜치·검증·PR 절차 | [기여 가이드](CONTRIBUTING.md) |
 | 실제 진행 상태·담당자 | [Linear Nurilab](https://linear.app/the-debugging-water-deer/project/nurilab-0225bf5ed619) |
@@ -23,7 +24,7 @@
 | --- | --- |
 | [외부 프로젝트 검증](external_project_validation.md) | 실행 절차와 당시 코드·대상 버전에 대한 검증 기록 |
 | [Local LLM 통합 테스트](LOCAL_LLM_INTEGRATION_TEST.md) | 실제 서버 선택형 테스트와 당시 환경·결과 |
-| [THE-151 jadx-ai-mcp 연결 계약](THE-151_jadx_mcp_contract.md) | MCP 연결 계약, 서버 버전 고정 방법, 당시 환경의 실측 기록 |
+| [THE-151 jadx-ai-mcp 연결 계약](THE-151_jadx_mcp_contract.md) | MCP 연결 계약, 서버 버전 고정 방법, THE-154·THE-155 당시 환경의 실측 기록 |
 | [PR 작성 참고](PR_DESCRIPTION.md) | PR 본문 설명 |
 | [PR 양식](../.github/PULL_REQUEST_TEMPLATE.md) | GitHub 기본 PR form |
 | [Legacy Issue 양식](../.github/ISSUE_TEMPLATE/task.md) | Owner가 요청할 때 쓰는 GitHub Issue 양식; 상태 정본은 Linear |

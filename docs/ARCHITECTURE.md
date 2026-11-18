@@ -4,7 +4,7 @@
 모듈 책임과 실패 경계를 설명합니다. 지원 범위와 빠른 실행은
 [`../README.md`](../README.md), CLI 및 Local LLM 설정은 [`USAGE.md`](USAGE.md)를
 참조하세요. 여기서 말하는 미래 연동은 구현 상태가 아니며 현재 동작을 설명하는
-문단과 구분합니다.
+문단과 구분합니다. 계획 중인 웹 계층은 마지막 절에 따로 적습니다.
 
 ## 시스템 경계
 
@@ -144,6 +144,8 @@ OpenAI-compatible `/chat/completions` endpoint에 전송합니다.
 `review.risk_level`은 선택한 review backend의 결과입니다. Local LLM이 실패해
 `unknown`이어도 deterministic analysis와 `analysis.summary.risk_level`은 같은
 report에 보존됩니다. Local LLM은 정적 분석 결과를 덮어쓰지 않습니다.
+Mock도 읽지 못한 단일 파일은 `unknown`이므로, LLM 실패 여부는 `risk_level`이 아니라
+`review.reviewer.status`(`failed`이면 `failure_code`도 함께 기록)로 판단합니다.
 
 ## 주요 데이터 계약
 
@@ -153,7 +155,7 @@ report에 보존됩니다. Local LLM은 정적 분석 결과를 덮어쓰지 않
 | 파일 로딩 | `LoadedPythonFile` | source, lines, 읽기 skip 상태 |
 | 파일 분석 | `PythonAnalysis` | AST, 위험 호출, secret, syntax, Ruff signal |
 | 프로젝트 집계 | `ProjectAnalysis` | 파일 결과, Ruff 결과, project summary |
-| review | `ReviewResult` | summary, review risk, review findings |
+| review | `ReviewResult` | summary, review risk, review findings, 리뷰 출처(`reviewer`) |
 | 단일 report | `AnalysisReport` | metadata, `PythonAnalysis`, review |
 | 프로젝트 report | `ProjectReport` | metadata, `ProjectAnalysis`, review |
 
@@ -226,10 +228,10 @@ MCP 연동은 [`jadx-ai-mcp`](https://github.com/zinja-coder/jadx-ai-mcp)를 대
 ```text
 THE-151: 입력·출력·실패·provenance tool contract 확정
 -> THE-154: contract를 따르는 연결 구현 (실험적 opt-in)
--> THE-155: connector 결과와 상태를 report에 표시 (예정)
+-> THE-155: connector 결과와 상태를 report에 표시 (실험적 opt-in)
 ```
 
-THE-154에서 구현한 흐름은 다음과 같습니다.
+THE-154·THE-155에서 구현한 흐름은 다음과 같습니다.
 
 ```text
 CLI --jadx-mcp-class
@@ -237,15 +239,42 @@ CLI --jadx-mcp-class
 -> JadxMcpClient: 허용 tool·class_name 검사 -> 연결·initialize·tool 목록 확인 -> get_class_source
 -> ExternalToolCall: status·reason·server/tool/version·content
 -> AnalysisReport / ProjectReport.external_tool_calls
+-> ReportGenerator: JSON 최상위 external_tool_calls, HTML·Markdown External Tool Calls 섹션
 ```
 
 - 이미 실행 중인 `jadx-mcp-server`에만 접속하며 서버를 시작하지 않습니다.
 - 연결 실패·시간 초과·오류 응답은 예외가 아니라 `ExternalToolCall`의 상태로 남고,
   정적 분석과 report 생성은 계속됩니다.
 - 받은 소스는 비신뢰 데이터이며 rule signal·risk·review 입력에 사용하지 않습니다.
-- `external_tool_calls`는 report 객체에만 담기며 `to_dict()`에 포함되지 않습니다.
-  JSON/HTML 표시와 반복 검증은 THE-155 범위입니다.
+- `external_tool_calls`는 호출 기록이 있을 때만 JSON 최상위 키와 HTML·선택 Markdown의
+  별도 섹션으로 추가됩니다. Markdown에는 받은 소스를 담지 않습니다. 옵션을 주지 않은
+  실행의 JSON/HTML/Markdown은 기존과 같습니다.
+- 보고서는 공유되므로 `server_url`에서 사용자 정보·query·fragment를 빼고 기록합니다.
+- 실제 서버로 확인한 반복 호출과 실패 사례 기록은 계약 문서 7절에 있습니다.
 
 별도 AegisLM endpoint 연결은 `THE-80`의 외부 LLM 백로그입니다. 기존
 OpenAI-compatible review 경계를 사용할 수 있는지 검토하는 항목이며 MCP 연동의
 선행 조건은 아닙니다.
+
+## 웹 계층 (계획, THE-157)
+
+웹 분석 MVP는 아직 구현되지 않았습니다. 설계와 계약은
+[웹 MVP 설계](WEB_MVP_DESIGN.md)가 정본이며, 이 절은 기존 구조 안에서 웹 계층이
+놓일 위치와 범위만 적습니다. 구현 뒤의 코드 구조 설명은 THE-162에서 갱신합니다.
+
+```text
+브라우저 (정적 HTML + vanilla JS)
+-> project_nurilab/web/: FastAPI 앱, 업로드 검증, job 대기열, SQLite 기록
+-> Phase1Pipeline.analyze(): 파일을 쓰지 않고 report 객체 반환 (THE-159에서 분리)
+-> 경로 상대화 함수 (reports/) -> ReportGenerator.write()
+```
+
+- 웹은 CLI와 같은 위치의 진입점입니다. `cli.py`처럼 얇게 두고 입력 수집, 분석,
+  review, 보고서 생성은 기존 모듈을 그대로 재사용합니다.
+- 입력은 CLI와 같이 `.py` 1개 또는 폴더이며, 업로드 원본은 분석이 끝나면 삭제합니다.
+- review는 CLI처럼 Mock이 기본이고 Local LLM은 명시적으로 켠 경우에만 이미 실행 중인
+  endpoint를 호출합니다. 웹은 LLM 서버를 시작하지 않습니다.
+- 분석은 전용 스레드 하나에서 한 번에 하나씩 실행합니다. 입력 코드를 실행하거나
+  import하지 않습니다.
+- 웹은 Ruff와 jadx-ai-mcp를 실행하지 않습니다.
+- 인증, 프로세스 격리, 배포 패키징은 이번 범위에 포함하지 않습니다.

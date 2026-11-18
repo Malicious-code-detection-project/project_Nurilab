@@ -14413,6 +14413,12 @@
         "column": null,
         "rule_id": null
       }
-    ]
+    ],
+    "reviewer": {
+      "client": "mock",
+      "model": null,
+      "status": "ok",
+      "failure_code": null
+    }
   }
 }

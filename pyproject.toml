@@ -6,12 +6,15 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "anyio>=4.9",
+    "fastapi>=0.162.0",
     "matplotlib>=3.10.9",
     "mcp>=2.2.0",
     "numpy>=2.4.4",
     "pandas>=3.0.2",
+    "python-multipart>=0.0.32",
     "requests>=2.33.1",
     "scikit-learn>=1.8.0",
+    "uvicorn>=0.54.0",
 ]
 
 [dependency-groups]

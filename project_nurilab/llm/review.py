@@ -9,17 +9,20 @@ OpenAI-compatible API.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
-from typing import Protocol, Any
+from typing import Literal, Protocol, Any
 
 import requests
+from urllib3.exceptions import ReadTimeoutError
 
 from project_nurilab.config import (
     DEFAULT_LLM_BASE_URL,
     DEFAULT_LLM_INPUT_BUDGET_BYTES,
     DEFAULT_LLM_MODEL,
+    DEFAULT_LLM_STATUS_TIMEOUT_SECONDS,
     DEFAULT_LLM_TEMPERATURE,
     DEFAULT_LLM_TIMEOUT_SECONDS,
     MIN_LLM_INPUT_BUDGET_BYTES,
@@ -27,6 +30,8 @@ from project_nurilab.config import (
 from project_nurilab.schemas import (
     ProjectAnalysis,
     PythonAnalysis,
+    ReviewerInfo,
+    ReviewFailureCode,
     ReviewFinding,
     ReviewResult,
     RuffFinding,
@@ -82,6 +87,21 @@ _REVIEW_JSON_SCHEMA: dict[str, Any] = {
 }
 
 
+LLMConnectionStatus = Literal["connected", "unreachable", "model_missing", "timeout"]
+
+
+@dataclass(slots=True, frozen=True)
+class LLMConnectionCheck:
+    """Result of ``LocalLLMReviewClient.check_connection()``.
+
+    ``status`` is what API responses and the screen show. ``detail`` is a
+    short cause for server logs only and stays out of API responses.
+    """
+
+    status: LLMConnectionStatus
+    detail: str | None = None
+
+
 class ReviewClient(Protocol):
     """Common review client interface for mock and local LLM implementations."""
 
@@ -96,8 +116,12 @@ class MockReviewClient:
         """Return review findings without calling an LLM."""
 
         if isinstance(analysis, ProjectAnalysis):
-            return self._review_project(analysis)
-        return self._review_file(analysis)
+            result = self._review_project(analysis)
+        else:
+            result = self._review_file(analysis)
+        # Skipped and syntax-error files are reviewed normally too, so all are ok.
+        result.reviewer = ReviewerInfo(client="mock", model=None, status="ok")
+        return result
 
     def _review_project(self, analysis: ProjectAnalysis) -> ReviewResult:
         findings: list[ReviewFinding] = []
@@ -185,6 +209,47 @@ class LocalLLMReviewClient:
         self.temperature = temperature
         self.budget_bytes = _resolve_budget_bytes(budget_bytes)
 
+    def check_connection(
+        self, timeout: float = DEFAULT_LLM_STATUS_TIMEOUT_SECONDS
+    ) -> LLMConnectionCheck:
+        """Check that the endpoint answers and lists the configured model.
+
+        Never raises. ``detail`` is built only from fixed text, HTTP status
+        codes, and exception class names, so it carries no URL, response body,
+        or exception message and is safe for server logs.
+        """
+
+        try:
+            # Redirects are not followed: only the configured endpoint is called.
+            response = requests.get(
+                f"{self.base_url}/models", timeout=timeout, allow_redirects=False
+            )
+        except requests.exceptions.Timeout as exc:
+            # Checked first: ConnectTimeout is also a ConnectionError.
+            return LLMConnectionCheck("timeout", type(exc).__name__)
+        except Exception as exc:  # noqa: BLE001 - every failure is a fixed status.
+            if _is_body_read_timeout(exc):
+                return LLMConnectionCheck("timeout", "ReadTimeoutError")
+            return LLMConnectionCheck("unreachable", type(exc).__name__)
+
+        if not 200 <= response.status_code < 300:
+            return LLMConnectionCheck("unreachable", f"HTTP {response.status_code}")
+        try:
+            payload = response.json()
+        except Exception:  # noqa: BLE001 - any undecodable body is unreachable.
+            return LLMConnectionCheck("unreachable", "invalid JSON")
+        models = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(models, list):
+            return LLMConnectionCheck("unreachable", "no model list")
+        model_ids = {
+            item["id"]
+            for item in models
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        if self.model not in model_ids:
+            return LLMConnectionCheck("model_missing", "model not listed")
+        return LLMConnectionCheck("connected")
+
     def review(self, analysis: PythonAnalysis | ProjectAnalysis) -> ReviewResult:
         """Generate a structured review by calling the local LLM server."""
 
@@ -224,21 +289,7 @@ class LocalLLMReviewClient:
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
         except requests.exceptions.Timeout as exc:
-            return _local_llm_request_failure(
-                title="Local LLM request timed out",
-                reason=(
-                    "Local LLM request timed out while calling "
-                    f"{endpoint} with model {self.model} after "
-                    f"{self.timeout:g} second(s). Cause: {exc}. "
-                    "Static analysis results are still included in this report."
-                ),
-                recommendation=(
-                    "Confirm that vLLM has finished loading the model, verify "
-                    "the model name, then increase NURILAB_LLM_TIMEOUT if the "
-                    "model needs more time to respond."
-                ),
-                input_metadata=input_metadata,
-            )
+            return self._timeout_failure(endpoint, exc, input_metadata)
         except requests.exceptions.HTTPError as exc:
             response = exc.response
             status_code = response.status_code if response is not None else "unknown"
@@ -248,6 +299,8 @@ class LocalLLMReviewClient:
                 f" Response preview: {response_preview}" if response_preview else ""
             )
             return _local_llm_request_failure(
+                model=self.model,
+                failure_code="http_error",
                 title="Local LLM HTTP error",
                 reason=(
                     "Local LLM endpoint returned an HTTP error while calling "
@@ -269,7 +322,11 @@ class LocalLLMReviewClient:
             requests.exceptions.MissingSchema,
             ConnectionError,
         ) as exc:
+            if _is_body_read_timeout(exc):
+                return self._timeout_failure(endpoint, exc, input_metadata)
             return _local_llm_request_failure(
+                model=self.model,
+                failure_code="connection_failed",
                 title="Local LLM connection failed",
                 reason=(
                     "Unable to reach the Local LLM endpoint while calling "
@@ -285,6 +342,8 @@ class LocalLLMReviewClient:
             )
         except Exception as exc:  # noqa: BLE001 - preserve failures as report data.
             return _local_llm_request_failure(
+                model=self.model,
+                failure_code="invalid_response",
                 title="Local LLM connection failed",
                 reason=(
                     "Local LLM server or API call failed while calling "
@@ -302,6 +361,9 @@ class LocalLLMReviewClient:
         try:
             result = _parse_llm_review(content)
             result.input_metadata = input_metadata
+            result.reviewer = ReviewerInfo(
+                client="local", model=self.model, status="ok"
+            )
             # Normalize finding paths back to absolute paths
             if isinstance(analysis, ProjectAnalysis):
                 for finding in result.findings:
@@ -330,6 +392,8 @@ class LocalLLMReviewClient:
             return result
         except Exception as exc:  # noqa: BLE001 - preserve failures as report data.
             return _local_llm_request_failure(
+                model=self.model,
+                failure_code="json_parse_failed",
                 title="Local LLM JSON parsing failed",
                 reason=(
                     "Local LLM returned a response that could not be parsed "
@@ -345,6 +409,43 @@ class LocalLLMReviewClient:
                 input_metadata=input_metadata,
             )
 
+    def _timeout_failure(
+        self,
+        endpoint: str,
+        exc: Exception,
+        input_metadata: dict[str, Any] | None,
+    ) -> ReviewResult:
+        return _local_llm_request_failure(
+            model=self.model,
+            failure_code="timeout",
+            title="Local LLM request timed out",
+            reason=(
+                "Local LLM request timed out while calling "
+                f"{endpoint} with model {self.model} after "
+                f"{self.timeout:g} second(s). Cause: {exc}. "
+                "Static analysis results are still included in this report."
+            ),
+            recommendation=(
+                "Confirm that vLLM has finished loading the model, verify "
+                "the model name, then increase NURILAB_LLM_TIMEOUT if the "
+                "model needs more time to respond."
+            ),
+            input_metadata=input_metadata,
+        )
+
+
+def _is_body_read_timeout(exc: BaseException) -> bool:
+    """Return whether requests wrapped a response body read timeout.
+
+    requests raises ``Timeout`` while waiting for headers, but a stall while
+    reading the body surfaces as ``ConnectionError`` around urllib3's
+    ``ReadTimeoutError``. Both are the same timeout for failure codes.
+    """
+
+    return isinstance(exc, requests.exceptions.ConnectionError) and any(
+        isinstance(arg, ReadTimeoutError) for arg in exc.args
+    )
+
 
 def _preview_response_text(text: str, limit: int = 300) -> str:
     compact_text = " ".join(text.split())
@@ -358,10 +459,16 @@ def _local_llm_request_failure(
     reason: str,
     recommendation: str | None = None,
     input_metadata: dict[str, Any] | None = None,
+    *,
+    model: str,
+    failure_code: ReviewFailureCode,
 ) -> ReviewResult:
     return ReviewResult(
         summary="Local LLM review failed. Static analysis results are still available.",
         risk_level="unknown",
+        reviewer=ReviewerInfo(
+            client="local", model=model, status="failed", failure_code=failure_code
+        ),
         findings=[
             ReviewFinding(
                 title=title,

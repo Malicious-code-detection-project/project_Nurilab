@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 import requests
+from urllib3 import HTTPConnectionPool
+from urllib3.exceptions import ReadTimeoutError
 
 from project_nurilab.analyzers.python_static import PythonStaticAnalyzer
 from project_nurilab.input.manager import PythonFileLoader
@@ -14,10 +16,15 @@ from project_nurilab.analyzers.tools import RuffToolCollector
 from project_nurilab.config import (
     DEFAULT_LLM_BASE_URL,
     DEFAULT_LLM_MODEL,
+    DEFAULT_LLM_STATUS_TIMEOUT_SECONDS,
     DEFAULT_LLM_TIMEOUT_SECONDS,
 )
-from project_nurilab.llm.review import LocalLLMReviewClient
-from project_nurilab.schemas import PythonAnalysis
+from project_nurilab.llm.review import (
+    LLMConnectionCheck,
+    LLMConnectionStatus,
+    LocalLLMReviewClient,
+)
+from project_nurilab.schemas import PythonAnalysis, ReviewerInfo, ReviewFailureCode
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -2105,3 +2112,279 @@ def test_local_llm_review_success_records_input_metadata(monkeypatch) -> None:
     assert review.input_metadata["sent_bytes"] <= 1024
     assert review.input_metadata["included_count"] < 20
     assert review.input_metadata["omitted_count"] > 0
+
+
+# Built without connecting; ReadTimeoutError only records which pool timed out.
+_POOL = HTTPConnectionPool("localhost", 8000)
+
+
+class _ChatResponseStub:
+    """Minimal ``requests.Response`` stand-in for chat completion calls."""
+
+    def __init__(
+        self,
+        payload: Any = None,
+        *,
+        json_error: Exception | None = None,
+        http_status: int | None = None,
+    ) -> None:
+        self.payload = payload
+        self.json_error = json_error
+        self.http_status = http_status
+
+    def raise_for_status(self) -> None:
+        if self.http_status is not None:
+            response = requests.Response()
+            response.status_code = self.http_status
+            response._content = b"server error"
+            raise requests.exceptions.HTTPError(
+                f"{self.http_status} Server Error", response=response
+            )
+
+    def json(self) -> Any:
+        if self.json_error is not None:
+            raise self.json_error
+        return self.payload
+
+
+def _chat_content(content: str) -> _ChatResponseStub:
+    return _ChatResponseStub({"choices": [{"message": {"content": content}}]})
+
+
+@pytest.mark.parametrize(
+    ("outcome", "failure_code", "title"),
+    [
+        (
+            requests.exceptions.Timeout("slow"),
+            "timeout",
+            "Local LLM request timed out",
+        ),
+        (
+            # requests wraps a stall while reading the body in ConnectionError.
+            requests.exceptions.ConnectionError(
+                ReadTimeoutError(_POOL, "/v1/chat/completions", "Read timed out.")
+            ),
+            "timeout",
+            "Local LLM request timed out",
+        ),
+        (_ChatResponseStub(http_status=500), "http_error", "Local LLM HTTP error"),
+        (
+            requests.exceptions.ConnectionError("refused"),
+            "connection_failed",
+            "Local LLM connection failed",
+        ),
+        (
+            requests.exceptions.MissingSchema("no schema"),
+            "connection_failed",
+            "Local LLM connection failed",
+        ),
+        (
+            _ChatResponseStub(json_error=ValueError("not json")),
+            "invalid_response",
+            "Local LLM connection failed",
+        ),
+        (_ChatResponseStub({}), "invalid_response", "Local LLM connection failed"),
+        (
+            _chat_content("not a json review"),
+            "json_parse_failed",
+            "Local LLM JSON parsing failed",
+        ),
+        (
+            _chat_content('{"summary": "missing fields"}'),
+            "json_parse_failed",
+            "Local LLM JSON parsing failed",
+        ),
+        (
+            # gpt-oss can spend every token on reasoning and return no content.
+            _ChatResponseStub({"choices": [{"message": {"content": None}}]}),
+            "json_parse_failed",
+            "Local LLM JSON parsing failed",
+        ),
+    ],
+)
+def test_local_llm_review_failures_record_failure_code(
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: Exception | _ChatResponseStub,
+    failure_code: ReviewFailureCode,
+    title: str,
+) -> None:
+    """Each failure path sets its own code; finding titles stay as they were."""
+
+    def fake_post(*args: Any, **kwargs: Any) -> _ChatResponseStub:
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    review = LocalLLMReviewClient(
+        base_url="http://localhost:8000/v1", model="test-model"
+    ).review(PythonAnalysis(path="sample.py", line_count=10))
+
+    assert review.reviewer == ReviewerInfo(
+        client="local", model="test-model", status="failed", failure_code=failure_code
+    )
+    assert [finding.title for finding in review.findings] == [title]
+    assert review.to_dict()["reviewer"] == {
+        "client": "local",
+        "model": "test-model",
+        "status": "failed",
+        "failure_code": failure_code,
+    }
+
+
+def test_local_llm_review_success_records_configured_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = json.dumps({"summary": "ok", "risk_level": "low", "findings": []})
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: _chat_content(content))
+
+    review = LocalLLMReviewClient(
+        base_url="http://localhost:8000/v1", model="test-model"
+    ).review(PythonAnalysis(path="sample.py", line_count=10))
+
+    assert review.reviewer == ReviewerInfo(
+        client="local", model="test-model", status="ok"
+    )
+    assert review.to_dict()["reviewer"]["failure_code"] is None
+
+
+class _ModelsResponseStub:
+    def __init__(
+        self,
+        payload: Any = None,
+        *,
+        status_code: int = 200,
+        json_error: Exception | None = None,
+    ) -> None:
+        self.payload = payload
+        self.status_code = status_code
+        self.json_error = json_error
+
+    def json(self) -> Any:
+        if self.json_error is not None:
+            raise self.json_error
+        return self.payload
+
+
+_SECRET_BODY = "secret body http://10.0.0.5:8000/v1"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "status", "detail"),
+    [
+        (
+            _ModelsResponseStub({"object": "list", "data": [{"id": "test-model"}]}),
+            "connected",
+            None,
+        ),
+        (
+            _ModelsResponseStub({"data": [{"id": "other-model"}]}),
+            "model_missing",
+            "model not listed",
+        ),
+        (_ModelsResponseStub({"data": []}), "model_missing", "model not listed"),
+        (
+            _ModelsResponseStub({"data": ["test-model", {"id": 1}, None]}),
+            "model_missing",
+            "model not listed",
+        ),
+        (requests.exceptions.ReadTimeout(_SECRET_BODY), "timeout", "ReadTimeout"),
+        (
+            requests.exceptions.ConnectionError(
+                ReadTimeoutError(_POOL, "/v1/models", _SECRET_BODY)
+            ),
+            "timeout",
+            "ReadTimeoutError",
+        ),
+        (
+            requests.exceptions.ConnectTimeout(_SECRET_BODY),
+            "timeout",
+            "ConnectTimeout",
+        ),
+        (
+            requests.exceptions.ConnectionError(_SECRET_BODY),
+            "unreachable",
+            "ConnectionError",
+        ),
+        (
+            requests.exceptions.InvalidURL(_SECRET_BODY),
+            "unreachable",
+            "InvalidURL",
+        ),
+        (ValueError(_SECRET_BODY), "unreachable", "ValueError"),
+        (
+            _ModelsResponseStub(_SECRET_BODY, status_code=401),
+            "unreachable",
+            "HTTP 401",
+        ),
+        (
+            _ModelsResponseStub(_SECRET_BODY, status_code=503),
+            "unreachable",
+            "HTTP 503",
+        ),
+        (
+            _ModelsResponseStub(_SECRET_BODY, status_code=302),
+            "unreachable",
+            "HTTP 302",
+        ),
+        (
+            _ModelsResponseStub(json_error=ValueError(_SECRET_BODY)),
+            "unreachable",
+            "invalid JSON",
+        ),
+        (_ModelsResponseStub({"object": "list"}), "unreachable", "no model list"),
+        (_ModelsResponseStub({"data": "test-model"}), "unreachable", "no model list"),
+        (_ModelsResponseStub([{"id": "test-model"}]), "unreachable", "no model list"),
+    ],
+)
+def test_local_llm_check_connection_classifies_without_raising(
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: Exception | _ModelsResponseStub,
+    status: LLMConnectionStatus,
+    detail: str | None,
+) -> None:
+    """detail names the cause without the URL, body, or exception message."""
+
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_get(url: str, **kwargs: Any) -> _ModelsResponseStub:
+        calls.append((url, kwargs))
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    check = LocalLLMReviewClient(
+        base_url="http://localhost:8000/v1/", model="test-model"
+    ).check_connection()
+
+    assert check == LLMConnectionCheck(status, detail)
+    assert calls == [
+        (
+            "http://localhost:8000/v1/models",
+            {
+                "timeout": DEFAULT_LLM_STATUS_TIMEOUT_SECONDS,
+                "allow_redirects": False,
+            },
+        )
+    ]
+    assert "secret" not in (check.detail or "")
+    assert "10.0.0.5" not in (check.detail or "")
+
+
+def test_local_llm_check_connection_uses_given_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timeouts: list[float] = []
+
+    def fake_get(url: str, **kwargs: Any) -> _ModelsResponseStub:
+        timeouts.append(kwargs["timeout"])
+        return _ModelsResponseStub({"data": [{"id": "test-model"}]})
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    LocalLLMReviewClient(model="test-model").check_connection(timeout=1.5)
+
+    assert timeouts == [1.5]
